@@ -1,0 +1,64 @@
+export type CharacterCategory = "一类" | "二类";
+
+export type Grade = 1 | 2 | 3 | 4 | 5;
+
+export interface DictationWord {
+  id: string;
+  text: string;
+  pinyin: string;
+  chars: string[];
+  grade: Grade;
+  lessonId: string;
+  lessonTitle: string;
+  category: CharacterCategory;
+}
+
+export interface Lesson {
+  id: string;
+  grade: Grade;
+  unit: number;
+  number: number;
+  title: string;
+  words: DictationWord[];
+}
+
+export interface Progress {
+  grade: Grade;
+  lessonId: string;
+}
+
+export interface WordStat {
+  attempts: number;
+  mistakes: number;
+  streak: number;
+  lastReviewedAt?: string;
+  lastMistakeAt?: string;
+}
+
+export interface CharacterStat {
+  attempts: number;
+  mistakes: number;
+  lastReviewedAt?: string;
+}
+
+export interface ReviewLog {
+  id: string;
+  date: string;
+  wordIds: string[];
+  wrongWordIds: string[];
+}
+
+export interface AppState {
+  progress: Progress;
+  wordStats: Record<string, WordStat>;
+  charStats: Record<string, CharacterStat>;
+  customLessons: Lesson[];
+  customWords: DictationWord[];
+  logs: ReviewLog[];
+}
+
+export interface PracticeItem {
+  word: DictationWord;
+  score: number;
+  reasons: string[];
+}
