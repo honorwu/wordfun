@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent, ReactElement } from "react";
 import { gradeNames } from "./data/metadata";
 import { fetchAppData, saveRemoteState } from "./lib/api";
-import { applyReviewResult, generatePractice, getEligibleLessons, getEligibleWords } from "./lib/scheduler";
+import { applyReviewResult, charReviewKey, generatePractice, getEligibleLessons, getEligibleWords, isMasteredChar, isMasteredWord } from "./lib/scheduler";
 import { createDefaultState, exportState, normalizeState } from "./lib/storage";
 import type { AppState, CharacterCategory, CompanionDictionary, DictationWord, Grade, Lesson, PracticeItem } from "./types";
 
@@ -74,6 +74,13 @@ const lessonLabel = (lesson: Lesson) => `${gradeNames[lesson.grade]}${termLabel(
 
 const sameLocalDay = (date: string) => new Date(date).toDateString() === new Date().toDateString();
 
+const logWrongCharCount = (log: AppState["logs"][number]) => (log.wrongChars && log.wrongChars.length > 0 ? log.wrongChars.length : log.wrongWordIds.length);
+
+const logWrongText = (log: AppState["logs"][number], wordById: Map<string, DictationWord>) =>
+  log.wrongChars && log.wrongChars.length > 0
+    ? log.wrongChars.map((item) => `${wordById.get(item.wordId)?.text ?? ""}：${item.char}`).join("、")
+    : log.wrongWordIds.map((id) => wordById.get(id)?.text).filter(Boolean).join("、");
+
 const mergeLessonCatalog = (baseLessons: Lesson[], customLessons: Lesson[]) => {
   const byId = new Map<string, Lesson>();
   for (const lesson of baseLessons) {
@@ -95,7 +102,7 @@ function App() {
   const [loadError, setLoadError] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("student");
   const [showAnswers, setShowAnswers] = useState(false);
-  const [wrongIds, setWrongIds] = useState<Set<string>>(() => new Set());
+  const [wrongCharKeys, setWrongCharKeys] = useState<Set<string>>(() => new Set());
   const [savedMessage, setSavedMessage] = useState("");
 
   useEffect(() => {
@@ -152,16 +159,13 @@ function App() {
   const stats = useMemo(() => {
     const uniqueChars = Array.from(new Set(eligibleWords.flatMap((word) => word.chars)));
     const reviewedChars = uniqueChars.filter((char) => state.charStats[char]?.attempts > 0);
-    const masteredChars = uniqueChars.filter((char) => {
-      const stat = state.charStats[char];
-      return stat && stat.attempts >= 3 && stat.mistakes === 0;
-    });
+    const masteredChars = uniqueChars.filter((char) => isMasteredChar(state.charStats[char]));
     const reviewedWords = eligibleWords.filter((word) => state.wordStats[word.id]?.attempts > 0);
-    const masteredWords = eligibleWords.filter((word) => {
+    const masteredWords = eligibleWords.filter((word) => isMasteredWord(word, state));
+    const wrongWords = eligibleWords.filter((word) => {
       const stat = state.wordStats[word.id];
-      return stat && stat.streak >= 3 && stat.mistakes === 0;
+      return stat && stat.mistakes > 0 && !isMasteredWord(word, state);
     });
-    const wrongWords = eligibleWords.filter((word) => (state.wordStats[word.id]?.mistakes ?? 0) > 0);
     const totalAttempts = eligibleWords.reduce((sum, word) => sum + (state.wordStats[word.id]?.attempts ?? 0), 0);
     const totalMistakes = eligibleWords.reduce((sum, word) => sum + (state.wordStats[word.id]?.mistakes ?? 0), 0);
     const todayLogs = state.logs.filter((log) => sameLocalDay(log.date));
@@ -180,7 +184,7 @@ function App() {
       totalMistakes,
       accuracy: totalAttempts > 0 ? Math.round(((totalAttempts - totalMistakes) / totalAttempts) * 100) : 0,
       todayPracticeCount: todayLogs.reduce((sum, log) => sum + log.wordIds.length, 0),
-      todayWrongCount: todayLogs.reduce((sum, log) => sum + log.wrongWordIds.length, 0),
+      todayWrongCount: todayLogs.reduce((sum, log) => sum + logWrongCharCount(log), 0),
     };
   }, [eligibleWords, state.charStats, state.logs, state.wordStats]);
 
@@ -199,27 +203,30 @@ function App() {
       categoryOptions.map((category) => {
         const words = eligibleWords.filter((word) => word.category === category);
         const reviewed = words.filter((word) => state.wordStats[word.id]?.attempts > 0).length;
-        const wrong = words.filter((word) => (state.wordStats[word.id]?.mistakes ?? 0) > 0).length;
+        const wrong = words.filter((word) => {
+          const stat = state.wordStats[word.id];
+          return stat && stat.mistakes > 0 && !isMasteredWord(word, state);
+        }).length;
         return { category, total: words.length, reviewed, wrong };
       }),
-    [eligibleWords, state.wordStats],
+    [eligibleWords, state],
   );
 
   const troubleWords = useMemo(
     () =>
       eligibleWords
         .map((word) => ({ word, stat: state.wordStats[word.id] }))
-        .filter((item) => item.stat && item.stat.mistakes > 0)
+        .filter((item) => item.stat && item.stat.mistakes > 0 && !isMasteredWord(item.word, state))
         .sort((a, b) => (b.stat?.mistakes ?? 0) - (a.stat?.mistakes ?? 0) || (b.stat?.attempts ?? 0) - (a.stat?.attempts ?? 0))
         .slice(0, 8),
-    [eligibleWords, state.wordStats],
+    [eligibleWords, state],
   );
 
   const troubleChars = useMemo(
     () =>
       stats.uniqueChars
         .map((char) => ({ char, stat: state.charStats[char] }))
-        .filter((item) => item.stat && item.stat.mistakes > 0)
+        .filter((item) => item.stat && item.stat.mistakes > 0 && !isMasteredChar(item.stat))
         .sort((a, b) => (b.stat?.mistakes ?? 0) - (a.stat?.mistakes ?? 0) || (b.stat?.attempts ?? 0) - (a.stat?.attempts ?? 0))
         .slice(0, 18),
     [state.charStats, stats.uniqueChars],
@@ -232,7 +239,7 @@ function App() {
       progress: { grade, lessonId: firstLesson.id },
     }));
     setShowAnswers(false);
-    setWrongIds(new Set());
+    setWrongCharKeys(new Set());
   };
 
   const setProgressTerm = (term: Term) => {
@@ -245,7 +252,7 @@ function App() {
       progress: { grade: firstLesson.grade, lessonId: firstLesson.id },
     }));
     setShowAnswers(false);
-    setWrongIds(new Set());
+    setWrongCharKeys(new Set());
   };
 
   const setProgressLesson = (lessonId: string) => {
@@ -258,33 +265,34 @@ function App() {
       progress: { grade: lesson.grade, lessonId },
     }));
     setShowAnswers(false);
-    setWrongIds(new Set());
+    setWrongCharKeys(new Set());
   };
 
   const regenerate = () => {
     setState((current) => ({ ...current }));
     setShowAnswers(false);
-    setWrongIds(new Set());
+    setWrongCharKeys(new Set());
   };
 
-  const toggleWrong = (wordId: string) => {
-    setWrongIds((current) => {
+  const toggleWrongChar = (wordId: string, char: string) => {
+    const key = charReviewKey(wordId, char);
+    setWrongCharKeys((current) => {
       const next = new Set(current);
-      if (next.has(wordId)) {
-        next.delete(wordId);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        next.add(wordId);
+        next.add(key);
       }
       return next;
     });
   };
 
   const saveReview = () => {
-    setState((current) => applyReviewResult(current, practiceItems, wrongIds));
-    setSavedMessage(`已记录 ${practiceItems.length} 个词，其中 ${wrongIds.size} 个需要回炉。`);
+    setState((current) => applyReviewResult(current, practiceItems, wrongCharKeys));
+    setSavedMessage(`已记录 ${practiceItems.length} 个词，其中 ${wrongCharKeys.size} 个字需要回炉。`);
     setTimeout(() => setSavedMessage(""), 2400);
     setShowAnswers(false);
-    setWrongIds(new Set());
+    setWrongCharKeys(new Set());
   };
 
   const importBackup = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -310,7 +318,7 @@ function App() {
       charStats: {},
       logs: [],
     }));
-    setWrongIds(new Set());
+    setWrongCharKeys(new Set());
     setShowAnswers(false);
     setSavedMessage("练习记录已清空，词库保留。");
   };
@@ -321,8 +329,8 @@ function App() {
       selectedLesson={selectedLesson}
       showAnswers={showAnswers}
       state={state}
-      toggleWrong={toggleWrong}
-      wrongIds={wrongIds}
+      toggleWrongChar={toggleWrongChar}
+      wrongCharKeys={wrongCharKeys}
     />
   ) : null;
 
@@ -387,7 +395,7 @@ function App() {
           setShowAnswers={setShowAnswers}
           stats={stats}
           regenerate={regenerate}
-          wrongIds={wrongIds}
+          wrongCharKeys={wrongCharKeys}
         />
       ) : (
         <ParentDashboard
@@ -432,7 +440,7 @@ function StudentView({
   setShowAnswers,
   stats,
   regenerate,
-  wrongIds,
+  wrongCharKeys,
 }: {
   accuracy: number;
   masteredChars: number;
@@ -447,8 +455,10 @@ function StudentView({
   setShowAnswers: (value: boolean | ((current: boolean) => boolean)) => void;
   stats: DashboardStats;
   regenerate: () => void;
-  wrongIds: Set<string>;
+  wrongCharKeys: Set<string>;
 }) {
+  const hasPractice = practiceItems.length > 0;
+
   return (
     <section className="student-layout">
       <div className="top-strip no-print">
@@ -456,20 +466,22 @@ function StudentView({
           <p className="eyebrow">学生首页</p>
           <h2>{lessonLabel(selectedLesson)}</h2>
         </div>
-        <div className="toolbar">
-          <button type="button" onClick={regenerate} title="重新生成">
-            <RefreshCw size={17} aria-hidden="true" />
-            换一组
-          </button>
-          <button type="button" onClick={() => window.print()} title="打印">
-            <Printer size={17} aria-hidden="true" />
-            打印
-          </button>
-          <button className="primary" type="button" onClick={() => setShowAnswers((value) => !value)}>
-            <FileText size={17} aria-hidden="true" />
-            {showAnswers ? "隐藏答案" : "显示答案"}
-          </button>
-        </div>
+        {hasPractice ? (
+          <div className="toolbar">
+            <button type="button" onClick={regenerate} title="重新生成">
+              <RefreshCw size={17} aria-hidden="true" />
+              换一组
+            </button>
+            <button type="button" onClick={() => window.print()} title="打印">
+              <Printer size={17} aria-hidden="true" />
+              打印
+            </button>
+            <button className="primary" type="button" onClick={() => setShowAnswers((value) => !value)}>
+              <FileText size={17} aria-hidden="true" />
+              {showAnswers ? "隐藏答案" : "显示答案"}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className="stat-band no-print">
@@ -495,22 +507,32 @@ function StudentView({
           <span>今日</span>
           <strong>{stats.todayPracticeCount || practiceItems.length}</strong>
           <small>个词语</small>
-          <b>{stats.todayWrongCount} 个错词记录</b>
+          <b>{stats.todayWrongCount} 个错字记录</b>
         </div>
       </section>
 
-      {sheet}
+      {hasPractice ? (
+        sheet
+      ) : (
+        <section className="done-card no-print">
+          <p className="eyebrow">今日状态</p>
+          <h3>这部分暂时不用默写</h3>
+          <p>当前范围内没有需要回炉或巩固的字词。</p>
+        </section>
+      )}
 
-      <div className="review-bar no-print">
-        <div>
-          <strong>{wrongIds.size}</strong>
-          <span>个词已标记错误</span>
+      {hasPractice && showAnswers ? (
+        <div className="review-bar no-print">
+          <div>
+            <strong>{wrongCharKeys.size}</strong>
+            <span>个字已标记错误</span>
+          </div>
+          <button className="primary" type="button" onClick={saveReview}>
+            <Check size={17} aria-hidden="true" />
+            保存本次核对
+          </button>
         </div>
-        <button className="primary" type="button" onClick={saveReview}>
-          <Check size={17} aria-hidden="true" />
-          保存本次核对
-        </button>
-      </div>
+      ) : null}
     </section>
   );
 }
@@ -551,7 +573,7 @@ function ParentDashboard({
   setProgressTerm: (term: Term) => void;
   state: AppState;
   stats: DashboardStats;
-  troubleChars: Array<{ char: string; stat: { attempts: number; mistakes: number; lastReviewedAt?: string } | undefined }>;
+  troubleChars: Array<{ char: string; stat: { attempts: number; mistakes: number; streak?: number; lastReviewedAt?: string } | undefined }>;
   troubleWords: Array<{ word: DictationWord; stat: { attempts: number; mistakes: number; streak: number; lastReviewedAt?: string } | undefined }>;
   wordById: Map<string, DictationWord>;
   wordsByGrade: Record<Grade, number>;
@@ -727,10 +749,8 @@ function ParentDashboard({
               state.logs.slice(0, 7).map((log) => (
                 <div className="log-item" key={log.id}>
                   <span>{formatDate(log.date)}</span>
-                  <strong>
-                    {log.wordIds.length - log.wrongWordIds.length}/{log.wordIds.length}
-                  </strong>
-                  <small>{log.wrongWordIds.map((id) => wordById.get(id)?.text).filter(Boolean).join("、") || "全对"}</small>
+                  <strong>{logWrongCharCount(log)} 个错字</strong>
+                  <small>{logWrongText(log, wordById) || "全对"}</small>
                 </div>
               ))
             )}
@@ -768,15 +788,15 @@ function PracticeSheet({
   selectedLesson,
   showAnswers,
   state,
-  toggleWrong,
-  wrongIds,
+  toggleWrongChar,
+  wrongCharKeys,
 }: {
   items: PracticeItem[];
   selectedLesson: Lesson;
   showAnswers: boolean;
   state: AppState;
-  toggleWrong: (wordId: string) => void;
-  wrongIds: Set<string>;
+  toggleWrongChar: (wordId: string, char: string) => void;
+  wrongCharKeys: Set<string>;
 }) {
   return (
     <div className="sheet">
@@ -799,13 +819,20 @@ function PracticeSheet({
 
       <div className="dictation-grid">
         {items.map((item, index) => (
-          <DictationCard item={item} index={index} key={item.word.id} showAnswers={showAnswers} toggleWrong={toggleWrong} wrongIds={wrongIds} />
+          <DictationCard
+            item={item}
+            index={index}
+            key={item.word.id}
+            showAnswers={showAnswers}
+            toggleWrongChar={toggleWrongChar}
+            wrongCharKeys={wrongCharKeys}
+          />
         ))}
       </div>
 
       <footer className="sheet-foot">
         <span>默写用时：______ 分钟</span>
-        <span>正确：______ / {items.length}</span>
+        <span>错字：______ 个</span>
         <span>家长签名：__________</span>
       </footer>
     </div>
@@ -816,21 +843,23 @@ function DictationCard({
   item,
   index,
   showAnswers,
-  toggleWrong,
-  wrongIds,
+  toggleWrongChar,
+  wrongCharKeys,
 }: {
   item: PracticeItem;
   index: number;
   showAnswers: boolean;
-  toggleWrong: (wordId: string) => void;
-  wrongIds: Set<string>;
+  toggleWrongChar: (wordId: string, char: string) => void;
+  wrongCharKeys: Set<string>;
 }) {
   const chars = Array.from(item.word.text).filter((char) => /\p{Script=Han}/u.test(char));
   const syllables = item.word.pinyin.split(/\s+/).filter(Boolean);
   const cellCount = Math.max(chars.length, syllables.length, 2);
+  const wrongChars = chars.filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)));
+  const isWrong = showAnswers && wrongChars.length > 0;
 
   return (
-    <article className={wrongIds.has(item.word.id) ? "word-card wrong" : "word-card"}>
+    <article className={isWrong ? "word-card wrong" : "word-card"}>
       <div className="card-top">
         <div className="number">{index + 1}</div>
         <div className="prompt">
@@ -839,29 +868,37 @@ function DictationCard({
           </span>
           <span className="reason no-print">{item.reasons.join(" / ")}</span>
         </div>
-        <button
-          className={wrongIds.has(item.word.id) ? "mark-button active no-print" : "mark-button no-print"}
-          type="button"
-          onClick={() => toggleWrong(item.word.id)}
-          title="标记错误"
-        >
-          {wrongIds.has(item.word.id) ? <X size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}
-          {wrongIds.has(item.word.id) ? "错" : "对"}
-        </button>
+        {showAnswers ? <span className={isWrong ? "card-status active no-print" : "card-status no-print"}>{isWrong ? `${wrongChars.length}错` : "全对"}</span> : null}
       </div>
       <div className="mizige-group" aria-label="默写位置">
-        {Array.from({ length: cellCount }).map((_, cellIndex) => (
-          <div className="mizige-wrap" key={`${item.word.id}-${cellIndex}`}>
-            <span className="cell-pinyin">{syllables[cellIndex] ?? (cellIndex === 0 ? item.word.pinyin : "")}</span>
-            <div className="mizige-cell">
-              <i className="mizige-line mizige-v" aria-hidden="true" />
-              <i className="mizige-line mizige-h" aria-hidden="true" />
-              <i className="mizige-line mizige-d1" aria-hidden="true" />
-              <i className="mizige-line mizige-d2" aria-hidden="true" />
-              {showAnswers ? <b className="answer-char">{chars[cellIndex] ?? ""}</b> : null}
+        {Array.from({ length: cellCount }).map((_, cellIndex) => {
+          const char = chars[cellIndex];
+          const key = char ? charReviewKey(item.word.id, char) : "";
+          const isCharWrong = Boolean(char && wrongCharKeys.has(key));
+          return (
+            <div className={isCharWrong ? "mizige-wrap char-wrong" : "mizige-wrap"} key={`${item.word.id}-${cellIndex}`}>
+              <span className="cell-pinyin">{syllables[cellIndex] ?? (cellIndex === 0 ? item.word.pinyin : "")}</span>
+              <div className="mizige-cell">
+                <i className="mizige-line mizige-v" aria-hidden="true" />
+                <i className="mizige-line mizige-h" aria-hidden="true" />
+                <i className="mizige-line mizige-d1" aria-hidden="true" />
+                <i className="mizige-line mizige-d2" aria-hidden="true" />
+                {showAnswers ? <b className="answer-char">{char ?? ""}</b> : null}
+              </div>
+              {showAnswers && char ? (
+                <button
+                  className={isCharWrong ? "char-mark-button active no-print" : "char-mark-button no-print"}
+                  type="button"
+                  onClick={() => toggleWrongChar(item.word.id, char)}
+                  title={`标记“${char}”${isCharWrong ? "已写对" : "写错"}`}
+                >
+                  {isCharWrong ? <X size={13} aria-hidden="true" /> : <Check size={13} aria-hidden="true" />}
+                  {char}
+                </button>
+              ) : null}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </article>
   );

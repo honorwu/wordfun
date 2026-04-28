@@ -2,10 +2,15 @@ import { categoryWeights } from "../data/metadata";
 import type { AppState, CharacterStat, CompanionDictionary, DictationCompanion, DictationWord, Lesson, PracticeItem, Progress, WordStat } from "../types";
 
 const dayMs = 24 * 60 * 60 * 1000;
+const masteryNetCorrect = 2;
 
 const hanChars = (value: string) => Array.from(value).filter((char) => /\p{Script=Han}/u.test(char));
 
 const uniqueChars = (chars: string[]) => Array.from(new Set(chars));
+
+export const charReviewKey = (wordId: string, char: string) => `${wordId}\u0000${char}`;
+
+export const reviewCharsForWord = (word: DictationWord) => uniqueChars(hanChars(word.text));
 
 const hanLength = (value: string) => hanChars(value).length;
 
@@ -126,16 +131,34 @@ const daysSince = (date?: string) => {
   return Math.max(0, Math.floor(elapsed / dayMs));
 };
 
+const uniqueTexts = (texts?: string[]) => Array.from(new Set(texts ?? []));
+
+const charCorrectWordCount = (stat?: CharacterStat) => uniqueTexts(stat?.correctWordTexts).length;
+
+const charWrongWordCount = (stat?: CharacterStat) => uniqueTexts(stat?.wrongWordTexts).length;
+
+const charNetCorrectCount = (stat?: CharacterStat) => charCorrectWordCount(stat) - charWrongWordCount(stat);
+
+const hasWordTextEvidence = (stat: CharacterStat | undefined, wordText: string) =>
+  Boolean(stat && (stat.correctWordTexts?.includes(wordText) || stat.wrongWordTexts?.includes(wordText)));
+
+export const isMasteredChar = (stat?: CharacterStat) => charNetCorrectCount(stat) >= masteryNetCorrect;
+
 const wordCoverageNeed = (word: DictationWord, charStats: Record<string, CharacterStat>) => {
   return word.chars.reduce((score, char) => {
     const stat = charStats[char];
     if (!stat) {
-      return score + 18;
+      return score + 24;
     }
+    if (isMasteredChar(stat)) {
+      return score;
+    }
+    const netNeed = Math.max(0, masteryNetCorrect - charNetCorrectCount(stat));
+    const newWordBonus = hasWordTextEvidence(stat, word.text) ? 0 : 12;
     if (stat.mistakes > 0) {
-      return score + Math.min(12, stat.mistakes * 3);
+      return score + Math.min(28, stat.mistakes * 4 + charWrongWordCount(stat) * 5 + netNeed * 6 + newWordBonus);
     }
-    return score + Math.min(8, daysSince(stat.lastReviewedAt));
+    return score + 8 + netNeed * 6 + newWordBonus + Math.min(6, daysSince(stat.lastReviewedAt));
   }, 0);
 };
 
@@ -162,10 +185,11 @@ const wordScore = (word: DictationWord, state: AppState): PracticeItem => {
     score += 28;
     reasons.push("新词");
   } else {
-    const wrongRate = stat.mistakes / Math.max(1, stat.attempts);
+    const unresolvedMistake = stat.mistakes > 0 && !isMasteredWord(word, state);
+    const wrongRate = unresolvedMistake ? stat.mistakes / Math.max(1, stat.attempts) : 0;
     const due = Math.min(24, daysSince(stat.lastReviewedAt) * 2);
-    score += wrongRate * 60 + stat.mistakes * 9 + due - Math.min(18, stat.streak * 4);
-    if (stat.mistakes > 0) {
+    score += wrongRate * 60 + (unresolvedMistake ? stat.mistakes * 9 : 0) + due - Math.min(18, stat.streak * 5);
+    if (unresolvedMistake) {
       reasons.push("错题回炉");
     }
     if (due >= 10) {
@@ -200,23 +224,25 @@ const reviewIntervalDays = (stat?: WordStat) => {
 
 const hasUnreviewedChar = (word: DictationWord, state: AppState) => word.chars.some((char) => !state.charStats[char]);
 
+const hasUnmasteredChar = (word: DictationWord, state: AppState) => word.chars.some((char) => !isMasteredChar(state.charStats[char]));
+
 const hasWeakSignal = (word: DictationWord, state: AppState) =>
-  (state.wordStats[word.id]?.mistakes ?? 0) > 0 || word.chars.some((char) => (state.charStats[char]?.mistakes ?? 0) > 0);
+  Boolean(state.wordStats[word.id] && (state.wordStats[word.id].mistakes ?? 0) > 0 && !isMasteredWord(word, state)) ||
+  word.chars.some((char) => {
+    const stat = state.charStats[char];
+    return Boolean(stat && stat.mistakes > 0 && !isMasteredChar(stat));
+  });
 
 const isDueWord = (word: DictationWord, state: AppState) => {
   const stat = state.wordStats[word.id];
-  return Boolean(stat && daysSince(stat.lastReviewedAt) >= reviewIntervalDays(stat));
+  return Boolean(stat && !isMasteredWord(word, state) && daysSince(stat.lastReviewedAt) >= reviewIntervalDays(stat));
 };
 
-const isMasteredWord = (word: DictationWord, state: AppState) => {
-  const stat = state.wordStats[word.id];
-  if (!stat || stat.streak < 3 || stat.mistakes > 0) {
+export const isMasteredWord = (word: DictationWord, state: AppState) => {
+  if (word.chars.length === 0) {
     return false;
   }
-  return word.chars.every((char) => {
-    const charStat = state.charStats[char];
-    return charStat && charStat.attempts >= 3 && charStat.mistakes === 0;
-  });
+  return word.chars.every((char) => isMasteredChar(state.charStats[char]));
 };
 
 const withReason = (item: PracticeItem, reason: string): PracticeItem => ({
@@ -226,17 +252,60 @@ const withReason = (item: PracticeItem, reason: string): PracticeItem => ({
 
 const sortPracticeItems = (items: PracticeItem[]) => [...items].sort((a, b) => b.score - a.score || a.word.id.localeCompare(b.word.id));
 
+const isGardenLesson = (lesson: Lesson) => lesson.title.startsWith("语文园地");
+
+const currentTeachingUnitFloor = (lessons: Lesson[], selectedLesson?: Lesson) => {
+  if (!selectedLesson) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  const previousGarden = lessons
+    .filter(
+      (lesson) =>
+        lesson.grade === selectedLesson.grade &&
+        lesson.unit === selectedLesson.unit &&
+        lesson.number < selectedLesson.number &&
+        isGardenLesson(lesson),
+    )
+    .sort((a, b) => b.number - a.number)[0];
+  return previousGarden?.number ?? Number.NEGATIVE_INFINITY;
+};
+
 export const generatePractice = (lessons: Lesson[], state: AppState, targetCount = 20, companionWords: CompanionDictionary = {}): PracticeItem[] => {
   const eligibleWords = getEligibleWords(lessons, state.customWords, state.progress, companionWords);
+  const wordPosition = new Map(eligibleWords.map((word, index) => [word.id, index]));
   const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
   const selectedLesson = lessonById.get(state.progress.lessonId);
   const selectedOrder = progressOrder(state.progress, lessons);
+  const currentUnitFloor = currentTeachingUnitFloor(lessons, selectedLesson);
   const orderForWord = (word: DictationWord) => {
     const lesson = lessonById.get(word.lessonId);
     return lesson ? lessonOrder(lesson) : word.grade * 1000;
   };
+  const lessonForWord = (word: DictationWord) => lessonById.get(word.lessonId);
+  const isInCurrentTeachingUnit = (word: DictationWord) => {
+    const lesson = lessonForWord(word);
+    return Boolean(
+      selectedLesson &&
+        lesson &&
+        lesson.grade === selectedLesson.grade &&
+        lesson.unit === selectedLesson.unit &&
+        lesson.number > currentUnitFloor &&
+        lesson.number <= selectedLesson.number,
+    );
+  };
+  const isInCurrentTerm = (word: DictationWord) => {
+    const lesson = lessonForWord(word);
+    return Boolean(selectedLesson && lesson && lesson.grade === selectedLesson.grade && lesson.unit === selectedLesson.unit && orderForWord(word) <= selectedOrder);
+  };
+  const isInCurrentGrade = (word: DictationWord) => word.grade === state.progress.grade && orderForWord(word) <= selectedOrder;
+  const isPastWord = (word: DictationWord) => orderForWord(word) < selectedOrder;
 
-  const scored = [...new Map(eligibleWords.map((word) => [word.id, word])).values()]
+  const actionableWords = [...new Map(eligibleWords.map((word) => [word.id, word])).values()].filter((word) => !isMasteredWord(word, state));
+  if (actionableWords.length === 0) {
+    return [];
+  }
+
+  const scored = actionableWords
     .map((word) => wordScore(word, state))
     .sort((a, b) => b.score - a.score || a.word.id.localeCompare(b.word.id));
 
@@ -265,48 +334,53 @@ export const generatePractice = (lessons: Lesson[], state: AppState, targetCount
     }
   };
 
-  const newLessonQuota = Math.ceil(targetCount * 0.4);
-  const mistakeQuota = Math.ceil(targetCount * 0.25);
-  const dueQuota = Math.ceil(targetCount * 0.2);
-  const spiralQuota = Math.max(0, targetCount - newLessonQuota - mistakeQuota - dueQuota);
+  const currentLessonQuota = Math.ceil(targetCount * 0.4);
+  const currentUnitQuota = Math.ceil(targetCount * 0.25);
+  const currentTermQuota = Math.ceil(targetCount * 0.15);
+  const pastQuota = Math.max(1, Math.floor(targetCount * 0.1));
+  const currentGradeQuota = Math.max(0, targetCount - currentLessonQuota - currentUnitQuota - currentTermQuota - pastQuota);
 
   const currentLessonItems = scored.filter(
     (item) => selectedLesson && item.word.lessonId === selectedLesson.id && !isMasteredWord(item.word, state),
   );
+  const currentUnitItems = scored.filter((item) => isInCurrentTeachingUnit(item.word));
+  const currentTermItems = scored.filter((item) => isInCurrentTerm(item.word));
   const mistakeItems = scored.filter((item) => hasWeakSignal(item.word, state));
   const dueItems = scored.filter((item) => isDueWord(item.word, state));
-  const spiralItems = scored.filter((item) => orderForWord(item.word) < selectedOrder && item.word.grade < state.progress.grade);
-  const currentGradeItems = scored.filter((item) => item.word.grade === state.progress.grade && !isMasteredWord(item.word, state));
-  const coverageItems = scored.filter((item) => hasUnreviewedChar(item.word, state));
+  const currentGradeItems = scored.filter((item) => isInCurrentGrade(item.word));
+  const pastItems = scored.filter((item) => isPastWord(item.word));
+  const coverageItems = scored.filter((item) => hasUnreviewedChar(item.word, state) || hasUnmasteredChar(item.word, state));
 
-  addFrom(currentLessonItems, newLessonQuota, "新课优先");
-  addFrom(mistakeItems, mistakeQuota, "错题回炉");
-  addFrom(dueItems, dueQuota, "到期复习");
-  addFrom(spiralItems, spiralQuota, "旧课穿插");
-  addFrom(currentGradeItems, Math.ceil(targetCount * 0.25), "当前年级");
-  addFrom(coverageItems, targetCount, "覆盖未复习生字");
+  addFrom(currentLessonItems, currentLessonQuota, "当前课");
+  addFrom(currentUnitItems, currentUnitQuota, "当前单元");
+  addFrom(currentTermItems, currentTermQuota, "当前学期");
+  addFrom(currentGradeItems, currentGradeQuota, "当前学年");
+  addFrom(pastItems, pastQuota, "旧词穿插");
+  addFrom(mistakeItems, targetCount, "错题回炉");
+  addFrom(dueItems, targetCount, "到期复习");
+  addFrom(coverageItems, targetCount, "不同词语覆盖");
   for (const item of scored) {
     if (selected.size >= targetCount) {
       break;
     }
     addSelected(item, "综合复习");
   }
-  for (const item of scored) {
-    if (selected.size >= targetCount) {
-      break;
-    }
-    addSelected(item, "综合复习", true);
-  }
-
   return [...selected.values()].sort((a, b) => {
-    const aWrong = state.wordStats[a.word.id]?.mistakes ?? 0;
-    const bWrong = state.wordStats[b.word.id]?.mistakes ?? 0;
-    return bWrong - aWrong || b.word.grade - a.word.grade || b.score - a.score;
+    return orderForWord(b.word) - orderForWord(a.word) || (wordPosition.get(b.word.id) ?? 0) - (wordPosition.get(a.word.id) ?? 0);
   });
 };
 
-export const applyReviewResult = (state: AppState, items: PracticeItem[], wrongIds: Set<string>): AppState => {
+export const applyReviewResult = (state: AppState, items: PracticeItem[], wrongCharKeys: Set<string>): AppState => {
   const now = new Date().toISOString();
+  const addWordText = (texts: string[] | undefined, wordText: string) => uniqueTexts([...(texts ?? []), wordText]);
+  const wrongWordIds = items
+    .filter((item) => reviewCharsForWord(item.word).some((char) => wrongCharKeys.has(charReviewKey(item.word.id, char))))
+    .map((item) => item.word.id);
+  const wrongChars = items.flatMap((item) =>
+    reviewCharsForWord(item.word)
+      .filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)))
+      .map((char) => ({ wordId: item.word.id, char })),
+  );
   const next: AppState = {
     ...state,
     wordStats: { ...state.wordStats },
@@ -316,14 +390,16 @@ export const applyReviewResult = (state: AppState, items: PracticeItem[], wrongI
         id: crypto.randomUUID(),
         date: now,
         wordIds: items.map((item) => item.word.id),
-        wrongWordIds: [...wrongIds],
+        wrongWordIds,
+        wrongChars,
       },
       ...state.logs,
     ].slice(0, 120),
   };
 
   for (const item of items) {
-    const isWrong = wrongIds.has(item.word.id);
+    const reviewChars = reviewCharsForWord(item.word);
+    const isWrong = reviewChars.some((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)));
     const previous = next.wordStats[item.word.id] ?? { attempts: 0, mistakes: 0, streak: 0 };
     next.wordStats[item.word.id] = {
       attempts: previous.attempts + 1,
@@ -333,12 +409,17 @@ export const applyReviewResult = (state: AppState, items: PracticeItem[], wrongI
       lastMistakeAt: isWrong ? now : previous.lastMistakeAt,
     };
 
-    for (const char of item.word.chars) {
-      const charPrevious = next.charStats[char] ?? { attempts: 0, mistakes: 0 };
+    for (const char of reviewChars) {
+      const isCharWrong = wrongCharKeys.has(charReviewKey(item.word.id, char));
+      const charPrevious = next.charStats[char] ?? { attempts: 0, mistakes: 0, streak: 0 };
       next.charStats[char] = {
         attempts: charPrevious.attempts + 1,
-        mistakes: charPrevious.mistakes + (isWrong ? 1 : 0),
+        mistakes: charPrevious.mistakes + (isCharWrong ? 1 : 0),
+        streak: isCharWrong ? 0 : charPrevious.streak + 1,
+        correctWordTexts: isCharWrong ? uniqueTexts(charPrevious.correctWordTexts) : addWordText(charPrevious.correctWordTexts, item.word.text),
+        wrongWordTexts: isCharWrong ? addWordText(charPrevious.wrongWordTexts, item.word.text) : uniqueTexts(charPrevious.wrongWordTexts),
         lastReviewedAt: now,
+        lastMistakeAt: isCharWrong ? now : charPrevious.lastMistakeAt,
       };
     }
   }
@@ -349,11 +430,11 @@ export const applyReviewResult = (state: AppState, items: PracticeItem[], wrongI
 export const summarizeCoverage = (words: DictationWord[], state: AppState) => {
   const chars = new Set(words.flatMap((word) => word.chars));
   const reviewedChars = [...chars].filter((char) => state.charStats[char]?.attempts > 0);
-  const wrongWords = Object.values(state.wordStats).filter((stat) => stat.mistakes > 0).length;
-  const masteredWords = words.filter((word) => {
+  const wrongWords = words.filter((word) => {
     const stat = state.wordStats[word.id];
-    return stat && stat.streak >= 3 && stat.mistakes === 0;
+    return stat && stat.mistakes > 0 && !isMasteredWord(word, state);
   }).length;
+  const masteredWords = words.filter((word) => isMasteredWord(word, state)).length;
 
   return {
     totalWords: words.length,

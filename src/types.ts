@@ -38,7 +38,11 @@ export interface WordStat {
 export interface CharacterStat {
   attempts: number;
   mistakes: number;
+  streak: number;
+  correctWordTexts?: string[];
+  wrongWordTexts?: string[];
   lastReviewedAt?: string;
+  lastMistakeAt?: string;
 }
 
 export interface ReviewLog {
@@ -46,6 +50,7 @@ export interface ReviewLog {
   date: string;
   wordIds: string[];
   wrongWordIds: string[];
+  wrongChars?: Array<{ wordId: string; char: string }>;
 }
 
 export interface AppState {

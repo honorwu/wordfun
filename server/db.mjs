@@ -105,9 +105,25 @@ CREATE TABLE IF NOT EXISTS char_stats (
   char TEXT NOT NULL,
   attempts INTEGER NOT NULL,
   mistakes INTEGER NOT NULL,
+  streak INTEGER NOT NULL DEFAULT 0,
   last_reviewed_at TEXT,
+  last_mistake_at TEXT,
   PRIMARY KEY (student_id, char)
 );
+
+CREATE TABLE IF NOT EXISTS char_word_evidence (
+  student_id TEXT NOT NULL,
+  char TEXT NOT NULL,
+  word_text TEXT NOT NULL,
+  correct_count INTEGER NOT NULL DEFAULT 0,
+  mistake_count INTEGER NOT NULL DEFAULT 0,
+  last_reviewed_at TEXT,
+  last_mistake_at TEXT,
+  PRIMARY KEY (student_id, char, word_text),
+  FOREIGN KEY (student_id, char) REFERENCES char_stats(student_id, char) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_char_word_evidence_student_char ON char_word_evidence(student_id, char);
 
 CREATE TABLE IF NOT EXISTS review_logs (
   id TEXT PRIMARY KEY,
@@ -123,8 +139,18 @@ CREATE TABLE IF NOT EXISTS review_log_words (
   PRIMARY KEY (log_id, word_id)
 );
 
+CREATE TABLE IF NOT EXISTS review_log_chars (
+  log_id TEXT NOT NULL REFERENCES review_logs(id) ON DELETE CASCADE,
+  word_id TEXT NOT NULL,
+  char TEXT NOT NULL,
+  item_order INTEGER NOT NULL,
+  char_order INTEGER NOT NULL,
+  PRIMARY KEY (log_id, word_id, char)
+);
+
 CREATE INDEX IF NOT EXISTS idx_review_logs_student_date ON review_logs(student_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_review_log_words_log ON review_log_words(log_id, item_order);
+CREATE INDEX IF NOT EXISTS idx_review_log_chars_log ON review_log_chars(log_id, item_order, char_order);
 
 CREATE TABLE IF NOT EXISTS custom_lessons (
   student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
@@ -172,7 +198,22 @@ const openDatabaseWithSchema = (databasePath, schemaSql) => {
 
 export const openCatalogDatabase = (databasePath = defaultCatalogDatabasePath) => openDatabaseWithSchema(databasePath, catalogSchemaSql);
 
-export const openLearningDatabase = (databasePath = defaultLearningDatabasePath) => openDatabaseWithSchema(databasePath, learningSchemaSql);
+export const openLearningDatabase = (databasePath = defaultLearningDatabasePath) => {
+  const db = openDatabaseWithSchema(databasePath, learningSchemaSql);
+  migrateLearningDatabase(db);
+  return db;
+};
+
+const migrateLearningDatabase = (db) => {
+  const charStatColumns = new Set(db.prepare("PRAGMA table_info(char_stats)").all().map((column) => column.name));
+  if (!charStatColumns.has("streak")) {
+    db.exec("ALTER TABLE char_stats ADD COLUMN streak INTEGER NOT NULL DEFAULT 0");
+    db.exec("UPDATE char_stats SET streak = attempts WHERE mistakes = 0");
+  }
+  if (!charStatColumns.has("last_mistake_at")) {
+    db.exec("ALTER TABLE char_stats ADD COLUMN last_mistake_at TEXT");
+  }
+};
 
 export const requireCatalogDatabase = (databasePath = defaultCatalogDatabasePath) => {
   if (!existsSync(databasePath)) {
@@ -292,16 +333,39 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
     charStats[row.char] = {
       attempts: row.attempts,
       mistakes: row.mistakes,
+      streak: row.streak ?? (row.mistakes === 0 ? row.attempts : 0),
+      correctWordTexts: [],
+      wrongWordTexts: [],
       lastReviewedAt: row.last_reviewed_at || undefined,
+      lastMistakeAt: row.last_mistake_at || undefined,
     };
+  }
+  for (const row of allRows(learningDb, "SELECT char, word_text, correct_count, mistake_count FROM char_word_evidence WHERE student_id = ?", studentId)) {
+    const stat =
+      charStats[row.char] ||
+      (charStats[row.char] = {
+        attempts: 0,
+        mistakes: 0,
+        streak: 0,
+        correctWordTexts: [],
+        wrongWordTexts: [],
+      });
+    if (row.correct_count > 0) {
+      stat.correctWordTexts.push(row.word_text);
+    }
+    if (row.mistake_count > 0) {
+      stat.wrongWordTexts.push(row.word_text);
+    }
   }
   const logs = allRows(learningDb, "SELECT id, date FROM review_logs WHERE student_id = ? ORDER BY date DESC LIMIT 120", studentId).map((log) => {
     const items = allRows(learningDb, "SELECT word_id, is_wrong FROM review_log_words WHERE log_id = ? ORDER BY item_order", log.id);
+    const wrongChars = allRows(learningDb, "SELECT word_id, char FROM review_log_chars WHERE log_id = ? ORDER BY item_order, char_order", log.id);
     return {
       id: log.id,
       date: log.date,
       wordIds: items.map((item) => item.word_id),
       wrongWordIds: items.filter((item) => item.is_wrong).map((item) => item.word_id),
+      wrongChars: wrongChars.map((item) => ({ wordId: item.word_id, char: item.char })),
     };
   });
   const customLessons = allRows(
@@ -368,23 +432,48 @@ export const saveState = (learningDb, state, studentId = defaultStudentId) => {
       insertWordStat.run(studentId, wordId, stat.attempts || 0, stat.mistakes || 0, stat.streak || 0, stat.lastReviewedAt || null, stat.lastMistakeAt || null);
     }
 
+    learningDb.prepare("DELETE FROM char_word_evidence WHERE student_id = ?").run(studentId);
     learningDb.prepare("DELETE FROM char_stats WHERE student_id = ?").run(studentId);
     const insertCharStat = learningDb.prepare(
-      `INSERT INTO char_stats (student_id, char, attempts, mistakes, last_reviewed_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO char_stats (student_id, char, attempts, mistakes, streak, last_reviewed_at, last_mistake_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const insertCharEvidence = learningDb.prepare(
+      `INSERT INTO char_word_evidence (student_id, char, word_text, correct_count, mistake_count, last_reviewed_at, last_mistake_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const [char, stat] of Object.entries(state.charStats || {})) {
-      insertCharStat.run(studentId, char, stat.attempts || 0, stat.mistakes || 0, stat.lastReviewedAt || null);
+      insertCharStat.run(studentId, char, stat.attempts || 0, stat.mistakes || 0, stat.streak || 0, stat.lastReviewedAt || null, stat.lastMistakeAt || null);
+      const correctWordTexts = new Set((stat.correctWordTexts || []).filter(Boolean));
+      const wrongWordTexts = new Set((stat.wrongWordTexts || []).filter(Boolean));
+      const wordTexts = new Set([...correctWordTexts, ...wrongWordTexts]);
+      for (const wordText of wordTexts) {
+        insertCharEvidence.run(
+          studentId,
+          char,
+          wordText,
+          correctWordTexts.has(wordText) ? 1 : 0,
+          wrongWordTexts.has(wordText) ? 1 : 0,
+          stat.lastReviewedAt || null,
+          wrongWordTexts.has(wordText) ? stat.lastMistakeAt || null : null,
+        );
+      }
     }
 
     learningDb.prepare("DELETE FROM review_logs WHERE student_id = ?").run(studentId);
     const insertLog = learningDb.prepare("INSERT INTO review_logs (id, student_id, date) VALUES (?, ?, ?)");
     const insertLogWord = learningDb.prepare("INSERT INTO review_log_words (log_id, word_id, is_wrong, item_order) VALUES (?, ?, ?, ?)");
+    const insertLogChar = learningDb.prepare("INSERT INTO review_log_chars (log_id, word_id, char, item_order, char_order) VALUES (?, ?, ?, ?, ?)");
     for (const log of (state.logs || []).slice(0, 120)) {
       const wrongIds = new Set(log.wrongWordIds || []);
+      const wrongChars = log.wrongChars || [];
+      const wrongCharWordIds = new Set(wrongChars.map((item) => item.wordId));
       insertLog.run(log.id, studentId, log.date);
       for (const [index, wordId] of (log.wordIds || []).entries()) {
-        insertLogWord.run(log.id, wordId, wrongIds.has(wordId) ? 1 : 0, index);
+        insertLogWord.run(log.id, wordId, wrongIds.has(wordId) || wrongCharWordIds.has(wordId) ? 1 : 0, index);
+      }
+      for (const [index, item] of wrongChars.entries()) {
+        insertLogChar.run(log.id, item.wordId, item.char, Math.max(0, (log.wordIds || []).indexOf(item.wordId)), index);
       }
     }
 

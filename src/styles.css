@@ -262,6 +262,7 @@ textarea {
 .panel,
 .progress-summary,
 .today-card,
+.done-card,
 .review-bar {
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(219, 225, 232, 0.95);
@@ -333,6 +334,26 @@ textarea {
   color: var(--accent-dark);
   font-size: 46px;
   line-height: 1;
+}
+
+.done-card {
+  display: grid;
+  gap: 8px;
+  padding: 24px;
+}
+
+.done-card h3,
+.done-card p {
+  margin: 0;
+}
+
+.done-card h3 {
+  font-size: 24px;
+}
+
+.done-card > p:last-child {
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .panel {
@@ -629,12 +650,26 @@ textarea {
   color: var(--blue);
 }
 
+.card-status,
 .mark-button {
   font-size: 14px;
   min-width: 0;
   padding: 0 8px;
 }
 
+.card-status {
+  align-items: center;
+  border: 1px solid #d6e4de;
+  border-radius: 8px;
+  color: var(--accent-dark);
+  display: inline-flex;
+  font-weight: 800;
+  height: 34px;
+  justify-content: center;
+}
+
+.card-status.active,
+.char-mark-button.active,
 .mark-button.active {
   background: var(--red-soft);
   border-color: #e2a29c;
@@ -652,6 +687,18 @@ textarea {
   display: grid;
   gap: 4px;
   justify-items: center;
+}
+
+.char-wrong .mizige-cell {
+  border-color: rgba(181, 64, 59, 0.95);
+}
+
+.char-mark-button {
+  font-size: 13px;
+  gap: 3px;
+  height: 30px;
+  min-width: 54px;
+  padding: 0 8px;
 }
 
 .cell-pinyin {
@@ -843,6 +890,7 @@ textarea {
     grid-template-columns: 30px minmax(0, 1fr);
   }
 
+  .card-status,
   .mark-button {
     grid-column: 1 / -1;
   }
