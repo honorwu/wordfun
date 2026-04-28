@@ -4,7 +4,9 @@ dist/
 *.log
 *.tsbuildinfo
 
-/data/
+data/ziqu-learning.sqlite
+data/ziqu-learning.sqlite-*
+data/ziqu.sqlite
 
 .DS_Store
 Thumbs.db

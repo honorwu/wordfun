@@ -15,11 +15,11 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent, ReactElement } from "react";
-import { builtInLessonCount, builtInLessons, builtInWordCount } from "./data/builtInCurriculum";
-import { gradeNames } from "./data/curriculum";
+import { gradeNames } from "./data/metadata";
+import { fetchAppData, saveRemoteState } from "./lib/api";
 import { applyReviewResult, generatePractice, getEligibleLessons, getEligibleWords } from "./lib/scheduler";
-import { createDefaultState, exportState, loadState, saveState } from "./lib/storage";
-import type { AppState, CharacterCategory, DictationWord, Grade, Lesson, PracticeItem } from "./types";
+import { createDefaultState, exportState, normalizeState } from "./lib/storage";
+import type { AppState, CharacterCategory, CompanionDictionary, DictationWord, Grade, Lesson, PracticeItem } from "./types";
 
 const targetCount = 20;
 
@@ -87,25 +87,59 @@ const mergeLessonCatalog = (baseLessons: Lesson[], customLessons: Lesson[]) => {
 };
 
 function App() {
-  const [state, setState] = useState<AppState>(() => loadState());
+  const [state, setState] = useState<AppState>(() => createDefaultState());
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [companionWords, setCompanionWords] = useState<CompanionDictionary>({});
+  const [catalogInfo, setCatalogInfo] = useState({ builtInLessonCount: 0, builtInWordCount: 0 });
+  const [isReady, setIsReady] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("student");
   const [showAnswers, setShowAnswers] = useState(false);
   const [wrongIds, setWrongIds] = useState<Set<string>>(() => new Set());
   const [savedMessage, setSavedMessage] = useState("");
 
   useEffect(() => {
-    saveState(state);
-  }, [state]);
+    let active = true;
+    fetchAppData()
+      .then((data) => {
+        if (!active) {
+          return;
+        }
+        setLessons(data.lessons);
+        setCompanionWords(data.companionWords);
+        setCatalogInfo({ builtInLessonCount: data.builtInLessonCount, builtInWordCount: data.builtInWordCount });
+        setState(data.state);
+        setIsReady(true);
+      })
+      .catch((error: unknown) => {
+        if (!active) {
+          return;
+        }
+        setLoadError(error instanceof Error ? error.message : "加载数据库失败");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
-  const allLessons = useMemo(() => mergeLessonCatalog(builtInLessons, state.customLessons), [state.customLessons]);
+  useEffect(() => {
+    if (!isReady) {
+      return;
+    }
+    void saveRemoteState(state).catch((error: unknown) => {
+      setSavedMessage(error instanceof Error ? `保存失败：${error.message}` : "保存失败");
+    });
+  }, [isReady, state]);
+
+  const allLessons = useMemo(() => mergeLessonCatalog(lessons, state.customLessons), [lessons, state.customLessons]);
   const selectedLesson = allLessons.find((lesson) => lesson.id === state.progress.lessonId) ?? allLessons[0];
-  const selectedTerm = (selectedLesson.unit === 2 ? 2 : 1) satisfies Term;
+  const selectedTerm = (selectedLesson?.unit === 2 ? 2 : 1) satisfies Term;
   const eligibleLessons = useMemo(() => getEligibleLessons(allLessons, state.progress), [allLessons, state.progress]);
   const eligibleWords = useMemo(
-    () => getEligibleWords(allLessons, state.customWords, state.progress),
-    [allLessons, state.customWords, state.progress],
+    () => getEligibleWords(allLessons, state.customWords, state.progress, companionWords),
+    [allLessons, companionWords, state.customWords, state.progress],
   );
-  const practiceItems = useMemo(() => generatePractice(allLessons, state, targetCount), [allLessons, state]);
+  const practiceItems = useMemo(() => generatePractice(allLessons, state, targetCount, companionWords), [allLessons, companionWords, state]);
   const allKnownWords = useMemo(() => {
     const byId = new Map([...allLessons.flatMap((lesson) => lesson.words), ...state.customWords].map((word) => [word.id, word]));
     for (const word of eligibleWords) {
@@ -260,10 +294,7 @@ function App() {
     }
     try {
       const imported = JSON.parse(await file.text()) as AppState;
-      setState({
-        ...createDefaultState(),
-        ...imported,
-      });
+      setState(normalizeState(imported, state.progress));
       setSavedMessage("已导入备份。");
     } catch {
       setSavedMessage("导入失败，请检查 JSON 文件。");
@@ -284,7 +315,7 @@ function App() {
     setSavedMessage("练习记录已清空，词库保留。");
   };
 
-  const sheet = (
+  const sheet = selectedLesson ? (
     <PracticeSheet
       items={practiceItems}
       selectedLesson={selectedLesson}
@@ -293,7 +324,29 @@ function App() {
       toggleWrong={toggleWrong}
       wrongIds={wrongIds}
     />
-  );
+  ) : null;
+
+  if (loadError) {
+    return (
+      <main className="app-shell">
+        <section className="empty-state">
+          <h2>数据库加载失败</h2>
+          <p>{loadError}</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!isReady || !selectedLesson || !sheet) {
+    return (
+      <main className="app-shell">
+        <section className="empty-state">
+          <h2>正在加载词库</h2>
+          <p>从 SQLite 读取教材数据和学习记录。</p>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -339,8 +392,8 @@ function App() {
       ) : (
         <ParentDashboard
           allLessons={allLessons}
-          builtInLessonCount={builtInLessonCount}
-          builtInWordCount={builtInWordCount}
+          builtInLessonCount={catalogInfo.builtInLessonCount}
+          builtInWordCount={catalogInfo.builtInWordCount}
           categoryStats={categoryStats}
           eligibleLessons={eligibleLessons}
           eligibleWords={eligibleWords}

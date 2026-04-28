@@ -62,3 +62,11 @@ export interface PracticeItem {
   score: number;
   reasons: string[];
 }
+
+export interface DictationCompanion {
+  text: string;
+  pinyin: string;
+  chars: string[];
+}
+
+export type CompanionDictionary = Record<string, DictationCompanion[]>;

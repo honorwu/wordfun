@@ -1,16 +1,7 @@
-import { categoryWeights } from "../data/curriculum";
-import dictationCompanionData from "../data/dictationCompanions.json";
-import type { AppState, CharacterStat, DictationWord, Lesson, PracticeItem, Progress, WordStat } from "../types";
+import { categoryWeights } from "../data/metadata";
+import type { AppState, CharacterStat, CompanionDictionary, DictationCompanion, DictationWord, Lesson, PracticeItem, Progress, WordStat } from "../types";
 
 const dayMs = 24 * 60 * 60 * 1000;
-
-type DictationCompanion = {
-  text: string;
-  pinyin: string;
-  chars: string[];
-};
-
-const dictationCompanions = dictationCompanionData as Record<string, DictationCompanion[]>;
 
 const hanChars = (value: string) => Array.from(value).filter((char) => /\p{Script=Han}/u.test(char));
 
@@ -30,7 +21,7 @@ export const getEligibleLessons = (lessons: Lesson[], progress: Progress) => {
   return lessons.filter((lesson) => lessonOrder(lesson) <= selectedOrder);
 };
 
-export const getEligibleWords = (lessons: Lesson[], customWords: DictationWord[], progress: Progress) => {
+export const getEligibleWords = (lessons: Lesson[], customWords: DictationWord[], progress: Progress, companionWords: CompanionDictionary = {}) => {
   const lessonIds = new Set(getEligibleLessons(lessons, progress).map((lesson) => lesson.id));
   const selectedOrder = progressOrder(progress, lessons);
   const words = [
@@ -44,7 +35,7 @@ export const getEligibleWords = (lessons: Lesson[], customWords: DictationWord[]
     }),
   ];
 
-  return withDictationCompanions(words);
+  return withDictationCompanions(words, companionWords);
 };
 
 const buildCompanionCandidates = (words: DictationWord[]) => {
@@ -98,12 +89,12 @@ const companionWord = (
   };
 };
 
-const chooseGeneratedCompanion = (targetChar: string, eligibleChars: Set<string>) => {
-  const candidates = dictationCompanions[targetChar] ?? [];
+const chooseGeneratedCompanion = (targetChar: string, eligibleChars: Set<string>, companionWords: CompanionDictionary) => {
+  const candidates = companionWords[targetChar] ?? [];
   return candidates.find((candidate) => candidate.chars.every((char) => eligibleChars.has(char))) ?? candidates[0];
 };
 
-const withDictationCompanions = (words: DictationWord[]) => {
+const withDictationCompanions = (words: DictationWord[], companionWords: CompanionDictionary) => {
   const eligibleChars = new Set(words.flatMap((word) => word.chars));
   const candidatesByChar = buildCompanionCandidates(words);
 
@@ -122,7 +113,7 @@ const withDictationCompanions = (words: DictationWord[]) => {
       return companionWord(word, existingCompanion, eligibleChars);
     }
 
-    const generatedCompanion = chooseGeneratedCompanion(targetChar, eligibleChars);
+    const generatedCompanion = chooseGeneratedCompanion(targetChar, eligibleChars, companionWords);
     return generatedCompanion ? companionWord(word, generatedCompanion, eligibleChars) : word;
   });
 };
@@ -235,8 +226,8 @@ const withReason = (item: PracticeItem, reason: string): PracticeItem => ({
 
 const sortPracticeItems = (items: PracticeItem[]) => [...items].sort((a, b) => b.score - a.score || a.word.id.localeCompare(b.word.id));
 
-export const generatePractice = (lessons: Lesson[], state: AppState, targetCount = 20): PracticeItem[] => {
-  const eligibleWords = getEligibleWords(lessons, state.customWords, state.progress);
+export const generatePractice = (lessons: Lesson[], state: AppState, targetCount = 20, companionWords: CompanionDictionary = {}): PracticeItem[] => {
+  const eligibleWords = getEligibleWords(lessons, state.customWords, state.progress, companionWords);
   const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
   const selectedLesson = lessonById.get(state.progress.lessonId);
   const selectedOrder = progressOrder(state.progress, lessons);

@@ -1,6 +1,6 @@
 # 字趣
 
-一个面向上海小学五年制语文字词默写的本地网页应用。当前版本支持单个孩子使用，数据保存在浏览器本地。
+一个面向上海小学五年制语文字词默写的网页应用。当前版本支持单个孩子使用，教材词库、配词库、学习进度和练习记录保存在 SQLite 中。
 
 ## 功能
 
@@ -21,11 +21,32 @@ npm install
 npm run dev
 ```
 
-打开终端显示的本地地址即可使用。
+打开终端显示的 Vite 本地地址即可使用。`npm run dev` 会同时启动 API 服务和前端开发服务。启动前需要存在总字库数据库 `data/ziqu-catalog.sqlite`。
+
+生产运行：
+
+```bash
+npm run build
+npm run start
+```
+
+SQLite 默认拆成两个数据库，避免教材词库和学习记录互相干扰：
+
+- `data/ziqu-catalog.sqlite`：总字库，只放教材课次、词条、汉字索引和配词候选。
+- `data/ziqu-learning.sqlite`：学习库，只放当前进度、练习记录、词语/汉字统计和自定义补充数据。
+
+可以通过 `ZIQU_CATALOG_DB_PATH` 指定总字库文件，通过 `ZIQU_LEARNING_DB_PATH` 指定学习库文件，通过 `ZIQU_DATA_DIR` 指定默认数据目录。
+
+## 数据存储
+
+- 总字库表：`lessons`、`words`、`word_chars`、`companion_words`、`companion_word_chars`。
+- 学习库表：`students`、`progress`、`word_stats`、`char_stats`、`review_logs`、`review_log_words`、`custom_lessons`、`custom_words`、`custom_word_chars`。
+
+总字库 SQLite 是当前权威数据源；线上运行时由 Node API 读取 SQLite。学习记录只写入学习库，不写入总字库。
 
 ## 词库说明
 
-内置词库来自统编版小学语文 PDF 附录，当前导入 1-5 年级共 270 课、6388 个词条，包含识字表、写字表、词语表中的生字词。来源 PDF 是六年制统编版教材，不等同于上海五年制教材，正式使用时建议按孩子学校实际课本校对课题、拼音和多音字。
+内置词库来自统编版小学语文 PDF 附录，当前导入 1-5 年级共 308 课、6735 个词条，包含识字表、写字表、词语表和语文园地中的生字词。来源 PDF 是六年制统编版教材，不等同于上海五年制教材，正式使用时建议按孩子学校实际课本校对课题、拼音和多音字。
 
 家长后台支持批量导入完整教材数据，格式为：
 

@@ -1,15 +1,12 @@
-import { builtInLessons } from "../data/builtInCurriculum";
 import type { AppState, CharacterCategory, DictationWord, Grade, Lesson, Progress } from "../types";
 
-const STORAGE_KEY = "ziqu-state-v2";
-
-const defaultProgress: Progress = {
+const fallbackProgress: Progress = {
   grade: 3,
-  lessonId: builtInLessons.find((lesson) => lesson.grade === 3)?.id ?? builtInLessons[0].id,
+  lessonId: "",
 };
 
-export const createDefaultState = (): AppState => ({
-  progress: defaultProgress,
+export const createDefaultState = (progress: Progress = fallbackProgress): AppState => ({
+  progress,
   wordStats: {},
   charStats: {},
   customLessons: [],
@@ -29,27 +26,18 @@ const normalizeLesson = (lesson: Lesson): Lesson => ({
   words: lesson.words.map(normalizeWord),
 });
 
-export const loadState = (): AppState => {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return createDefaultState();
-    }
-
-    const parsed = JSON.parse(raw) as Partial<AppState>;
-    return {
-      ...createDefaultState(),
-      ...parsed,
-      customLessons: (parsed.customLessons ?? []).map(normalizeLesson),
-      customWords: (parsed.customWords ?? []).map(normalizeWord),
-    };
-  } catch {
-    return createDefaultState();
-  }
-};
-
-export const saveState = (state: AppState) => {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+export const normalizeState = (state: Partial<AppState>, fallback = fallbackProgress): AppState => {
+  const base = createDefaultState(fallback);
+  return {
+    ...base,
+    ...state,
+    progress: state.progress ?? base.progress,
+    customLessons: (state.customLessons ?? []).map(normalizeLesson),
+    customWords: (state.customWords ?? []).map(normalizeWord),
+    wordStats: state.wordStats ?? {},
+    charStats: state.charStats ?? {},
+    logs: state.logs ?? [],
+  };
 };
 
 export const exportState = (state: AppState) => {

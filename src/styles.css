@@ -106,6 +106,27 @@ textarea {
   padding: 22px;
 }
 
+.empty-state {
+  align-self: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  justify-self: center;
+  max-width: 520px;
+  padding: 28px;
+  text-align: center;
+}
+
+.empty-state h2 {
+  font-size: 1.25rem;
+  margin: 0 0 8px;
+}
+
+.empty-state p {
+  color: var(--muted);
+  margin: 0;
+}
+
 .app-header,
 .top-strip,
 .card-top,
