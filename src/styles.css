@@ -867,8 +867,14 @@ textarea {
 
   body {
     background: #fff;
-    print-color-adjust: exact;
-    -webkit-print-color-adjust: exact;
+    color: #111;
+    print-color-adjust: economy;
+    -webkit-print-color-adjust: economy;
+  }
+
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
   }
 
   .app-shell {
@@ -888,9 +894,9 @@ textarea {
   }
 
   .sheet {
+    background: #fff !important;
     border: 0;
     border-radius: 0;
-    box-shadow: none;
     width: 194mm;
   }
 
@@ -919,69 +925,102 @@ textarea {
   }
 
   .dictation-grid {
-    gap: 2mm;
-    grid-auto-rows: 22mm;
+    gap: 1.6mm;
+    grid-auto-rows: 24mm;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding: 3mm 0 2mm;
+    padding: 2mm 0 1.5mm;
   }
 
   .word-card {
-    background: transparent;
+    background: #fff !important;
     break-inside: avoid;
-    border-color: #d9c8b8;
-    gap: 1.5mm;
-    height: 22mm;
+    border-color: #b8b8b8;
+    gap: 0.8mm;
+    height: 24mm;
     min-height: 0;
     overflow: hidden;
-    padding: 1.5mm;
+    padding: 1.2mm;
+  }
+
+  .word-card.wrong {
+    background: #fff !important;
+  }
+
+  .word-card,
+  .number,
+  .mizige-cell {
+    color: #111;
   }
 
   .card-top {
     grid-template-columns: 5mm minmax(0, 1fr);
-    min-height: 5mm;
+    min-height: 4mm;
   }
 
   .number {
-    font-size: 12px;
-    height: 5mm;
-    width: 5mm;
+    background: #fff !important;
+    border-color: #9a9a9a;
+    font-size: 10px;
+    height: 4.4mm;
+    width: 4.4mm;
   }
 
   .prompt {
-    display: none;
+    display: block;
+    min-width: 0;
+  }
+
+  .origin {
+    color: #111;
+    display: block;
+    font-size: 8.5px;
+    line-height: 1.15;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .mizige-group {
     flex-wrap: nowrap;
-    gap: 1.2mm;
+    gap: 1mm;
     overflow: hidden;
   }
 
   .mizige-wrap {
-    gap: 0.7mm;
+    gap: 0.45mm;
   }
 
   .cell-pinyin {
-    font-size: 9px;
+    color: #111;
+    display: block;
+    font-size: 8.5px;
+    font-weight: 600;
     line-height: 1;
-    min-height: 3mm;
+    min-height: 2.6mm;
+    visibility: visible;
   }
 
   .mizige-cell {
-    border-color: #a04d49;
-    font-size: 22px;
-    height: 11mm;
-    width: 11mm;
+    background: #fff !important;
+    border-color: #9a9a9a;
+    font-size: 20px;
+    height: 10mm;
+    width: 10mm;
   }
 
   .mizige-v,
   .mizige-h {
-    border-color: #7385a6;
+    border-color: #d6d6d6;
+    border-style: dashed;
+    border-width: 0.5px;
+    filter: none;
+    opacity: 1;
+    outline: 0;
   }
 
   .mizige-d1,
   .mizige-d2 {
-    border-color: #b36b67;
+    display: none;
   }
 
   .sheet-foot {
