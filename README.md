@@ -10,7 +10,7 @@
 - 每天生成约 20 个默写词，按“新课优先、错题回炉、到期复习、旧课穿插”的比例调度，并按孩子的掌握记录动态补位。
 - 默写单自动写日期，拼音在米字格上方，可直接打印；核对时显示答案并标记错误。
 - 保存练习结果后，应用会记录词语和生字掌握情况。
-- 抽到识字表、写字表里的单个生字时，会自动配成词语默写，并尽量搭配已经学过的字一起复习。
+- 抽到识字表、写字表里的单个生字时，会优先从已学课本词语里找常用配词；古诗、文言文课保留原字词直接默写。
 - 支持手动补充词语，包含一类、二类、四类字标记。
 - 支持导出和导入本地备份。
 
@@ -39,14 +39,22 @@ SQLite 默认拆成两个数据库，避免教材词库和学习记录互相干�
 
 ## 数据存储
 
-- 总字库表：`lessons`、`words`、`word_chars`、`companion_words`、`companion_word_chars`。
-- 学习库表：`students`、`progress`、`word_stats`、`char_stats`、`review_logs`、`review_log_words`、`custom_lessons`、`custom_words`、`custom_word_chars`。
+- 总字库表：`lessons`、`lesson_chars`、`textbook_words`、`char_companion_words`。
+- 学习库表：`students`、`progress`、`word_stats`、`char_stats`、`char_word_evidence`、`review_logs`、`review_log_words`、`review_log_chars`、`custom_lessons`、`custom_words`、`custom_word_chars`。
 
 总字库 SQLite 是当前权威数据源；线上运行时由 Node API 读取 SQLite。学习记录只写入学习库，不写入总字库。
 
+重新生成总字库：
+
+```bash
+npm run rebuild:catalog
+```
+
+脚本会删除并重建 `data/ziqu-catalog.sqlite`，从统编版小学语文 PDF 附录抽取课次、识字表、写字表和词语表。每个课内字固定写入 2 个配词：优先使用课本词语；课本词语不足时，使用公开常用词表和分词词典兜底。古诗、文言文和传统韵文课会标记 `direct_dictation`，应用侧保留原字词直接默写。
+
 ## 词库说明
 
-内置词库来自统编版小学语文 PDF 附录，当前导入 1-5 年级共 308 课、6735 个词条，包含识字表、写字表、词语表和语文园地中的生字词。来源 PDF 是六年制统编版教材，不等同于上海五年制教材，正式使用时建议按孩子学校实际课本校对课题、拼音和多音字。
+内置词库来自统编版小学语文 PDF 附录，当前导入 1-5 年级上下册共 352 个课内条目、5395 条一类/二类字记录、4950 个按课去重的生字实例，并为每个生字实例固定 2 个配词。来源 PDF 是六年制统编版教材，不等同于上海五年制教材，正式使用时建议按孩子学校实际课本校对课题、拼音和多音字。
 
 家长后台支持批量导入完整教材数据，格式为：
 

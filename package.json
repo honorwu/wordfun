@@ -7,6 +7,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:client": "vite --host 127.0.0.1",
     "dev:server": "node server/index.mjs",
+    "rebuild:catalog": "node scripts/rebuild-catalog-from-textbooks.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "node server/index.mjs"
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "pinyin-pro": "^3.28.1",
     "typescript": "^5.7.3"
   }
 }

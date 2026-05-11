@@ -19,59 +19,79 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS lessons (
   id TEXT PRIMARY KEY,
-  grade INTEGER NOT NULL,
-  unit REAL NOT NULL,
-  number REAL NOT NULL,
+  grade INTEGER NOT NULL CHECK (grade BETWEEN 1 AND 6),
+  term INTEGER NOT NULL CHECK (term IN (1, 2)),
+  term_name TEXT NOT NULL CHECK (term_name IN ('上册', '下册')),
+  section TEXT NOT NULL,
+  lesson_number REAL NOT NULL,
+  sort_order INTEGER NOT NULL,
   title TEXT NOT NULL,
-  source TEXT NOT NULL,
-  UNIQUE (grade, unit, number, source)
+  lesson_kind TEXT NOT NULL CHECK (lesson_kind IN ('regular', 'garden', 'pinyin', 'classical_poetry', 'classical_prose', 'traditional_rhyme')),
+  is_classical INTEGER NOT NULL CHECK (is_classical IN (0, 1)),
+  direct_dictation INTEGER NOT NULL CHECK (direct_dictation IN (0, 1)),
+  source_pdf TEXT NOT NULL,
+  UNIQUE (grade, term, section, lesson_number, title)
 );
 
-CREATE TABLE IF NOT EXISTS words (
-  id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS lesson_chars (
   lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
-  text TEXT NOT NULL,
-  pinyin TEXT NOT NULL,
+  char TEXT NOT NULL,
   category TEXT NOT NULL CHECK (category IN ('一类', '二类')),
-  grade INTEGER NOT NULL,
-  lesson_title TEXT NOT NULL,
-  word_order INTEGER NOT NULL,
-  source TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS word_chars (
-  word_id TEXT NOT NULL REFERENCES words(id) ON DELETE CASCADE,
-  char TEXT NOT NULL,
+  pinyin TEXT,
   char_order INTEGER NOT NULL,
-  PRIMARY KEY (word_id, char)
+  source_table TEXT NOT NULL CHECK (source_table IN ('识字表', '写字表')),
+  PRIMARY KEY (lesson_id, char, category)
 );
 
-CREATE INDEX IF NOT EXISTS idx_lessons_scope ON lessons(grade, unit, number);
-CREATE INDEX IF NOT EXISTS idx_words_lesson ON words(lesson_id, word_order);
-CREATE INDEX IF NOT EXISTS idx_words_text ON words(text);
-CREATE INDEX IF NOT EXISTS idx_word_chars_char ON word_chars(char);
-
-CREATE TABLE IF NOT EXISTS companion_words (
-  target_char TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS textbook_words (
+  id TEXT PRIMARY KEY,
+  lesson_id TEXT REFERENCES lessons(id) ON DELETE CASCADE,
   text TEXT NOT NULL,
   pinyin TEXT NOT NULL,
-  companion_order INTEGER NOT NULL,
-  PRIMARY KEY (target_char, text, pinyin)
+  word_order INTEGER NOT NULL,
+  source_table TEXT NOT NULL CHECK (source_table IN ('词语表', '课文配词')),
+  UNIQUE (lesson_id, text)
 );
 
-CREATE TABLE IF NOT EXISTS companion_word_chars (
-  target_char TEXT NOT NULL,
-  companion_text TEXT NOT NULL,
-  companion_pinyin TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS char_companion_words (
+  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
   char TEXT NOT NULL,
-  char_order INTEGER NOT NULL,
-  PRIMARY KEY (target_char, companion_text, companion_pinyin, char),
-  FOREIGN KEY (target_char, companion_text, companion_pinyin)
-    REFERENCES companion_words(target_char, text, pinyin)
-    ON DELETE CASCADE
+  word TEXT NOT NULL,
+  pinyin TEXT NOT NULL,
+  companion_rank INTEGER NOT NULL CHECK (companion_rank >= 1),
+  source TEXT NOT NULL CHECK (source IN ('textbook_same_lesson', 'textbook_other_lesson', 'common_word_list', 'manual_override')),
+  source_lesson_id TEXT REFERENCES lessons(id) ON DELETE SET NULL,
+  frequency INTEGER,
+  PRIMARY KEY (lesson_id, char, companion_rank),
+  UNIQUE (lesson_id, char, word)
 );
 
-CREATE INDEX IF NOT EXISTS idx_companion_chars_char ON companion_word_chars(char);
+CREATE TABLE IF NOT EXISTS companion_word_overrides (
+  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+  char TEXT NOT NULL,
+  companion_rank INTEGER NOT NULL CHECK (companion_rank >= 1),
+  word TEXT NOT NULL,
+  pinyin TEXT NOT NULL,
+  note TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (lesson_id, char, companion_rank),
+  UNIQUE (lesson_id, char, word)
+);
+
+CREATE TABLE IF NOT EXISTS companion_word_blocks (
+  lesson_id TEXT REFERENCES lessons(id) ON DELETE CASCADE,
+  char TEXT,
+  word TEXT NOT NULL,
+  reason TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_lessons_scope ON lessons(grade, term, sort_order);
+CREATE INDEX IF NOT EXISTS idx_lesson_chars_char ON lesson_chars(char, category);
+CREATE INDEX IF NOT EXISTS idx_textbook_words_text ON textbook_words(text);
+CREATE INDEX IF NOT EXISTS idx_companions_char ON char_companion_words(char, source);
+CREATE INDEX IF NOT EXISTS idx_companion_overrides_scope ON companion_word_overrides(lesson_id, char);
+CREATE INDEX IF NOT EXISTS idx_companion_blocks_word ON companion_word_blocks(word);
 `;
 
 export const learningSchemaSql = `
@@ -242,8 +262,8 @@ const allRows = (db, sql, ...params) => db.prepare(sql).all(...params);
 const oneRow = (db, sql, ...params) => db.prepare(sql).get(...params);
 
 const defaultProgress = (catalogDb) =>
-  oneRow(catalogDb, "SELECT id AS lesson_id, grade FROM lessons WHERE grade = 3 ORDER BY unit, number LIMIT 1") ||
-  oneRow(catalogDb, "SELECT id AS lesson_id, grade FROM lessons ORDER BY grade, unit, number LIMIT 1") || {
+  oneRow(catalogDb, "SELECT id AS lesson_id, grade FROM lessons WHERE grade = 3 ORDER BY term, sort_order LIMIT 1") ||
+  oneRow(catalogDb, "SELECT id AS lesson_id, grade FROM lessons ORDER BY grade, term, sort_order LIMIT 1") || {
     grade: 3,
     lesson_id: "",
   };
@@ -262,20 +282,38 @@ export const ensureDefaultStudent = (learningDb, catalogDb, studentId = defaultS
 };
 
 export const getLessons = (catalogDb) => {
-  const lessons = allRows(catalogDb, "SELECT id, grade, unit, number, title FROM lessons ORDER BY grade, unit, number");
-  const words = allRows(catalogDb, "SELECT id, lesson_id, text, pinyin, category, grade, lesson_title FROM words ORDER BY lesson_id, word_order");
-  const chars = allRows(catalogDb, "SELECT word_id, char FROM word_chars ORDER BY word_id, char_order");
-  const charsByWord = new Map();
-  for (const row of chars) {
-    charsByWord.set(row.word_id, [...(charsByWord.get(row.word_id) || []), row.char]);
-  }
+  const lessons = allRows(
+    catalogDb,
+    `SELECT id, grade, term AS unit, lesson_number AS number, sort_order, title, lesson_kind, direct_dictation
+     FROM lessons
+     ORDER BY grade, term, sort_order`,
+  );
+  const words = allRows(
+    catalogDb,
+    `SELECT
+       lc.lesson_id,
+       lc.char,
+       COALESCE(MAX(CASE WHEN lc.category = '一类' THEN '一类' END), '二类') AS category,
+       COALESCE(MAX(lc.pinyin), '') AS pinyin,
+       MIN(lc.char_order) AS word_order,
+       l.grade,
+       l.title AS lesson_title
+     FROM lesson_chars lc
+     JOIN lessons l ON l.id = lc.lesson_id
+     GROUP BY lc.lesson_id, lc.char
+     ORDER BY lc.lesson_id, word_order`,
+  );
+  const companionRows = allRows(
+    catalogDb,
+    "SELECT lesson_id, char, word, pinyin FROM char_companion_words ORDER BY lesson_id, char, companion_rank",
+  );
   const wordsByLesson = new Map();
   for (const row of words) {
     const word = {
-      id: row.id,
-      text: row.text,
+      id: `${row.lesson_id}-char-${row.char}`,
+      text: row.char,
       pinyin: row.pinyin,
-      chars: charsByWord.get(row.id) || [],
+      chars: [row.char],
       grade: row.grade,
       lessonId: row.lesson_id,
       lessonTitle: row.lesson_title,
@@ -283,34 +321,40 @@ export const getLessons = (catalogDb) => {
     };
     wordsByLesson.set(row.lesson_id, [...(wordsByLesson.get(row.lesson_id) || []), word]);
   }
+  const companionsByLesson = new Map();
+  for (const row of companionRows) {
+    const lessonCompanions = companionsByLesson.get(row.lesson_id) || {};
+    lessonCompanions[row.char] = [
+      ...(lessonCompanions[row.char] || []),
+      { text: row.word, pinyin: row.pinyin, chars: Array.from(row.word).filter((char) => /\p{Script=Han}/u.test(char)) },
+    ];
+    companionsByLesson.set(row.lesson_id, lessonCompanions);
+  }
   return lessons.map((lesson) => ({
     id: lesson.id,
     grade: lesson.grade,
     unit: lesson.unit,
     number: lesson.number,
+    sortOrder: lesson.sort_order,
     title: lesson.title,
+    lessonKind: lesson.lesson_kind,
+    directDictation: Boolean(lesson.direct_dictation),
     words: wordsByLesson.get(lesson.id) || [],
+    textCompanions: companionsByLesson.get(lesson.id) || {},
   }));
 };
 
 export const getCompanionWords = (catalogDb) => {
-  const rows = allRows(catalogDb, "SELECT target_char, text, pinyin FROM companion_words ORDER BY target_char, companion_order");
-  const chars = allRows(
-    catalogDb,
-    "SELECT target_char, companion_text, companion_pinyin, char FROM companion_word_chars ORDER BY target_char, companion_text, companion_pinyin, char_order",
-  );
-  const charsByCompanion = new Map();
-  for (const row of chars) {
-    const key = `${row.target_char}\u0000${row.companion_text}\u0000${row.companion_pinyin}`;
-    charsByCompanion.set(key, [...(charsByCompanion.get(key) || []), row.char]);
-  }
+  const rows = allRows(catalogDb, "SELECT char, word, pinyin FROM char_companion_words ORDER BY char, companion_rank");
   const companions = {};
+  const seen = new Set();
   for (const row of rows) {
-    const key = `${row.target_char}\u0000${row.text}\u0000${row.pinyin}`;
-    companions[row.target_char] = [
-      ...(companions[row.target_char] || []),
-      { text: row.text, pinyin: row.pinyin, chars: charsByCompanion.get(key) || [] },
-    ];
+    const key = `${row.char}\u0000${row.word}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    companions[row.char] = [...(companions[row.char] || []), { text: row.word, pinyin: row.pinyin, chars: Array.from(row.word) }];
   }
   return companions;
 };

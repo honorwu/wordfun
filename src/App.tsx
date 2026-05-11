@@ -665,10 +665,10 @@ function ParentDashboard({
           <div className="status-callout">
             <strong>已内置统编版 1-5 年级上下册词库</strong>
             <span>
-              内置：{builtInLessonCount} 课 / {builtInWordCount} 个词条。
+              内置：{builtInLessonCount} 个课内条目 / {builtInWordCount} 个生字项。
             </span>
           </div>
-          <p className="hint">这批数据来自统编版 PDF 附录中的识字表、写字表、词语表，并会逐步补充语文园地中的词语。</p>
+          <p className="hint">这批数据来自统编版 PDF 附录中的识字表、写字表、词语表，每个课内字固定保留两个配词候选。</p>
         </div>
 
         <div className="panel">

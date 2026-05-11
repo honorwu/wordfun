@@ -1,5 +1,5 @@
 import { categoryWeights } from "../data/metadata";
-import type { AppState, CharacterStat, CompanionDictionary, DictationCompanion, DictationWord, Lesson, PracticeItem, Progress, WordStat } from "../types";
+import type { AppState, CharacterStat, CompanionDictionary, DictationWord, Lesson, PracticeItem, Progress, WordStat } from "../types";
 
 const dayMs = 24 * 60 * 60 * 1000;
 const masteryNetCorrect = 2;
@@ -14,7 +14,8 @@ export const reviewCharsForWord = (word: DictationWord) => uniqueChars(hanChars(
 
 const hanLength = (value: string) => hanChars(value).length;
 
-export const lessonOrder = (lesson: Pick<Lesson, "grade" | "unit" | "number">) => lesson.grade * 1000 + lesson.unit * 100 + lesson.number;
+export const lessonOrder = (lesson: Pick<Lesson, "grade" | "unit" | "number" | "sortOrder">) =>
+  lesson.grade * 10000 + lesson.unit * 1000 + (lesson.sortOrder ?? lesson.number);
 
 export const progressOrder = (progress: Progress, lessons: Lesson[]) => {
   const selected = lessons.find((lesson) => lesson.id === progress.lessonId);
@@ -40,14 +41,37 @@ export const getEligibleWords = (lessons: Lesson[], customWords: DictationWord[]
     }),
   ];
 
-  return withDictationCompanions(words, companionWords);
+  return withDictationCompanions(words, lessons, companionWords);
 };
 
-const buildCompanionCandidates = (words: DictationWord[]) => {
+const directDictationLessonTitles = new Set([
+  "对韵歌",
+  "江南",
+  "画",
+  "静夜思",
+  "古对今",
+  "人之初",
+  "司马光",
+  "守株待兔",
+  "精卫填海",
+  "王戎不取道旁李",
+  "古人谈读书",
+  "少年中国说（节选）",
+  "自相矛盾",
+  "杨氏之子",
+]);
+
+const isDirectDictationLesson = (lesson?: Pick<Lesson, "title" | "directDictation">) =>
+  Boolean(lesson?.directDictation || (lesson && (lesson.title.includes("古诗") || lesson.title.includes("文言文") || directDictationLessonTitles.has(lesson.title))));
+
+const buildCompanionCandidates = (words: DictationWord[], lessonById: Map<string, Lesson>) => {
   const byChar = new Map<string, DictationWord[]>();
   for (const word of words) {
+    if (isDirectDictationLesson(lessonById.get(word.lessonId))) {
+      continue;
+    }
     const chars = uniqueChars(hanChars(word.text));
-    if (chars.length < 2 || chars.length > 6 || !word.pinyin) {
+    if (chars.length < 2 || chars.length > 4 || !word.pinyin) {
       continue;
     }
     for (const char of chars) {
@@ -94,22 +118,24 @@ const companionWord = (
   };
 };
 
-const chooseGeneratedCompanion = (targetChar: string, eligibleChars: Set<string>, companionWords: CompanionDictionary) => {
-  const candidates = companionWords[targetChar] ?? [];
-  return candidates.find((candidate) => candidate.chars.every((char) => eligibleChars.has(char))) ?? candidates[0];
-};
-
-const withDictationCompanions = (words: DictationWord[], companionWords: CompanionDictionary) => {
+const withDictationCompanions = (words: DictationWord[], lessons: Lesson[], companionWords: CompanionDictionary) => {
+  const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
   const eligibleChars = new Set(words.flatMap((word) => word.chars));
-  const candidatesByChar = buildCompanionCandidates(words);
+  const candidatesByChar = buildCompanionCandidates(words, lessonById);
 
   return words.map((word) => {
     const chars = hanChars(word.text);
-    if (chars.length !== 1) {
+    if (chars.length !== 1 || isDirectDictationLesson(lessonById.get(word.lessonId))) {
       return word;
     }
 
     const targetChar = chars[0];
+    const lesson = lessonById.get(word.lessonId);
+    const fixedCompanion = lesson?.textCompanions?.[targetChar]?.[0] ?? companionWords[targetChar]?.[0];
+    if (fixedCompanion) {
+      return companionWord(word, fixedCompanion, eligibleChars);
+    }
+
     const existingCompanion = (candidatesByChar.get(targetChar) ?? [])
       .map((candidate) => ({ candidate, score: companionScore(word, candidate, targetChar, eligibleChars) }))
       .sort((a, b) => b.score - a.score || hanLength(a.candidate.text) - hanLength(b.candidate.text))[0]?.candidate;
@@ -118,8 +144,7 @@ const withDictationCompanions = (words: DictationWord[], companionWords: Compani
       return companionWord(word, existingCompanion, eligibleChars);
     }
 
-    const generatedCompanion = chooseGeneratedCompanion(targetChar, eligibleChars, companionWords);
-    return generatedCompanion ? companionWord(word, generatedCompanion, eligibleChars) : word;
+    return word;
   });
 };
 

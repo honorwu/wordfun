@@ -18,8 +18,12 @@ export interface Lesson {
   grade: Grade;
   unit: number;
   number: number;
+  sortOrder?: number;
   title: string;
+  lessonKind?: "regular" | "garden" | "pinyin" | "classical_poetry" | "classical_prose" | "traditional_rhyme";
+  directDictation?: boolean;
   words: DictationWord[];
+  textCompanions?: CompanionDictionary;
 }
 
 export interface Progress {
