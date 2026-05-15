@@ -17,81 +17,149 @@ export const defaultStudentId = process.env.ZIQU_STUDENT_ID || "default-student"
 export const catalogSchemaSql = `
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS catalog_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS source_files (
+  path TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('word_table', 'classical_text', 'summary')),
+  grade INTEGER CHECK (grade BETWEEN 1 AND 6),
+  term INTEGER CHECK (term IN (1, 2)),
+  sha256 TEXT NOT NULL,
+  imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS lessons (
   id TEXT PRIMARY KEY,
   grade INTEGER NOT NULL CHECK (grade BETWEEN 1 AND 6),
   term INTEGER NOT NULL CHECK (term IN (1, 2)),
   term_name TEXT NOT NULL CHECK (term_name IN ('上册', '下册')),
+  unit_name TEXT NOT NULL,
+  unit_index INTEGER,
   section TEXT NOT NULL,
   lesson_number REAL NOT NULL,
   sort_order INTEGER NOT NULL,
   title TEXT NOT NULL,
+  lesson_type TEXT NOT NULL CHECK (lesson_type IN ('正常课文', '古诗词', '其他')),
   lesson_kind TEXT NOT NULL CHECK (lesson_kind IN ('regular', 'garden', 'pinyin', 'classical_poetry', 'classical_prose', 'traditional_rhyme')),
   is_classical INTEGER NOT NULL CHECK (is_classical IN (0, 1)),
   direct_dictation INTEGER NOT NULL CHECK (direct_dictation IN (0, 1)),
-  source_pdf TEXT NOT NULL,
+  source_file TEXT NOT NULL REFERENCES source_files(path) ON DELETE RESTRICT,
+  source_row INTEGER NOT NULL,
   UNIQUE (grade, term, section, lesson_number, title)
 );
 
-CREATE TABLE IF NOT EXISTS lesson_chars (
+CREATE TABLE IF NOT EXISTS characters (
+  char TEXT PRIMARY KEY,
+  first_pinyin TEXT,
+  first_lesson_id TEXT REFERENCES lessons(id) ON DELETE SET NULL,
+  first_grade INTEGER CHECK (first_grade BETWEEN 1 AND 6),
+  first_term INTEGER CHECK (first_term IN (1, 2))
+);
+
+CREATE TABLE IF NOT EXISTS lesson_characters (
   lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
   char TEXT NOT NULL,
   category TEXT NOT NULL CHECK (category IN ('一类', '二类')),
   pinyin TEXT,
   char_order INTEGER NOT NULL,
-  source_table TEXT NOT NULL CHECK (source_table IN ('识字表', '写字表')),
+  source_column TEXT NOT NULL CHECK (source_column IN ('识字表', '写字表')),
   PRIMARY KEY (lesson_id, char, category)
 );
 
-CREATE TABLE IF NOT EXISTS textbook_words (
+CREATE TABLE IF NOT EXISTS words (
   id TEXT PRIMARY KEY,
-  lesson_id TEXT REFERENCES lessons(id) ON DELETE CASCADE,
   text TEXT NOT NULL,
   pinyin TEXT NOT NULL,
+  word_kind TEXT NOT NULL CHECK (word_kind IN ('textbook', 'supplement', 'classical_title', 'classical_line')),
+  source_file TEXT NOT NULL REFERENCES source_files(path) ON DELETE RESTRICT,
+  source_row INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS word_characters (
+  word_id TEXT NOT NULL REFERENCES words(id) ON DELETE CASCADE,
+  char TEXT NOT NULL,
+  char_order INTEGER NOT NULL,
+  PRIMARY KEY (word_id, char, char_order)
+);
+
+CREATE TABLE IF NOT EXISTS lesson_words (
+  id TEXT PRIMARY KEY,
+  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+  word_id TEXT NOT NULL REFERENCES words(id) ON DELETE CASCADE,
   word_order INTEGER NOT NULL,
-  source_table TEXT NOT NULL CHECK (source_table IN ('词语表', '课文配词')),
-  UNIQUE (lesson_id, text)
+  source_column TEXT NOT NULL CHECK (source_column IN ('词语表', '未覆盖生字组词', '古诗词标题', '古诗词正文')),
+  target_char TEXT,
+  UNIQUE (lesson_id, word_id, source_column, target_char)
+);
+
+CREATE TABLE IF NOT EXISTS lesson_uncovered_characters (
+  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+  char TEXT NOT NULL,
+  pinyin TEXT NOT NULL,
+  source_file TEXT NOT NULL REFERENCES source_files(path) ON DELETE RESTRICT,
+  source_row INTEGER NOT NULL,
+  PRIMARY KEY (lesson_id, char)
 );
 
 CREATE TABLE IF NOT EXISTS char_companion_words (
   lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
   char TEXT NOT NULL,
+  word_id TEXT NOT NULL REFERENCES words(id) ON DELETE CASCADE,
   word TEXT NOT NULL,
   pinyin TEXT NOT NULL,
   companion_rank INTEGER NOT NULL CHECK (companion_rank >= 1),
-  source TEXT NOT NULL CHECK (source IN ('textbook_same_lesson', 'textbook_other_lesson', 'common_word_list', 'manual_override')),
+  source TEXT NOT NULL CHECK (source IN ('textbook_word', 'supplement_word')),
   source_lesson_id TEXT REFERENCES lessons(id) ON DELETE SET NULL,
-  frequency INTEGER,
   PRIMARY KEY (lesson_id, char, companion_rank),
   UNIQUE (lesson_id, char, word)
 );
 
-CREATE TABLE IF NOT EXISTS companion_word_overrides (
-  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
-  char TEXT NOT NULL,
-  companion_rank INTEGER NOT NULL CHECK (companion_rank >= 1),
-  word TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS classical_texts (
+  id TEXT PRIMARY KEY,
+  lesson_id TEXT REFERENCES lessons(id) ON DELETE SET NULL,
+  grade INTEGER NOT NULL CHECK (grade BETWEEN 1 AND 6),
+  term INTEGER NOT NULL CHECK (term IN (1, 2)),
+  unit_index INTEGER,
+  title TEXT NOT NULL,
+  title_pinyin TEXT NOT NULL,
+  author TEXT,
+  dynasty TEXT,
+  source_label TEXT,
+  source_file TEXT NOT NULL REFERENCES source_files(path) ON DELETE RESTRICT,
+  text_order INTEGER NOT NULL,
+  UNIQUE (source_file, title, text_order)
+);
+
+CREATE TABLE IF NOT EXISTS classical_lines (
+  text_id TEXT NOT NULL REFERENCES classical_texts(id) ON DELETE CASCADE,
+  line_order INTEGER NOT NULL,
+  text TEXT NOT NULL,
   pinyin TEXT NOT NULL,
-  note TEXT,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (lesson_id, char, companion_rank),
-  UNIQUE (lesson_id, char, word)
-);
-
-CREATE TABLE IF NOT EXISTS companion_word_blocks (
-  lesson_id TEXT REFERENCES lessons(id) ON DELETE CASCADE,
-  char TEXT,
-  word TEXT NOT NULL,
-  reason TEXT,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  PRIMARY KEY (text_id, line_order)
 );
 
 CREATE INDEX IF NOT EXISTS idx_lessons_scope ON lessons(grade, term, sort_order);
-CREATE INDEX IF NOT EXISTS idx_lesson_chars_char ON lesson_chars(char, category);
-CREATE INDEX IF NOT EXISTS idx_textbook_words_text ON textbook_words(text);
+CREATE INDEX IF NOT EXISTS idx_lesson_characters_char ON lesson_characters(char, category);
+CREATE INDEX IF NOT EXISTS idx_words_text ON words(text);
+CREATE INDEX IF NOT EXISTS idx_word_characters_char ON word_characters(char);
+CREATE INDEX IF NOT EXISTS idx_lesson_words_scope ON lesson_words(lesson_id, word_order);
+CREATE INDEX IF NOT EXISTS idx_lesson_uncovered_characters_char ON lesson_uncovered_characters(char);
 CREATE INDEX IF NOT EXISTS idx_companions_char ON char_companion_words(char, source);
-CREATE INDEX IF NOT EXISTS idx_companion_overrides_scope ON companion_word_overrides(lesson_id, char);
-CREATE INDEX IF NOT EXISTS idx_companion_blocks_word ON companion_word_blocks(word);
+CREATE INDEX IF NOT EXISTS idx_classical_texts_scope ON classical_texts(grade, term, unit_index, text_order);
+CREATE INDEX IF NOT EXISTS idx_classical_lines_text ON classical_lines(text);
+
+CREATE VIEW IF NOT EXISTS lesson_chars AS
+SELECT lesson_id, char, category, pinyin, char_order, source_column AS source_table
+FROM lesson_characters;
+
+CREATE VIEW IF NOT EXISTS textbook_words AS
+SELECT lw.id, lw.lesson_id, w.text, w.pinyin, lw.word_order, lw.source_column AS source_table
+FROM lesson_words lw
+JOIN words w ON w.id = lw.word_id
+WHERE lw.source_column = '词语表';
 `;
 
 export const learningSchemaSql = `
@@ -144,6 +212,23 @@ CREATE TABLE IF NOT EXISTS char_word_evidence (
 );
 
 CREATE INDEX IF NOT EXISTS idx_char_word_evidence_student_char ON char_word_evidence(student_id, char);
+
+CREATE TABLE IF NOT EXISTS unsuitable_words (
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  word_id TEXT NOT NULL,
+  text TEXT NOT NULL,
+  pinyin TEXT NOT NULL,
+  grade INTEGER NOT NULL,
+  lesson_id TEXT NOT NULL,
+  lesson_title TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('一类', '二类')),
+  flagged_count INTEGER NOT NULL DEFAULT 1,
+  first_flagged_at TEXT NOT NULL,
+  last_flagged_at TEXT NOT NULL,
+  PRIMARY KEY (student_id, word_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_unsuitable_words_student_date ON unsuitable_words(student_id, last_flagged_at DESC);
 
 CREATE TABLE IF NOT EXISTS review_logs (
   id TEXT PRIMARY KEY,
@@ -262,8 +347,23 @@ const allRows = (db, sql, ...params) => db.prepare(sql).all(...params);
 const oneRow = (db, sql, ...params) => db.prepare(sql).get(...params);
 
 const defaultProgress = (catalogDb) =>
-  oneRow(catalogDb, "SELECT id AS lesson_id, grade FROM lessons WHERE grade = 3 ORDER BY term, sort_order LIMIT 1") ||
-  oneRow(catalogDb, "SELECT id AS lesson_id, grade FROM lessons ORDER BY grade, term, sort_order LIMIT 1") || {
+  oneRow(
+    catalogDb,
+    `SELECT id AS lesson_id, grade
+     FROM lessons
+     WHERE grade = 3
+       AND EXISTS (SELECT 1 FROM lesson_characters lc WHERE lc.lesson_id = lessons.id)
+     ORDER BY term, sort_order
+     LIMIT 1`,
+  ) ||
+  oneRow(
+    catalogDb,
+    `SELECT id AS lesson_id, grade
+     FROM lessons
+     WHERE EXISTS (SELECT 1 FROM lesson_characters lc WHERE lc.lesson_id = lessons.id)
+     ORDER BY grade, term, sort_order
+     LIMIT 1`,
+  ) || {
     grade: 3,
     lesson_id: "",
   };
@@ -286,6 +386,11 @@ export const getLessons = (catalogDb) => {
     catalogDb,
     `SELECT id, grade, term AS unit, lesson_number AS number, sort_order, title, lesson_kind, direct_dictation
      FROM lessons
+     WHERE EXISTS (
+       SELECT 1
+       FROM lesson_characters lc
+       WHERE lc.lesson_id = lessons.id
+     )
      ORDER BY grade, term, sort_order`,
   );
   const words = allRows(
@@ -294,11 +399,15 @@ export const getLessons = (catalogDb) => {
        lc.lesson_id,
        lc.char,
        COALESCE(MAX(CASE WHEN lc.category = '一类' THEN '一类' END), '二类') AS category,
-       COALESCE(MAX(lc.pinyin), '') AS pinyin,
+       COALESCE(
+         MAX(CASE WHEN lc.category = '一类' THEN lc.pinyin END),
+         MAX(lc.pinyin),
+         ''
+       ) AS pinyin,
        MIN(lc.char_order) AS word_order,
        l.grade,
        l.title AS lesson_title
-     FROM lesson_chars lc
+     FROM lesson_characters lc
      JOIN lessons l ON l.id = lc.lesson_id
      GROUP BY lc.lesson_id, lc.char
      ORDER BY lc.lesson_id, word_order`,
@@ -412,6 +521,21 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
       wrongChars: wrongChars.map((item) => ({ wordId: item.word_id, char: item.char })),
     };
   });
+  const unsuitableWords = {};
+  for (const row of allRows(learningDb, "SELECT * FROM unsuitable_words WHERE student_id = ? ORDER BY last_flagged_at DESC", studentId)) {
+    unsuitableWords[row.word_id] = {
+      wordId: row.word_id,
+      text: row.text,
+      pinyin: row.pinyin,
+      grade: row.grade,
+      lessonId: row.lesson_id,
+      lessonTitle: row.lesson_title,
+      category: normalizeCategory(row.category),
+      flaggedCount: row.flagged_count,
+      firstFlaggedAt: row.first_flagged_at,
+      lastFlaggedAt: row.last_flagged_at,
+    };
+  }
   const customLessons = allRows(
     learningDb,
     "SELECT id, grade, unit, number, title FROM custom_lessons WHERE student_id = ? ORDER BY grade, unit, number",
@@ -427,6 +551,7 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
     progress: { grade: progress?.grade || 3, lessonId: progress?.lesson_id || "" },
     wordStats,
     charStats,
+    unsuitableWords,
     customLessons: customLessons.map((lesson) => ({ ...lesson, words: customWordsByLesson.get(lesson.id) || [] })),
     customWords,
     logs,
@@ -502,6 +627,31 @@ export const saveState = (learningDb, state, studentId = defaultStudentId) => {
           wrongWordTexts.has(wordText) ? stat.lastMistakeAt || null : null,
         );
       }
+    }
+
+    const now = new Date().toISOString();
+    learningDb.prepare("DELETE FROM unsuitable_words WHERE student_id = ?").run(studentId);
+    const insertUnsuitableWord = learningDb.prepare(
+      `INSERT INTO unsuitable_words (
+         student_id, word_id, text, pinyin, grade, lesson_id, lesson_title, category, flagged_count, first_flagged_at, last_flagged_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const [wordId, word] of Object.entries(state.unsuitableWords || {})) {
+      const firstFlaggedAt = word.firstFlaggedAt || word.lastFlaggedAt || now;
+      insertUnsuitableWord.run(
+        studentId,
+        word.wordId || wordId,
+        word.text || "",
+        word.pinyin || "",
+        word.grade || 1,
+        word.lessonId || "",
+        word.lessonTitle || "",
+        normalizeCategory(word.category),
+        word.flaggedCount || 1,
+        firstFlaggedAt,
+        word.lastFlaggedAt || firstFlaggedAt,
+      );
     }
 
     learningDb.prepare("DELETE FROM review_logs WHERE student_id = ?").run(studentId);

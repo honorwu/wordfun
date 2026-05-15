@@ -148,7 +148,7 @@ const hanWordPattern = /^[\p{Script=Han}]{2,6}$/u;
 const punctuationPattern = /[，。！？；：“”‘’、（）《》〈〉]/gu;
 const traditionalOnlyPattern = /[盪歷並況為與學國體會來對時長後無過還進開關門見臺灣歐鳳龍龔]/u;
 const unsuitableCommonWordPattern =
-  /毒品|贩毒|赌博|香烟|卷烟|烟瘾|烤烟|该死|逮捕|阶级|主席|政府|政治|县委|党史|巴黎|欧元|新加坡|美国|阴谋|赚钱|挣钱|截至|鸳鸯楼|霓裳|前赵|后赵|拔赵易汉|魔爪|爪牙|你死我活|我见|小我|有你的|握瑜怀玉|三下|吧台|迪吧|酒吧|网吧|氧吧|会风|会长|会见|会同|花会|笔会|人地|聊以|示威|弹药|导弹|炸弹|子弹|论坛|体坛|文坛|足坛|苟且|扳机|哔叽|芥蒂|孟加拉|壮锦|抢掠|抱病|方舟|贤惠|戎装|矢志|倭寇|猩红|碳酸|谁人|丽人|迪斯科|榨菜|娶亲|地堡|做贼|冷轧|泰斗|殃及|窝点|够呛|自找|蓬莱|煞白|讳言|饶有|饶恕|乙方|未遂|淋巴|备战|烟草|赌气|斩首|玩忽|剥削|鸣放|血浆|战斗|袭击|恶化|拦网|迷信|北上|一二|狗屁|串通|艾滋病|耶稣|霓虹灯|翔实|蝉联|瓶颈|蹊跷|婀娜|谁个|弯子|挂果|好找|抱不平|织机|削平|粘连|湿淋淋|榨取|热轧|贤良|泰然|船坞|撩拨|擂台|窃贼|商贾|通胀|吨位|蚕食|入寇|鱼水|看穿|斗士|分水岭|捉拿|闯荡|绝伦|沦落|拦腰|哄笑|死人|战乱|洗钱|炮弹|杀害|赚取|糖尿病|死亡|抹杀|屠杀|赌场|枪毙|手榴弹|廉政|战略|战俘|枪声|炮火|哄抬|坑害|卵子|垫付|捧场|说开|赚取|闯红灯/u;
+  /毒品|贩毒|赌博|香烟|卷烟|烟瘾|烤烟|该死|逮捕|阶级|主席|政府|政治|县委|党史|巴黎|欧元|新加坡|美国|阴谋|赚钱|挣钱|截至|鸳鸯楼|霓裳|前赵|后赵|拔赵易汉|魔爪|爪牙|你死我活|我见|小我|有你的|握瑜怀玉|三下|吧台|迪吧|酒吧|网吧|氧吧|会风|会长|会见|会同|花会|笔会|人地|聊以|示威|弹药|导弹|炸弹|子弹|论坛|体坛|文坛|足坛|苟且|扳机|哔叽|芥蒂|孟加拉|壮锦|抢掠|抱病|方舟|贤惠|戎装|矢志|倭寇|猩红|碳酸|谁人|丽人|迪斯科|榨菜|娶亲|地堡|做贼|冷轧|泰斗|殃及|窝点|够呛|自找|蓬莱|煞白|讳言|饶有|饶恕|乙方|未遂|淋巴|备战|烟草|赌气|斩首|玩忽|剥削|鸣放|血浆|战斗|袭击|恶化|拦网|迷信|北上|一二|狗屁|串通|艾滋病|耶稣|霓虹灯|翔实|蝉联|瓶颈|蹊跷|婀娜|谁个|弯子|挂果|好找|抱不平|织机|削平|粘连|湿淋淋|榨取|热轧|贤良|泰然|船坞|撩拨|擂台|窃贼|商贾|通胀|吨位|蚕食|入寇|鱼水|看穿|斗士|分水岭|捉拿|闯荡|绝伦|沦落|拦腰|哄笑|死人|战乱|洗钱|炮弹|杀害|赚取|糖尿病|死亡|抹杀|屠杀|赌场|枪毙|手榴弹|廉政|战略|战俘|枪声|炮火|哄抬|坑害|卵子|垫付|捧场|说开|赚取|闯红灯|省区/u;
 const curatedLessonTextWords = ["赵县", "安济桥"];
 
 const termName = (term) => (term === 2 ? "下册" : "上册");
@@ -866,36 +866,24 @@ const chooseCompanions = (lessonChars, lessonsById, textbookWords, commonWords) 
       }))
       .sort((a, b) => b.score - a.score || a.word.localeCompare(b.word, "zh-CN"));
 
-    const commonCandidates = (commonWordsByChar.get(item.char) ?? [])
-      .filter((word) => word.text !== item.char)
-      .filter(isAllowedCommonFallback)
-      .map((word) => ({
-        word: word.text,
-        pinyin: pinyinFor(word.text),
-        source: "common_word_list",
-        sourceLessonId: null,
-        frequency: word.frequency,
-        curated: Boolean(word.curated),
-        score: -commonWordScore(item.char, word),
-      }))
-      .sort((a, b) => b.score - a.score || a.word.localeCompare(b.word, "zh-CN"));
-
-    for (const candidate of commonCandidates.filter((candidate) => !candidate.curated && isFullyLearnedWord(candidate.word, learnedCharsForLesson))) {
-      add(candidate);
+    for (const candidate of textbookCandidates.filter((candidate) => {
+      const sourceLesson = lessonsById.get(candidate.sourceLessonId);
+      return sourceLesson && sourceLesson.id === item.lessonId;
+    })) {
+      add({
+        ...candidate,
+        source: "textbook_same_lesson",
+      });
     }
 
     for (const candidate of textbookCandidates.filter((candidate) => {
       const sourceLesson = lessonsById.get(candidate.sourceLessonId);
-      return sourceLesson && lessonOrder(sourceLesson) <= currentLessonOrder;
+      return sourceLesson && sourceLesson.id !== item.lessonId && lessonOrder(sourceLesson) <= currentLessonOrder;
     })) {
       add({
         ...candidate,
-        source: candidate.sourceLessonId === item.lessonId ? "textbook_same_lesson" : "textbook_other_lesson",
+        source: "textbook_other_lesson",
       });
-    }
-
-    for (const candidate of commonCandidates.filter((candidate) => candidate.curated)) {
-      add(candidate);
     }
 
     for (const [index, candidate] of chosen.entries()) {
@@ -1064,6 +1052,7 @@ const loadExistingCuration = () => {
 const saveCuration = (db, curation) => {
   const lessonExists = db.prepare("SELECT 1 FROM lessons WHERE id = ?");
   const lessonCharExists = db.prepare("SELECT 1 FROM lesson_chars WHERE lesson_id = ? AND char = ?");
+  const textbookWordExists = db.prepare("SELECT 1 FROM textbook_words WHERE text = ? AND instr(text, ?) > 0");
   const insertOverride = db.prepare(
     `INSERT OR REPLACE INTO companion_word_overrides
        (lesson_id, char, companion_rank, word, pinyin, note, updated_at)
@@ -1076,7 +1065,12 @@ const saveCuration = (db, curation) => {
   );
 
   for (const row of curation.overrides) {
-    if (row.companion_rank <= companionCount && lessonExists.get(row.lesson_id) && lessonCharExists.get(row.lesson_id, row.char)) {
+    if (
+      row.companion_rank <= companionCount &&
+      lessonExists.get(row.lesson_id) &&
+      lessonCharExists.get(row.lesson_id, row.char) &&
+      textbookWordExists.get(row.word, row.char)
+    ) {
       insertOverride.run(row.lesson_id, row.char, row.companion_rank, row.word, row.pinyin || pinyinFor(row.word), row.note ?? null, row.updated_at ?? new Date().toISOString());
     }
   }
@@ -1101,6 +1095,7 @@ const applyCuration = (db) => {
 
   const overrideGroups = db.prepare("SELECT DISTINCT lesson_id, char FROM companion_word_overrides ORDER BY lesson_id, char").all();
   const lessonCharExists = db.prepare("SELECT 1 FROM lesson_chars WHERE lesson_id = ? AND char = ?");
+  const textbookWordExists = db.prepare("SELECT 1 FROM textbook_words WHERE text = ? AND instr(text, ?) > 0");
   const deleteCompanions = db.prepare("DELETE FROM char_companion_words WHERE lesson_id = ? AND char = ?");
   const overrideRows = db.prepare(
     `SELECT lesson_id, char, companion_rank, word, pinyin
@@ -1120,7 +1115,7 @@ const applyCuration = (db) => {
       continue;
     }
     deleteCompanions.run(group.lesson_id, group.char);
-    for (const row of overrideRows.all(group.lesson_id, group.char, companionCount)) {
+    for (const row of overrideRows.all(group.lesson_id, group.char, companionCount).filter((row) => textbookWordExists.get(row.word, row.char))) {
       insertCompanion.run(row.lesson_id, row.char, row.word, row.pinyin || pinyinFor(row.word), row.companion_rank);
     }
   }

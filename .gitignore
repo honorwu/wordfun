@@ -5,7 +5,6 @@ dist/
 *.log
 *.tsbuildinfo
 
-data/ziqu-learning.sqlite
 data/ziqu-learning.sqlite-*
 data/ziqu.sqlite
 

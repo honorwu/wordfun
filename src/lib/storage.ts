@@ -1,4 +1,4 @@
-import type { AppState, CharacterCategory, CharacterStat, DictationWord, Grade, Lesson, Progress, ReviewLog, WordStat } from "../types";
+import type { AppState, CharacterCategory, CharacterStat, DictationWord, Grade, Lesson, Progress, ReviewLog, UnsuitableWordFlag, WordStat } from "../types";
 
 const fallbackProgress: Progress = {
   grade: 3,
@@ -9,6 +9,7 @@ export const createDefaultState = (progress: Progress = fallbackProgress): AppSt
   progress,
   wordStats: {},
   charStats: {},
+  unsuitableWords: {},
   customLessons: [],
   customWords: [],
   logs: [],
@@ -28,6 +29,11 @@ const normalizeLesson = (lesson: Lesson): Lesson => ({
 
 const uniqueStrings = (values: unknown): string[] => (Array.isArray(values) ? Array.from(new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))) : []);
 
+const normalizeGrade = (grade: unknown): Grade => {
+  const value = Number(grade);
+  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5 ? value : 1;
+};
+
 const normalizeWordStats = (stats: AppState["wordStats"] | undefined): AppState["wordStats"] =>
   Object.fromEntries(
     Object.entries(stats ?? {}).map(([wordId, stat]) => [
@@ -40,6 +46,32 @@ const normalizeWordStats = (stats: AppState["wordStats"] | undefined): AppState[
         lastMistakeAt: stat.lastMistakeAt,
       } satisfies WordStat,
     ]),
+  );
+
+const normalizeUnsuitableWords = (
+  words: Partial<Record<string, Partial<UnsuitableWordFlag>>> | undefined,
+): AppState["unsuitableWords"] =>
+  Object.fromEntries(
+    Object.entries(words ?? {})
+      .filter((entry): entry is [string, Partial<UnsuitableWordFlag>] => Boolean(entry[1]) && typeof entry[1]?.text === "string")
+      .map(([wordId, word]) => {
+        const firstFlaggedAt = word.firstFlaggedAt || word.lastFlaggedAt || new Date(0).toISOString();
+        return [
+          wordId,
+          {
+            wordId: word.wordId || wordId,
+            text: word.text || "",
+            pinyin: word.pinyin || "",
+            grade: normalizeGrade(word.grade),
+            lessonId: word.lessonId || "",
+            lessonTitle: word.lessonTitle || "",
+            category: normalizeCategory(word.category),
+            flaggedCount: word.flaggedCount ?? 1,
+            firstFlaggedAt,
+            lastFlaggedAt: word.lastFlaggedAt || firstFlaggedAt,
+          } satisfies UnsuitableWordFlag,
+        ];
+      }),
   );
 
 const normalizeCharStats = (stats: AppState["charStats"] | undefined): AppState["charStats"] =>
@@ -82,6 +114,7 @@ export const normalizeState = (state: Partial<AppState>, fallback = fallbackProg
     customWords: (state.customWords ?? []).map(normalizeWord),
     wordStats: normalizeWordStats(state.wordStats),
     charStats: normalizeCharStats(state.charStats),
+    unsuitableWords: normalizeUnsuitableWords(state.unsuitableWords),
     logs: normalizeLogs(state.logs),
   };
 };

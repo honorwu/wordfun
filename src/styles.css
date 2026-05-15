@@ -66,6 +66,16 @@ button:hover,
   transform: translateY(-1px);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+button:disabled:hover {
+  border-color: var(--line);
+  transform: none;
+}
+
 button:focus-visible,
 select:focus-visible,
 input:focus-visible,
@@ -133,6 +143,7 @@ textarea {
 .review-bar,
 .scope-line,
 .trouble-item,
+.unsuitable-item,
 .log-item {
   align-items: center;
   display: flex;
@@ -239,9 +250,24 @@ textarea {
 
 .toolbar,
 .row,
-.action-row {
+.action-row,
+.practice-switch {
   display: flex;
   gap: 10px;
+}
+
+.practice-switch {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  width: fit-content;
+}
+
+.practice-switch .segmented {
+  gap: 6px;
+  min-width: 118px;
 }
 
 .wrap {
@@ -255,7 +281,7 @@ textarea {
 }
 
 .parent-metrics {
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(9, minmax(0, 1fr));
 }
 
 .metric,
@@ -308,7 +334,8 @@ textarea {
 .progress-stack,
 .grade-bars,
 .log-list,
-.trouble-list {
+.trouble-list,
+.unsuitable-list {
   display: grid;
   gap: 10px;
 }
@@ -498,18 +525,30 @@ textarea {
   height: 100%;
 }
 
-.trouble-item {
+.trouble-item,
+.unsuitable-item {
   border-bottom: 1px solid var(--line);
   padding: 0 0 9px;
 }
 
-.trouble-item div {
+.trouble-item div,
+.unsuitable-item div {
   display: grid;
   gap: 2px;
+  min-width: 0;
 }
 
 .trouble-item b {
   color: var(--red);
+}
+
+.unsuitable-item span,
+.unsuitable-item small {
+  color: var(--muted);
+}
+
+.unsuitable-item small {
+  font-size: 12px;
 }
 
 .char-chips {
@@ -614,11 +653,15 @@ textarea {
   background: linear-gradient(90deg, rgba(181, 64, 59, 0.08), rgba(255, 255, 255, 0.78) 78%);
 }
 
+.word-card.unsuitable {
+  background: linear-gradient(90deg, rgba(183, 129, 32, 0.12), rgba(255, 255, 255, 0.8) 78%);
+}
+
 .card-top {
   align-items: start;
   display: grid;
   gap: 8px;
-  grid-template-columns: 30px minmax(0, 1fr) 64px;
+  grid-template-columns: 30px minmax(0, 1fr) 126px;
 }
 
 .number {
@@ -651,10 +694,16 @@ textarea {
 }
 
 .card-status,
-.mark-button {
+.mark-button,
+.unsuitable-button {
   font-size: 14px;
   min-width: 0;
   padding: 0 8px;
+}
+
+.card-actions {
+  display: grid;
+  gap: 6px;
 }
 
 .card-status {
@@ -674,6 +723,19 @@ textarea {
   background: var(--red-soft);
   border-color: #e2a29c;
   color: var(--red);
+}
+
+.unsuitable-button {
+  font-size: 13px;
+  gap: 4px;
+  height: 30px;
+}
+
+.word-card.unsuitable .card-status.active,
+.unsuitable-button.active {
+  background: #fff8e7;
+  border-color: #ead39f;
+  color: #7a4f09;
 }
 
 .mizige-group {
@@ -836,13 +898,15 @@ textarea {
 
   .mode-tabs,
   .toolbar,
-  .action-row {
+  .action-row,
+  .practice-switch {
     flex-wrap: wrap;
   }
 
   .mode-tab,
   .toolbar button,
   .action-row button,
+  .practice-switch button,
   .file-button {
     flex: 1 1 auto;
   }
@@ -891,7 +955,8 @@ textarea {
   }
 
   .card-status,
-  .mark-button {
+  .mark-button,
+  .card-actions {
     grid-column: 1 / -1;
   }
 
@@ -990,7 +1055,8 @@ textarea {
     padding: 1.2mm;
   }
 
-  .word-card.wrong {
+  .word-card.wrong,
+  .word-card.unsuitable {
     background: #fff !important;
   }
 

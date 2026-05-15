@@ -7,7 +7,11 @@
     "dev": "node scripts/dev.mjs",
     "dev:client": "vite --host 127.0.0.1",
     "dev:server": "node server/index.mjs",
-    "rebuild:catalog": "node scripts/rebuild-catalog-from-textbooks.mjs",
+    "extract:chars": "node scripts/extract-textbook-character-bank.mjs",
+    "extract:garden": "node scripts/extract-garden-dictation.mjs",
+    "rebuild:catalog": "node scripts/rebuild-databases-from-md.mjs",
+    "rebuild:data": "node scripts/rebuild-databases-from-md.mjs",
+    "rebuild:all": "node scripts/rebuild-databases-from-md.mjs --reset-learning",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "node server/index.mjs"

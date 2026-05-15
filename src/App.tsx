@@ -4,6 +4,7 @@ import {
   Check,
   Download,
   FileText,
+  Flag,
   History,
   Home,
   Printer,
@@ -17,9 +18,19 @@ import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent, ReactElement } from "react";
 import { gradeNames } from "./data/metadata";
 import { fetchAppData, saveRemoteState } from "./lib/api";
-import { applyReviewResult, charReviewKey, generatePractice, getEligibleLessons, getEligibleWords, isMasteredChar, isMasteredWord } from "./lib/scheduler";
+import {
+  applyReviewResult,
+  charReviewKey,
+  generateCurrentLessonPractice,
+  generateScreeningPractice,
+  getEligibleLessons,
+  getEligibleWords,
+  isMasteredChar,
+  isMasteredWord,
+  reviewCharsForWord,
+} from "./lib/scheduler";
 import { createDefaultState, exportState, normalizeState } from "./lib/storage";
-import type { AppState, CharacterCategory, CompanionDictionary, DictationWord, Grade, Lesson, PracticeItem } from "./types";
+import type { AppState, CharacterCategory, CompanionDictionary, DictationWord, Grade, Lesson, PracticeItem, UnsuitableWordFlag } from "./types";
 
 const targetCount = 20;
 
@@ -32,6 +43,7 @@ const termOptions = [
 type Term = (typeof termOptions)[number]["value"];
 
 type ViewMode = "student" | "parent";
+type PracticeMode = "lesson" | "screening";
 
 type DashboardStats = {
   accuracy: number;
@@ -46,6 +58,7 @@ type DashboardStats = {
   totalChars: number;
   totalMistakes: number;
   totalWords: number;
+  unsuitableWords: number;
   uniqueChars: string[];
   wrongWords: number;
 };
@@ -101,9 +114,16 @@ function App() {
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("student");
+  const [practiceMode, setPracticeMode] = useState<PracticeMode>("lesson");
   const [showAnswers, setShowAnswers] = useState(false);
   const [wrongCharKeys, setWrongCharKeys] = useState<Set<string>>(() => new Set());
+  const [unsuitableWordIds, setUnsuitableWordIds] = useState<Set<string>>(() => new Set());
   const [savedMessage, setSavedMessage] = useState("");
+
+  const resetReviewMarks = () => {
+    setWrongCharKeys(new Set());
+    setUnsuitableWordIds(new Set());
+  };
 
   useEffect(() => {
     let active = true;
@@ -146,7 +166,13 @@ function App() {
     () => getEligibleWords(allLessons, state.customWords, state.progress, companionWords),
     [allLessons, companionWords, state.customWords, state.progress],
   );
-  const practiceItems = useMemo(() => generatePractice(allLessons, state, targetCount, companionWords), [allLessons, companionWords, state]);
+  const practiceItems = useMemo(
+    () =>
+      practiceMode === "lesson"
+        ? generateCurrentLessonPractice(allLessons, state, companionWords)
+        : generateScreeningPractice(allLessons, state, targetCount, companionWords),
+    [allLessons, companionWords, practiceMode, state],
+  );
   const allKnownWords = useMemo(() => {
     const byId = new Map([...allLessons.flatMap((lesson) => lesson.words), ...state.customWords].map((word) => [word.id, word]));
     for (const word of eligibleWords) {
@@ -185,8 +211,9 @@ function App() {
       accuracy: totalAttempts > 0 ? Math.round(((totalAttempts - totalMistakes) / totalAttempts) * 100) : 0,
       todayPracticeCount: todayLogs.reduce((sum, log) => sum + log.wordIds.length, 0),
       todayWrongCount: todayLogs.reduce((sum, log) => sum + logWrongCharCount(log), 0),
+      unsuitableWords: Object.keys(state.unsuitableWords).length,
     };
-  }, [eligibleWords, state.charStats, state.logs, state.wordStats]);
+  }, [eligibleWords, state.charStats, state.logs, state.unsuitableWords, state.wordStats]);
 
   const wordsByGrade = useMemo(() => {
     return eligibleWords.reduce<Record<Grade, number>>(
@@ -232,6 +259,11 @@ function App() {
     [state.charStats, stats.uniqueChars],
   );
 
+  const unsuitableWordList = useMemo(
+    () => Object.values(state.unsuitableWords).sort((a, b) => b.lastFlaggedAt.localeCompare(a.lastFlaggedAt) || a.text.localeCompare(b.text)),
+    [state.unsuitableWords],
+  );
+
   const setProgressGrade = (grade: Grade) => {
     const firstLesson = allLessons.find((lesson) => lesson.grade === grade) ?? allLessons[0];
     setState((current) => ({
@@ -239,7 +271,7 @@ function App() {
       progress: { grade, lessonId: firstLesson.id },
     }));
     setShowAnswers(false);
-    setWrongCharKeys(new Set());
+    resetReviewMarks();
   };
 
   const setProgressTerm = (term: Term) => {
@@ -252,7 +284,7 @@ function App() {
       progress: { grade: firstLesson.grade, lessonId: firstLesson.id },
     }));
     setShowAnswers(false);
-    setWrongCharKeys(new Set());
+    resetReviewMarks();
   };
 
   const setProgressLesson = (lessonId: string) => {
@@ -265,17 +297,31 @@ function App() {
       progress: { grade: lesson.grade, lessonId },
     }));
     setShowAnswers(false);
-    setWrongCharKeys(new Set());
+    resetReviewMarks();
   };
 
   const regenerate = () => {
     setState((current) => ({ ...current }));
     setShowAnswers(false);
-    setWrongCharKeys(new Set());
+    resetReviewMarks();
+  };
+
+  const changePracticeMode = (mode: PracticeMode) => {
+    setPracticeMode(mode);
+    setShowAnswers(false);
+    resetReviewMarks();
   };
 
   const toggleWrongChar = (wordId: string, char: string) => {
     const key = charReviewKey(wordId, char);
+    setUnsuitableWordIds((current) => {
+      if (!current.has(wordId)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.delete(wordId);
+      return next;
+    });
     setWrongCharKeys((current) => {
       const next = new Set(current);
       if (next.has(key)) {
@@ -287,12 +333,40 @@ function App() {
     });
   };
 
+  const toggleUnsuitableWord = (word: DictationWord) => {
+    const willMark = !unsuitableWordIds.has(word.id);
+    setUnsuitableWordIds((current) => {
+      const next = new Set(current);
+      if (next.has(word.id)) {
+        next.delete(word.id);
+      } else {
+        next.add(word.id);
+      }
+      return next;
+    });
+    if (willMark) {
+      setWrongCharKeys((current) => {
+        const next = new Set(current);
+        for (const char of reviewCharsForWord(word)) {
+          next.delete(charReviewKey(word.id, char));
+        }
+        return next;
+      });
+    }
+  };
+
   const saveReview = () => {
-    setState((current) => applyReviewResult(current, practiceItems, wrongCharKeys));
-    setSavedMessage(`已记录 ${practiceItems.length} 个词，其中 ${wrongCharKeys.size} 个字需要回炉。`);
+    const reviewedItems = practiceItems.filter((item) => !unsuitableWordIds.has(item.word.id));
+    const unsuitableCount = practiceItems.length - reviewedItems.length;
+    const wrongCount = reviewedItems.reduce(
+      (sum, item) => sum + reviewCharsForWord(item.word).filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char))).length,
+      0,
+    );
+    setState((current) => applyReviewResult(current, practiceItems, wrongCharKeys, unsuitableWordIds));
+    setSavedMessage(`已记录 ${reviewedItems.length} 个词${unsuitableCount > 0 ? `，跳过 ${unsuitableCount} 个不合适词` : ""}，${wrongCount} 个字需要回炉。`);
     setTimeout(() => setSavedMessage(""), 2400);
     setShowAnswers(false);
-    setWrongCharKeys(new Set());
+    resetReviewMarks();
   };
 
   const importBackup = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -318,7 +392,7 @@ function App() {
       charStats: {},
       logs: [],
     }));
-    setWrongCharKeys(new Set());
+    resetReviewMarks();
     setShowAnswers(false);
     setSavedMessage("练习记录已清空，词库保留。");
   };
@@ -326,10 +400,13 @@ function App() {
   const sheet = selectedLesson ? (
     <PracticeSheet
       items={practiceItems}
+      practiceMode={practiceMode}
       selectedLesson={selectedLesson}
       showAnswers={showAnswers}
       state={state}
+      toggleUnsuitableWord={toggleUnsuitableWord}
       toggleWrongChar={toggleWrongChar}
+      unsuitableWordIds={unsuitableWordIds}
       wrongCharKeys={wrongCharKeys}
     />
   ) : null;
@@ -386,6 +463,7 @@ function App() {
           masteredChars={stats.masteredChars}
           masteredWords={stats.masteredWords}
           practiceItems={practiceItems}
+          practiceMode={practiceMode}
           reviewedChars={stats.reviewedChars}
           reviewedWords={stats.reviewedWords}
           saveReview={saveReview}
@@ -393,8 +471,10 @@ function App() {
           sheet={sheet}
           showAnswers={showAnswers}
           setShowAnswers={setShowAnswers}
+          setPracticeMode={changePracticeMode}
           stats={stats}
           regenerate={regenerate}
+          unsuitableWordIds={unsuitableWordIds}
           wrongCharKeys={wrongCharKeys}
         />
       ) : (
@@ -416,6 +496,7 @@ function App() {
           selectedTerm={selectedTerm}
           troubleChars={troubleChars}
           troubleWords={troubleWords}
+          unsuitableWords={unsuitableWordList}
           wordById={wordById}
           wordsByGrade={wordsByGrade}
         />
@@ -431,6 +512,7 @@ function StudentView({
   masteredChars,
   masteredWords,
   practiceItems,
+  practiceMode,
   reviewedChars,
   reviewedWords,
   saveReview,
@@ -438,14 +520,17 @@ function StudentView({
   sheet,
   showAnswers,
   setShowAnswers,
+  setPracticeMode,
   stats,
   regenerate,
+  unsuitableWordIds,
   wrongCharKeys,
 }: {
   accuracy: number;
   masteredChars: number;
   masteredWords: number;
   practiceItems: PracticeItem[];
+  practiceMode: PracticeMode;
   reviewedChars: number;
   reviewedWords: number;
   saveReview: () => void;
@@ -453,25 +538,30 @@ function StudentView({
   sheet: ReactElement;
   showAnswers: boolean;
   setShowAnswers: (value: boolean | ((current: boolean) => boolean)) => void;
+  setPracticeMode: (mode: PracticeMode) => void;
   stats: DashboardStats;
   regenerate: () => void;
+  unsuitableWordIds: Set<string>;
   wrongCharKeys: Set<string>;
 }) {
   const hasPractice = practiceItems.length > 0;
+  const unsuitableCount = practiceItems.filter((item) => unsuitableWordIds.has(item.word.id)).length;
 
   return (
     <section className="student-layout">
       <div className="top-strip no-print">
         <div>
-          <p className="eyebrow">学生首页</p>
+          <p className="eyebrow">{practiceMode === "lesson" ? "本课复习" : "历史筛查"}</p>
           <h2>{lessonLabel(selectedLesson)}</h2>
         </div>
         {hasPractice ? (
           <div className="toolbar">
-            <button type="button" onClick={regenerate} title="重新生成">
-              <RefreshCw size={17} aria-hidden="true" />
-              换一组
-            </button>
+            {practiceMode === "screening" ? (
+              <button type="button" onClick={regenerate} title="重新生成">
+                <RefreshCw size={17} aria-hidden="true" />
+                换一组
+              </button>
+            ) : null}
             <button type="button" onClick={() => window.print()} title="打印">
               <Printer size={17} aria-hidden="true" />
               打印
@@ -482,6 +572,17 @@ function StudentView({
             </button>
           </div>
         ) : null}
+      </div>
+
+      <div className="practice-switch no-print" role="group" aria-label="选择练习方式">
+        <button className={practiceMode === "lesson" ? "segmented active" : "segmented"} type="button" onClick={() => setPracticeMode("lesson")}>
+          <BookOpen size={16} aria-hidden="true" />
+          本课词语
+        </button>
+        <button className={practiceMode === "screening" ? "segmented active" : "segmented"} type="button" onClick={() => setPracticeMode("screening")}>
+          <History size={16} aria-hidden="true" />
+          历史筛查
+        </button>
       </div>
 
       <div className="stat-band no-print">
@@ -516,8 +617,8 @@ function StudentView({
       ) : (
         <section className="done-card no-print">
           <p className="eyebrow">今日状态</p>
-          <h3>这部分暂时不用默写</h3>
-          <p>当前范围内没有需要回炉或巩固的字词。</p>
+          <h3>{practiceMode === "lesson" ? "本课暂无词语" : "历史范围暂时不用筛查"}</h3>
+          <p>{practiceMode === "lesson" ? "当前课没有可打印的默写词语。" : "当前课之前还没有可筛查的已学字词。"}</p>
         </section>
       )}
 
@@ -527,6 +628,12 @@ function StudentView({
             <strong>{wrongCharKeys.size}</strong>
             <span>个字已标记错误</span>
           </div>
+          {unsuitableCount > 0 ? (
+            <div>
+              <strong>{unsuitableCount}</strong>
+              <span>个词将跳过记录</span>
+            </div>
+          ) : null}
           <button className="primary" type="button" onClick={saveReview}>
             <Check size={17} aria-hidden="true" />
             保存本次核对
@@ -555,6 +662,7 @@ function ParentDashboard({
   stats,
   troubleChars,
   troubleWords,
+  unsuitableWords,
   wordById,
   wordsByGrade,
 }: {
@@ -575,6 +683,7 @@ function ParentDashboard({
   stats: DashboardStats;
   troubleChars: Array<{ char: string; stat: { attempts: number; mistakes: number; streak?: number; lastReviewedAt?: string } | undefined }>;
   troubleWords: Array<{ word: DictationWord; stat: { attempts: number; mistakes: number; streak: number; lastReviewedAt?: string } | undefined }>;
+  unsuitableWords: UnsuitableWordFlag[];
   wordById: Map<string, DictationWord>;
   wordsByGrade: Record<Grade, number>;
 }) {
@@ -606,6 +715,7 @@ function ParentDashboard({
         <Metric label="已复习词语" value={`${stats.reviewedWords}/${stats.totalWords}`} />
         <Metric label="掌握词语" value={stats.masteredWords} />
         <Metric label="需关注词语" value={stats.wrongWords} />
+        <Metric label="需修正词语" value={stats.unsuitableWords} />
         <Metric label="累计正确率" value={stats.totalAttempts > 0 ? `${stats.accuracy}%` : "未开始"} />
       </div>
 
@@ -668,7 +778,7 @@ function ParentDashboard({
               内置：{builtInLessonCount} 个课内条目 / {builtInWordCount} 个生字项。
             </span>
           </div>
-          <p className="hint">这批数据来自统编版 PDF 附录中的识字表、写字表、词语表，每个课内字固定保留两个配词候选。</p>
+          <p className="hint">这批数据来自 md 目录中的识字表、写字表、词语表、补组词和古诗词资料；配词只使用表内已有词语。</p>
         </div>
 
         <div className="panel">
@@ -711,6 +821,30 @@ function ParentDashboard({
               ))}
             </div>
           ) : null}
+        </div>
+
+        <div className="panel">
+          <div className="panel-title">
+            <Flag size={18} aria-hidden="true" />
+            <span>待修正词语</span>
+          </div>
+          <div className="unsuitable-list">
+            {unsuitableWords.length === 0 ? (
+              <p className="hint">还没有不合适词语标记。</p>
+            ) : (
+              unsuitableWords.map((word) => (
+                <div className="unsuitable-item" key={word.wordId}>
+                  <div>
+                    <strong>{word.text}</strong>
+                    <span>{word.pinyin || "无拼音"} · {word.lessonTitle || "未知课次"}</span>
+                    <small>
+                      {formatDate(word.lastFlaggedAt)} · 标记 {word.flaggedCount} 次
+                    </small>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         <div className="panel">
@@ -785,17 +919,23 @@ function ParentDashboard({
 
 function PracticeSheet({
   items,
+  practiceMode,
   selectedLesson,
   showAnswers,
   state,
+  toggleUnsuitableWord,
   toggleWrongChar,
+  unsuitableWordIds,
   wrongCharKeys,
 }: {
   items: PracticeItem[];
+  practiceMode: PracticeMode;
   selectedLesson: Lesson;
   showAnswers: boolean;
   state: AppState;
+  toggleUnsuitableWord: (word: DictationWord) => void;
   toggleWrongChar: (wordId: string, char: string) => void;
+  unsuitableWordIds: Set<string>;
   wrongCharKeys: Set<string>;
 }) {
   return (
@@ -803,7 +943,7 @@ function PracticeSheet({
       <header className="sheet-head">
         <div>
           <p>字趣 · 语文字词默写</p>
-          <h2>{gradeNames[state.progress.grade]}每日练习</h2>
+          <h2>{practiceMode === "lesson" ? "本课词语默写" : "历史生字筛查"}</h2>
         </div>
         <dl>
           <div>
@@ -812,7 +952,7 @@ function PracticeSheet({
           </div>
           <div>
             <dt>范围</dt>
-            <dd>一年级至{lessonLabel(selectedLesson)}</dd>
+            <dd>{practiceMode === "lesson" ? lessonLabel(selectedLesson) : `一年级至上一课，不含${lessonNumberLabel(selectedLesson)}`}</dd>
           </div>
         </dl>
       </header>
@@ -824,7 +964,9 @@ function PracticeSheet({
             index={index}
             key={item.word.id}
             showAnswers={showAnswers}
+            toggleUnsuitableWord={toggleUnsuitableWord}
             toggleWrongChar={toggleWrongChar}
+            unsuitableWordIds={unsuitableWordIds}
             wrongCharKeys={wrongCharKeys}
           />
         ))}
@@ -843,23 +985,30 @@ function DictationCard({
   item,
   index,
   showAnswers,
+  toggleUnsuitableWord,
   toggleWrongChar,
+  unsuitableWordIds,
   wrongCharKeys,
 }: {
   item: PracticeItem;
   index: number;
   showAnswers: boolean;
+  toggleUnsuitableWord: (word: DictationWord) => void;
   toggleWrongChar: (wordId: string, char: string) => void;
+  unsuitableWordIds: Set<string>;
   wrongCharKeys: Set<string>;
 }) {
   const chars = Array.from(item.word.text).filter((char) => /\p{Script=Han}/u.test(char));
   const syllables = item.word.pinyin.split(/\s+/).filter(Boolean);
   const cellCount = Math.max(chars.length, syllables.length, 2);
-  const wrongChars = chars.filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)));
+  const isUnsuitable = showAnswers && unsuitableWordIds.has(item.word.id);
+  const wrongChars = isUnsuitable ? [] : chars.filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)));
   const isWrong = showAnswers && wrongChars.length > 0;
+  const statusText = isUnsuitable ? "不合适" : isWrong ? `${wrongChars.length}错` : "全对";
+  const cardClassName = ["word-card", isWrong ? "wrong" : "", isUnsuitable ? "unsuitable" : ""].filter(Boolean).join(" ");
 
   return (
-    <article className={isWrong ? "word-card wrong" : "word-card"}>
+    <article className={cardClassName}>
       <div className="card-top">
         <div className="number">{index + 1}</div>
         <div className="prompt">
@@ -868,13 +1017,26 @@ function DictationCard({
           </span>
           <span className="reason no-print">{item.reasons.join(" / ")}</span>
         </div>
-        {showAnswers ? <span className={isWrong ? "card-status active no-print" : "card-status no-print"}>{isWrong ? `${wrongChars.length}错` : "全对"}</span> : null}
+        {showAnswers ? (
+          <div className="card-actions no-print">
+            <span className={isWrong || isUnsuitable ? "card-status active" : "card-status"}>{statusText}</span>
+            <button
+              className={isUnsuitable ? "unsuitable-button active" : "unsuitable-button"}
+              type="button"
+              onClick={() => toggleUnsuitableWord(item.word)}
+              title={isUnsuitable ? "取消不合适标记" : "标记词语不合适"}
+            >
+              <Flag size={13} aria-hidden="true" />
+              不合适
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="mizige-group" aria-label="默写位置">
         {Array.from({ length: cellCount }).map((_, cellIndex) => {
           const char = chars[cellIndex];
           const key = char ? charReviewKey(item.word.id, char) : "";
-          const isCharWrong = Boolean(char && wrongCharKeys.has(key));
+          const isCharWrong = Boolean(char && !isUnsuitable && wrongCharKeys.has(key));
           return (
             <div className={isCharWrong ? "mizige-wrap char-wrong" : "mizige-wrap"} key={`${item.word.id}-${cellIndex}`}>
               <span className="cell-pinyin">{syllables[cellIndex] ?? (cellIndex === 0 ? item.word.pinyin : "")}</span>
@@ -889,8 +1051,9 @@ function DictationCard({
                 <button
                   className={isCharWrong ? "char-mark-button active no-print" : "char-mark-button no-print"}
                   type="button"
+                  disabled={isUnsuitable}
                   onClick={() => toggleWrongChar(item.word.id, char)}
-                  title={`标记“${char}”${isCharWrong ? "已写对" : "写错"}`}
+                  title={isUnsuitable ? "本词已标记不合适，不记录对错" : `标记“${char}”${isCharWrong ? "已写对" : "写错"}`}
                 >
                   {isCharWrong ? <X size={13} aria-hidden="true" /> : <Check size={13} aria-hidden="true" />}
                   {char}

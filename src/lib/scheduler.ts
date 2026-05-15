@@ -1,5 +1,5 @@
 import { categoryWeights } from "../data/metadata";
-import type { AppState, CharacterStat, CompanionDictionary, DictationWord, Lesson, PracticeItem, Progress, WordStat } from "../types";
+import type { AppState, CharacterStat, CompanionDictionary, DictationWord, Lesson, PracticeItem, Progress, UnsuitableWordFlag, WordStat } from "../types";
 
 const dayMs = 24 * 60 * 60 * 1000;
 const masteryNetCorrect = 2;
@@ -131,7 +131,7 @@ const withDictationCompanions = (words: DictationWord[], lessons: Lesson[], comp
 
     const targetChar = chars[0];
     const lesson = lessonById.get(word.lessonId);
-    const fixedCompanion = lesson?.textCompanions?.[targetChar]?.[0] ?? companionWords[targetChar]?.[0];
+    const fixedCompanion = lesson?.textCompanions?.[targetChar]?.[0] ?? (!lesson ? companionWords[targetChar]?.[0] : undefined);
     if (fixedCompanion) {
       return companionWord(word, fixedCompanion, eligibleChars);
     }
@@ -157,6 +157,8 @@ const daysSince = (date?: string) => {
 };
 
 const uniqueTexts = (texts?: string[]) => Array.from(new Set(texts ?? []));
+
+const isUnsuitableWord = (word: DictationWord, state: AppState) => Boolean(state.unsuitableWords[word.id]);
 
 const charCorrectWordCount = (stat?: CharacterStat) => uniqueTexts(stat?.correctWordTexts).length;
 
@@ -277,6 +279,8 @@ const withReason = (item: PracticeItem, reason: string): PracticeItem => ({
 
 const sortPracticeItems = (items: PracticeItem[]) => [...items].sort((a, b) => b.score - a.score || a.word.id.localeCompare(b.word.id));
 
+const uniqueByText = (words: DictationWord[]) => [...new Map(words.map((word) => [word.text, word])).values()];
+
 const isGardenLesson = (lesson: Lesson) => lesson.title.startsWith("语文园地");
 
 const currentTeachingUnitFloor = (lessons: Lesson[], selectedLesson?: Lesson) => {
@@ -325,7 +329,7 @@ export const generatePractice = (lessons: Lesson[], state: AppState, targetCount
   const isInCurrentGrade = (word: DictationWord) => word.grade === state.progress.grade && orderForWord(word) <= selectedOrder;
   const isPastWord = (word: DictationWord) => orderForWord(word) < selectedOrder;
 
-  const actionableWords = [...new Map(eligibleWords.map((word) => [word.id, word])).values()].filter((word) => !isMasteredWord(word, state));
+  const actionableWords = [...new Map(eligibleWords.map((word) => [word.id, word])).values()].filter((word) => !isUnsuitableWord(word, state) && !isMasteredWord(word, state));
   if (actionableWords.length === 0) {
     return [];
   }
@@ -395,34 +399,194 @@ export const generatePractice = (lessons: Lesson[], state: AppState, targetCount
   });
 };
 
-export const applyReviewResult = (state: AppState, items: PracticeItem[], wrongCharKeys: Set<string>): AppState => {
+export const generateCurrentLessonPractice = (lessons: Lesson[], state: AppState, companionWords: CompanionDictionary = {}): PracticeItem[] => {
+  const selectedLesson = lessons.find((lesson) => lesson.id === state.progress.lessonId);
+  if (!selectedLesson) {
+    return [];
+  }
+
+  return uniqueByText(
+    getEligibleWords(lessons, state.customWords, state.progress, companionWords).filter(
+      (word) => word.lessonId === selectedLesson.id && !isUnsuitableWord(word, state),
+    ),
+  ).map((word, index) => ({
+    word,
+    score: 1000 - index,
+    reasons: [isDirectDictationLesson(selectedLesson) ? "课文直接默写" : "本课词语"],
+  }));
+};
+
+const screeningNeedForChar = (char: string, state: AppState) => {
+  const stat = state.charStats[char];
+  if (!stat) {
+    return 34;
+  }
+  if (stat.mistakes > 0 && !isMasteredChar(stat)) {
+    return 46 + Math.min(18, stat.mistakes * 4) + Math.min(10, daysSince(stat.lastMistakeAt));
+  }
+  if (!isMasteredChar(stat)) {
+    return 26 + Math.min(12, daysSince(stat.lastReviewedAt));
+  }
+  if (daysSince(stat.lastReviewedAt) >= 21) {
+    return 10;
+  }
+  if (daysSince(stat.lastReviewedAt) >= 10) {
+    return 6;
+  }
+  return 2;
+};
+
+const screeningReason = (chars: string[], state: AppState) => {
+  if (chars.some((char) => state.charStats[char]?.mistakes && !isMasteredChar(state.charStats[char]))) {
+    return "错字筛查";
+  }
+  if (chars.some((char) => !state.charStats[char])) {
+    return "未筛查生字";
+  }
+  if (chars.some((char) => daysSince(state.charStats[char]?.lastReviewedAt) >= 10)) {
+    return "到期抽查";
+  }
+  return "历史筛查";
+};
+
+export const generateScreeningPractice = (
+  lessons: Lesson[],
+  state: AppState,
+  targetCount = 20,
+  companionWords: CompanionDictionary = {},
+): PracticeItem[] => {
+  const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+  const selectedLesson = lessonById.get(state.progress.lessonId);
+  const selectedOrder = progressOrder(state.progress, lessons);
+  const orderForWord = (word: DictationWord) => {
+    const lesson = lessonById.get(word.lessonId);
+    return lesson ? lessonOrder(lesson) : word.grade * 1000;
+  };
+
+  const pastLessonIds = new Set(
+    lessons.filter((lesson) => lessonOrder(lesson) < selectedOrder && lesson.id !== selectedLesson?.id).map((lesson) => lesson.id),
+  );
+  const targetChars = new Set(
+    [
+      ...lessons.flatMap((lesson) => (pastLessonIds.has(lesson.id) ? lesson.words.flatMap((word) => word.chars) : [])),
+      ...state.customWords.filter((word) => orderForWord(word) < selectedOrder).flatMap((word) => word.chars),
+    ].filter(Boolean),
+  );
+
+  if (targetChars.size === 0) {
+    return [];
+  }
+
+  const candidates = uniqueByText(
+    getEligibleWords(lessons, state.customWords, state.progress, companionWords).filter(
+      (word) => orderForWord(word) < selectedOrder && !isUnsuitableWord(word, state),
+    ),
+  )
+    .map((word) => ({
+      word,
+      coverage: uniqueChars(hanChars(word.text).filter((char) => targetChars.has(char))),
+    }))
+    .filter((candidate) => candidate.coverage.length > 0);
+
+  const selected: PracticeItem[] = [];
+  const usedTexts = new Set<string>();
+  const coveredChars = new Set<string>();
+
+  while (selected.length < targetCount) {
+    let best:
+      | {
+          word: DictationWord;
+          coverage: string[];
+          newChars: string[];
+          score: number;
+        }
+      | undefined;
+
+    for (const candidate of candidates) {
+      if (usedTexts.has(candidate.word.text)) {
+        continue;
+      }
+      const newChars = candidate.coverage.filter((char) => !coveredChars.has(char));
+      if (newChars.length === 0) {
+        continue;
+      }
+      const stat = state.wordStats[candidate.word.id];
+      const wordWeakBoost = stat && stat.mistakes > 0 && !isMasteredWord(candidate.word, state) ? 16 + stat.mistakes * 3 : 0;
+      const length = hanLength(candidate.word.text);
+      const lengthBonus = length === 2 ? 10 : length === 3 ? 8 : length === 4 ? 4 : 0;
+      const score = newChars.reduce((sum, char) => sum + screeningNeedForChar(char, state), 0) + newChars.length * 24 + lengthBonus + wordWeakBoost;
+      if (!best || score > best.score || (score === best.score && newChars.length > best.newChars.length)) {
+        best = { ...candidate, newChars, score };
+      }
+    }
+
+    if (!best) {
+      break;
+    }
+
+    usedTexts.add(best.word.text);
+    best.coverage.forEach((char) => coveredChars.add(char));
+    selected.push({
+      word: best.word,
+      score: best.score,
+      reasons: [screeningReason(best.newChars, state), `覆盖${best.newChars.length}字`],
+    });
+  }
+
+  return selected;
+};
+
+const unsuitableFlagForWord = (word: DictationWord, previous: UnsuitableWordFlag | undefined, now: string): UnsuitableWordFlag => ({
+  wordId: word.id,
+  text: word.text,
+  pinyin: word.pinyin,
+  grade: word.grade,
+  lessonId: word.lessonId,
+  lessonTitle: word.lessonTitle,
+  category: word.category,
+  flaggedCount: (previous?.flaggedCount ?? 0) + 1,
+  firstFlaggedAt: previous?.firstFlaggedAt ?? now,
+  lastFlaggedAt: now,
+});
+
+export const applyReviewResult = (state: AppState, items: PracticeItem[], wrongCharKeys: Set<string>, unsuitableWordIds = new Set<string>()): AppState => {
   const now = new Date().toISOString();
   const addWordText = (texts: string[] | undefined, wordText: string) => uniqueTexts([...(texts ?? []), wordText]);
-  const wrongWordIds = items
+  const reviewedItems = items.filter((item) => !unsuitableWordIds.has(item.word.id));
+  const unsuitableItems = items.filter((item) => unsuitableWordIds.has(item.word.id));
+  const wrongWordIds = reviewedItems
     .filter((item) => reviewCharsForWord(item.word).some((char) => wrongCharKeys.has(charReviewKey(item.word.id, char))))
     .map((item) => item.word.id);
-  const wrongChars = items.flatMap((item) =>
+  const wrongChars = reviewedItems.flatMap((item) =>
     reviewCharsForWord(item.word)
       .filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)))
       .map((char) => ({ wordId: item.word.id, char })),
   );
+  const reviewLogs =
+    reviewedItems.length > 0
+      ? [
+          {
+            id: crypto.randomUUID(),
+            date: now,
+            wordIds: reviewedItems.map((item) => item.word.id),
+            wrongWordIds,
+            wrongChars,
+          },
+        ]
+      : [];
   const next: AppState = {
     ...state,
     wordStats: { ...state.wordStats },
     charStats: { ...state.charStats },
-    logs: [
-      {
-        id: crypto.randomUUID(),
-        date: now,
-        wordIds: items.map((item) => item.word.id),
-        wrongWordIds,
-        wrongChars,
-      },
-      ...state.logs,
-    ].slice(0, 120),
+    unsuitableWords: { ...state.unsuitableWords },
+    logs: [...reviewLogs, ...state.logs].slice(0, 120),
   };
 
-  for (const item of items) {
+  for (const item of unsuitableItems) {
+    next.unsuitableWords[item.word.id] = unsuitableFlagForWord(item.word, next.unsuitableWords[item.word.id], now);
+  }
+
+  for (const item of reviewedItems) {
     const reviewChars = reviewCharsForWord(item.word);
     const isWrong = reviewChars.some((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)));
     const previous = next.wordStats[item.word.id] ?? { attempts: 0, mistakes: 0, streak: 0 };

@@ -49,6 +49,19 @@ export interface CharacterStat {
   lastMistakeAt?: string;
 }
 
+export interface UnsuitableWordFlag {
+  wordId: string;
+  text: string;
+  pinyin: string;
+  grade: Grade;
+  lessonId: string;
+  lessonTitle: string;
+  category: CharacterCategory;
+  flaggedCount: number;
+  firstFlaggedAt: string;
+  lastFlaggedAt: string;
+}
+
 export interface ReviewLog {
   id: string;
   date: string;
@@ -61,6 +74,7 @@ export interface AppState {
   progress: Progress;
   wordStats: Record<string, WordStat>;
   charStats: Record<string, CharacterStat>;
+  unsuitableWords: Record<string, UnsuitableWordFlag>;
   customLessons: Lesson[];
   customWords: DictationWord[];
   logs: ReviewLog[];
