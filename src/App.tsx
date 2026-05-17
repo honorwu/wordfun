@@ -950,7 +950,7 @@ function PracticeSheet({
             <dt>日期</dt>
             <dd>{todayText()}</dd>
           </div>
-          <div>
+          <div className="no-print">
             <dt>范围</dt>
             <dd>{practiceMode === "lesson" ? lessonLabel(selectedLesson) : `一年级至上一课，不含${lessonNumberLabel(selectedLesson)}`}</dd>
           </div>
@@ -1012,7 +1012,7 @@ function DictationCard({
       <div className="card-top">
         <div className="number">{index + 1}</div>
         <div className="prompt">
-          <span className="origin">
+          <span className="origin no-print">
             {gradeNames[item.word.grade]} · {item.word.lessonTitle} · {item.word.category}字
           </span>
           <span className="reason no-print">{item.reasons.join(" / ")}</span>
