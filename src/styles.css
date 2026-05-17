@@ -634,9 +634,9 @@ textarea {
 
 .dictation-grid {
   display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding: 18px 24px 12px;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 16px 20px 12px;
 }
 
 .word-card {
@@ -644,9 +644,14 @@ textarea {
   border: 1px solid rgba(203, 187, 164, 0.84);
   border-radius: 8px;
   display: grid;
-  gap: 10px;
-  min-height: 128px;
+  gap: 7px 9px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  min-height: 112px;
   padding: 10px;
+}
+
+.word-card.long-word {
+  grid-column: span 2;
 }
 
 .word-card.wrong {
@@ -659,9 +664,7 @@ textarea {
 
 .card-top {
   align-items: start;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: 30px minmax(0, 1fr) 126px;
+  display: contents;
 }
 
 .number {
@@ -680,6 +683,7 @@ textarea {
 .prompt {
   display: grid;
   gap: 2px;
+  grid-column: 2;
   min-width: 0;
 }
 
@@ -704,6 +708,8 @@ textarea {
 .card-actions {
   display: grid;
   gap: 6px;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(74px, auto) minmax(0, 1fr);
 }
 
 .card-status {
@@ -742,7 +748,8 @@ textarea {
   align-items: end;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 7px;
+  grid-column: 2;
 }
 
 .mizige-wrap {
@@ -765,7 +772,7 @@ textarea {
 
 .cell-pinyin {
   color: var(--blue);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   line-height: 1.15;
   min-height: 16px;
@@ -779,13 +786,13 @@ textarea {
   border: 1.5px solid rgba(181, 64, 59, 0.62);
   display: flex;
   font-family: "Kaiti SC", "KaiTi", serif;
-  font-size: 34px;
+  font-size: 36px;
   font-weight: 700;
-  height: 54px;
+  height: 58px;
   justify-content: center;
   overflow: hidden;
   position: relative;
-  width: 54px;
+  width: 58px;
 }
 
 .mizige-line {
@@ -881,6 +888,10 @@ textarea {
   .wide-panel {
     grid-column: span 2;
   }
+
+  .dictation-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 860px) {
@@ -925,6 +936,10 @@ textarea {
   }
 
   .wide-panel {
+    grid-column: auto;
+  }
+
+  .word-card.long-word {
     grid-column: auto;
   }
 
@@ -1017,8 +1032,8 @@ textarea {
     align-items: end;
     border-bottom: 1px solid #d8c7aa;
     flex-direction: row;
-    min-height: 18mm;
-    padding: 0 0 3mm;
+    min-height: 14mm;
+    padding: 0 0 2mm;
   }
 
   .sheet-head h2 {
@@ -1038,21 +1053,23 @@ textarea {
   }
 
   .dictation-grid {
-    gap: 1.6mm;
+    gap: 1.3mm;
     grid-auto-rows: 24mm;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding: 2mm 0 1.5mm;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 1.6mm 0 1mm;
   }
 
   .word-card {
+    align-items: center;
     background: #fff !important;
     break-inside: avoid;
     border-color: #b8b8b8;
-    gap: 0.8mm;
+    display: flex;
+    gap: 1mm;
     height: 24mm;
     min-height: 0;
     overflow: hidden;
-    padding: 1.2mm;
+    padding: 1mm 1.2mm;
   }
 
   .word-card.wrong,
@@ -1067,21 +1084,21 @@ textarea {
   }
 
   .card-top {
-    grid-template-columns: 5mm minmax(0, 1fr);
-    min-height: 4mm;
+    display: block;
+    flex: 0 0 5mm;
+    min-height: 0;
   }
 
   .number {
     background: #fff !important;
     border-color: #9a9a9a;
-    font-size: 10px;
-    height: 4.4mm;
-    width: 4.4mm;
+    font-size: 11px;
+    height: 4.8mm;
+    width: 4.8mm;
   }
 
   .prompt {
-    display: block;
-    min-width: 0;
+    display: none;
   }
 
   .origin {
@@ -1095,31 +1112,38 @@ textarea {
   }
 
   .mizige-group {
+    align-items: center;
+    flex: 1 1 auto;
     flex-wrap: nowrap;
-    gap: 1mm;
+    gap: 0.65mm;
+    min-width: 0;
     overflow: hidden;
   }
 
   .mizige-wrap {
-    gap: 0.45mm;
+    gap: 0.7mm;
   }
 
   .cell-pinyin {
     color: #111;
     display: block;
-    font-size: 8.5px;
-    font-weight: 600;
-    line-height: 1;
-    min-height: 2.6mm;
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1.05;
+    min-height: 3.8mm;
     visibility: visible;
   }
 
   .mizige-cell {
     background: #fff !important;
     border-color: #9a9a9a;
-    font-size: 20px;
-    height: 10mm;
-    width: 10mm;
+    font-size: 27px;
+    height: 12.8mm;
+    width: 12.8mm;
+  }
+
+  .word-card.long-word {
+    grid-column: span 2;
   }
 
   .mizige-v,
@@ -1139,6 +1163,6 @@ textarea {
 
   .sheet-foot {
     font-size: 11px;
-    padding: 1mm 0 0;
+    padding: 0.5mm 0 0;
   }
 }

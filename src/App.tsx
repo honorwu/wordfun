@@ -1027,7 +1027,7 @@ function DictationCard({
   const wrongChars = isUnsuitable ? [] : chars.filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)));
   const isWrong = showAnswers && wrongChars.length > 0;
   const statusText = isUnsuitable ? "不合适" : isWrong ? `${wrongChars.length}错` : "全对";
-  const cardClassName = ["word-card", isWrong ? "wrong" : "", isUnsuitable ? "unsuitable" : ""].filter(Boolean).join(" ");
+  const cardClassName = ["word-card", cellCount >= 5 ? "long-word" : "", isWrong ? "wrong" : "", isUnsuitable ? "unsuitable" : ""].filter(Boolean).join(" ");
 
   return (
     <article className={cardClassName}>
