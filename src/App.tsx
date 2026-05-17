@@ -79,11 +79,25 @@ const todayText = () =>
     weekday: "long",
   }).format(new Date());
 
+const fileDateText = () =>
+  new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
 const termLabel = (term: number) => (term === 2 ? "下册" : "上册");
 
 const lessonNumberLabel = (lesson: Lesson) => (lesson.title.startsWith("语文园地") ? lesson.title : `第${lesson.number}课 ${lesson.title}`);
 
 const lessonLabel = (lesson: Lesson) => `${gradeNames[lesson.grade]}${termLabel(lesson.unit)} ${lessonNumberLabel(lesson)}`;
+
+const practiceModeLabel = (mode: PracticeMode) => (mode === "lesson" ? "本课词语默写" : "历史生字筛查");
+
+const cleanFileNamePart = (text: string) => text.replace(/[\\/:*?"<>|]/gu, "").replace(/\s+/gu, "");
+
+const printTitle = (mode: PracticeMode, lesson: Lesson) =>
+  ["字趣", fileDateText(), practiceModeLabel(mode), lessonLabel(lesson)].map(cleanFileNamePart).filter(Boolean).join("-");
 
 const sameLocalDay = (date: string) => new Date(date).toDateString() === new Date().toDateString();
 
@@ -546,6 +560,14 @@ function StudentView({
 }) {
   const hasPractice = practiceItems.length > 0;
   const unsuitableCount = practiceItems.filter((item) => unsuitableWordIds.has(item.word.id)).length;
+  const printPracticeSheet = () => {
+    const originalTitle = document.title;
+    document.title = printTitle(practiceMode, selectedLesson);
+    window.print();
+    setTimeout(() => {
+      document.title = originalTitle;
+    }, 0);
+  };
 
   return (
     <section className="student-layout">
@@ -562,7 +584,7 @@ function StudentView({
                 换一组
               </button>
             ) : null}
-            <button type="button" onClick={() => window.print()} title="打印">
+            <button type="button" onClick={printPracticeSheet} title="打印">
               <Printer size={17} aria-hidden="true" />
               打印
             </button>
