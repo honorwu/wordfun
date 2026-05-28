@@ -697,6 +697,15 @@ textarea {
   color: var(--blue);
 }
 
+.sentence-prompt {
+  color: var(--ink);
+  font-size: 13px;
+  grid-column: 2;
+  line-height: 1.3;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .card-status,
 .mark-button,
 .unsuitable-button {
@@ -1054,19 +1063,21 @@ textarea {
 
   .dictation-grid {
     gap: 1.3mm;
-    grid-auto-rows: 24mm;
+    grid-auto-rows: 28mm;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     padding: 1.6mm 0 1mm;
   }
 
   .word-card {
-    align-items: center;
+    align-items: start;
     background: #fff !important;
     break-inside: avoid;
     border-color: #b8b8b8;
-    display: flex;
-    gap: 1mm;
-    height: 24mm;
+    display: grid;
+    gap: 0.8mm 1mm;
+    grid-template-columns: 5mm minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 28mm;
     min-height: 0;
     overflow: hidden;
     padding: 1mm 1.2mm;
@@ -1085,7 +1096,8 @@ textarea {
 
   .card-top {
     display: block;
-    flex: 0 0 5mm;
+    grid-column: 1;
+    grid-row: 1 / 3;
     min-height: 0;
   }
 
@@ -1101,6 +1113,17 @@ textarea {
     display: none;
   }
 
+  .sentence-prompt {
+    color: #111;
+    display: block;
+    font-size: 9.5px;
+    grid-column: 2;
+    line-height: 1.15;
+    margin: 0;
+    max-height: 7mm;
+    overflow: hidden;
+  }
+
   .origin {
     color: #111;
     display: block;
@@ -1113,9 +1136,9 @@ textarea {
 
   .mizige-group {
     align-items: center;
-    flex: 1 1 auto;
     flex-wrap: nowrap;
     gap: 0.65mm;
+    grid-column: 2;
     min-width: 0;
     overflow: hidden;
   }
