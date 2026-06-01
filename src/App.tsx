@@ -975,11 +975,15 @@ function PracticeSheet({
           <h2>{practiceMode === "lesson" ? "本课词语默写" : "历史生字筛查"}</h2>
         </div>
         <dl>
+          <div className="print-only">
+            <dt>姓名</dt>
+            <dd>________</dd>
+          </div>
           <div>
             <dt>日期</dt>
             <dd>{todayText()}</dd>
           </div>
-          <div className="no-print">
+          <div className="sheet-range">
             <dt>范围</dt>
             <dd>{practiceMode === "lesson" ? lessonLabel(selectedLesson) : `一年级至上一课，不含${lessonNumberLabel(selectedLesson)}`}</dd>
           </div>
@@ -1000,12 +1004,6 @@ function PracticeSheet({
           />
         ))}
       </div>
-
-      <footer className="sheet-foot">
-        <span>默写用时：______ 分钟</span>
-        <span>错字：______ 个</span>
-        <span>家长签名：__________</span>
-      </footer>
     </div>
   );
 }
@@ -1034,8 +1032,16 @@ function DictationCard({
   const wrongChars = isUnsuitable ? [] : chars.filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)));
   const isWrong = showAnswers && wrongChars.length > 0;
   const statusText = isUnsuitable ? "不合适" : isWrong ? `${wrongChars.length}错` : "全对";
-  const cardClassName = ["word-card", cellCount >= 5 ? "long-word" : "", isWrong ? "wrong" : "", isUnsuitable ? "unsuitable" : ""].filter(Boolean).join(" ");
   const sentencePrompt = sentencePromptForWord(item.word);
+  const cardClassName = [
+    "word-card",
+    sentencePrompt ? "has-sentence" : "no-sentence",
+    cellCount >= 5 ? "long-word" : "",
+    isWrong ? "wrong" : "",
+    isUnsuitable ? "unsuitable" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <article className={cardClassName}>
@@ -1063,7 +1069,10 @@ function DictationCard({
         ) : null}
       </div>
       {sentencePrompt ? (
-        <p className="sentence-prompt">句子：{sentencePrompt}</p>
+        <p className="sentence-prompt">
+          <span className="sentence-label">句子：</span>
+          {sentencePrompt}
+        </p>
       ) : (
         <p className="sentence-prompt sentence-prompt-missing no-print">缺少已核验例句，暂不打印提示句。</p>
       )}

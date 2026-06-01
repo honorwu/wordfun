@@ -632,10 +632,14 @@ textarea {
   margin: 0;
 }
 
+.print-only {
+  display: none !important;
+}
+
 .dictation-grid {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   padding: 16px 20px 12px;
 }
 
@@ -708,6 +712,10 @@ textarea {
 
 .sentence-prompt-missing {
   color: #b45309;
+}
+
+.sentence-label {
+  color: var(--muted);
 }
 
 .card-status,
@@ -852,15 +860,6 @@ textarea {
   z-index: 1;
 }
 
-.sheet-foot {
-  color: var(--muted);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  justify-content: space-between;
-  padding: 16px 30px 24px;
-}
-
 .review-bar {
   padding: 12px 14px;
 }
@@ -995,8 +994,205 @@ textarea {
 }
 
 @media print {
+  .sheet {
+    background: #fff;
+    border: 1px solid #d6d6d6;
+    border-radius: 2mm;
+    box-shadow: 0 18px 52px rgba(31, 43, 58, 0.16);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    margin-inline: auto;
+    max-width: 100%;
+    min-height: 282mm;
+    overflow: visible;
+    width: 194mm;
+  }
+
+  .sheet-head {
+    align-items: start;
+    border-bottom: 0.35mm solid #111;
+    flex-direction: row;
+    gap: 8mm;
+    min-height: 13mm;
+    padding: 0 0 2.4mm;
+  }
+
+  .sheet-head h2 {
+    font-size: 18px;
+    letter-spacing: 0;
+    line-height: 1.08;
+    margin: 0.5mm 0 0;
+  }
+
+  .sheet-head p,
+  .sheet-head dt,
+  .sheet-head dd {
+    color: #111;
+    font-size: 10.5px;
+    line-height: 1.15;
+  }
+
+  .sheet-head dl {
+    align-content: start;
+    display: grid;
+    gap: 1.4mm 3mm;
+    grid-template-columns: 28mm minmax(0, 1fr);
+    margin-top: 0.5mm;
+    min-width: 112mm;
+  }
+
+  .sheet-head dl div,
+  .print-only {
+    display: grid !important;
+    gap: 1.2mm;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .sheet-head dd {
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .sheet-range {
+    grid-column: 1 / -1;
+  }
+
+  .sheet-range dd {
+    white-space: normal;
+  }
+
+  .dictation-grid {
+    align-content: start;
+    display: grid;
+    gap: 0.7mm 1.6mm;
+    grid-auto-rows: 25.5mm;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 0.8mm 0 0.6mm;
+  }
+
+  .word-card {
+    align-items: start;
+    background: #fff;
+    border-color: #aaa;
+    border-radius: 1.2mm;
+    display: grid;
+    gap: 0.4mm 1.4mm;
+    grid-template-columns: 5.2mm minmax(0, 1fr);
+    grid-template-rows: 5.2mm minmax(0, 1fr);
+    height: 25.5mm;
+    min-height: 0;
+    overflow: visible;
+    padding: 1mm 1.7mm 0.9mm 1.2mm;
+  }
+
+  .word-card.wrong,
+  .word-card.unsuitable {
+    background: #fff;
+  }
+
+  .card-top {
+    display: block;
+    grid-column: 1;
+    grid-row: 1 / 3;
+    min-height: 0;
+  }
+
+  .number {
+    background: #fff;
+    border-color: #777;
+    border-radius: 999px;
+    color: #111;
+    font-size: 9.5px;
+    height: 4.9mm;
+    width: 4.9mm;
+  }
+
+  .prompt {
+    display: none;
+  }
+
+  .sentence-prompt {
+    color: #111;
+    display: block;
+    font-size: 9.7px;
+    grid-column: 2;
+    grid-row: 1;
+    line-height: 1.08;
+    margin: 0;
+    max-height: 5.2mm;
+    overflow: hidden;
+  }
+
+  .sentence-label {
+    display: none;
+  }
+
+  .mizige-group {
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 1.35mm;
+    grid-column: 2;
+    grid-row: 2;
+    justify-content: flex-start;
+    min-width: 0;
+    overflow: visible;
+  }
+
+  .word-card.no-sentence .mizige-group {
+    grid-row: 1 / 3;
+  }
+
+  .mizige-wrap {
+    gap: 0.25mm;
+  }
+
+  .cell-pinyin {
+    color: #111;
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    min-height: 3.5mm;
+    visibility: visible;
+  }
+
+  .mizige-cell {
+    background: #fff;
+    border-color: #aaa;
+    border-width: 0.25mm;
+    color: #111;
+    font-size: 29px;
+    height: 14.2mm;
+    width: 14.2mm;
+  }
+
+  .word-card.long-word {
+    grid-column: span 2;
+  }
+
+  .mizige-v,
+  .mizige-h {
+    border-color: #d9d9d9;
+    border-style: dashed;
+    border-width: 0.35px;
+    filter: none;
+    opacity: 1;
+    outline: 0;
+  }
+
+  .mizige-d1,
+  .mizige-d2 {
+    border-color: #e6e6e6;
+    border-style: dashed;
+    border-width: 0.35px;
+    display: block;
+  }
+
+}
+
+@media print {
   @page {
-    margin: 8mm;
+    margin: 7mm 8mm;
     size: A4 portrait;
   }
 
@@ -1009,8 +1205,8 @@ textarea {
   body {
     background: #fff;
     color: #111;
-    print-color-adjust: economy;
-    -webkit-print-color-adjust: economy;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 
   * {
@@ -1038,53 +1234,11 @@ textarea {
     background: #fff !important;
     border: 0;
     border-radius: 0;
-    width: 194mm;
-  }
-
-  .sheet-head {
-    align-items: end;
-    border-bottom: 1px solid #d8c7aa;
-    flex-direction: row;
-    min-height: 14mm;
-    padding: 0 0 2mm;
-  }
-
-  .sheet-head h2 {
-    font-size: 19px;
-    line-height: 1.15;
-  }
-
-  .sheet-head p,
-  .sheet-head dt,
-  .sheet-head dd {
-    font-size: 12px;
-  }
-
-  .sheet-head dl {
-    gap: 3px;
-    min-width: 82mm;
-  }
-
-  .dictation-grid {
-    gap: 1.3mm;
-    grid-auto-rows: 28mm;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    padding: 1.6mm 0 1mm;
   }
 
   .word-card {
-    align-items: start;
     background: #fff !important;
     break-inside: avoid;
-    border-color: #b8b8b8;
-    display: grid;
-    gap: 0.8mm 1mm;
-    grid-template-columns: 5mm minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-    height: 28mm;
-    min-height: 0;
-    overflow: hidden;
-    padding: 1mm 1.2mm;
   }
 
   .word-card.wrong,
@@ -1092,104 +1246,8 @@ textarea {
     background: #fff !important;
   }
 
-  .word-card,
   .number,
   .mizige-cell {
-    color: #111;
-  }
-
-  .card-top {
-    display: block;
-    grid-column: 1;
-    grid-row: 1 / 3;
-    min-height: 0;
-  }
-
-  .number {
     background: #fff !important;
-    border-color: #9a9a9a;
-    font-size: 11px;
-    height: 4.8mm;
-    width: 4.8mm;
-  }
-
-  .prompt {
-    display: none;
-  }
-
-  .sentence-prompt {
-    color: #111;
-    display: block;
-    font-size: 9.5px;
-    grid-column: 2;
-    line-height: 1.15;
-    margin: 0;
-    max-height: 7mm;
-    overflow: hidden;
-  }
-
-  .origin {
-    color: #111;
-    display: block;
-    font-size: 8.5px;
-    line-height: 1.15;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .mizige-group {
-    align-items: center;
-    flex-wrap: nowrap;
-    gap: 0.65mm;
-    grid-column: 2;
-    min-width: 0;
-    overflow: hidden;
-  }
-
-  .mizige-wrap {
-    gap: 0.7mm;
-  }
-
-  .cell-pinyin {
-    color: #111;
-    display: block;
-    font-size: 11.5px;
-    font-weight: 700;
-    line-height: 1.05;
-    min-height: 3.8mm;
-    visibility: visible;
-  }
-
-  .mizige-cell {
-    background: #fff !important;
-    border-color: #9a9a9a;
-    font-size: 27px;
-    height: 12.8mm;
-    width: 12.8mm;
-  }
-
-  .word-card.long-word {
-    grid-column: span 2;
-  }
-
-  .mizige-v,
-  .mizige-h {
-    border-color: #d6d6d6;
-    border-style: dashed;
-    border-width: 0.5px;
-    filter: none;
-    opacity: 1;
-    outline: 0;
-  }
-
-  .mizige-d1,
-  .mizige-d2 {
-    display: none;
-  }
-
-  .sheet-foot {
-    font-size: 11px;
-    padding: 0.5mm 0 0;
   }
 }
