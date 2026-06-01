@@ -1062,7 +1062,11 @@ function DictationCard({
           </div>
         ) : null}
       </div>
-      <p className="sentence-prompt">句子：{sentencePrompt}</p>
+      {sentencePrompt ? (
+        <p className="sentence-prompt">句子：{sentencePrompt}</p>
+      ) : (
+        <p className="sentence-prompt sentence-prompt-missing no-print">缺少已核验例句，暂不打印提示句。</p>
+      )}
       <div className="mizige-group" aria-label="默写位置">
         {Array.from({ length: cellCount }).map((_, cellIndex) => {
           const char = chars[cellIndex];

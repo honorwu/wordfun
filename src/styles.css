@@ -706,6 +706,10 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.sentence-prompt-missing {
+  color: #b45309;
+}
+
 .card-status,
 .mark-button,
 .unsuitable-button {
