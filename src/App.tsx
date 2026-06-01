@@ -29,6 +29,7 @@ import {
   isMasteredWord,
   reviewCharsForWord,
 } from "./lib/scheduler";
+import { sentencePromptForWord } from "./lib/sentenceHints";
 import { createDefaultState, exportState, normalizeState } from "./lib/storage";
 import type { AppState, CharacterCategory, CompanionDictionary, DictationWord, Grade, Lesson, PracticeItem, UnsuitableWordFlag } from "./types";
 
@@ -100,138 +101,6 @@ const printTitle = (mode: PracticeMode, lesson: Lesson) =>
   ["字趣", fileDateText(), practiceModeLabel(mode), lessonLabel(lesson)].map(cleanFileNamePart).filter(Boolean).join("-");
 
 const sameLocalDay = (date: string) => new Date(date).toDateString() === new Date().toDateString();
-
-const exactSentenceHints: Record<string, string> = {
-  "亡羊补牢": "发现问题后马上改正，真是亡羊补牢。",
-  "引人注目": "新展品十分引人注目。",
-  "共产党员": "这位共产党员热心帮助大家。",
-  "坐井观天": "只看眼前就是坐井观天。",
-  "宇宙飞船": "宇航员乘坐宇宙飞船。",
-  "刘胡兰": "刘胡兰是一位英雄。",
-  "系鞋带": "出门前要系鞋带。",
-  "甲骨文": "甲骨文是古老的文字。",
-  "红领巾": "少先队员戴着红领巾。",
-  "水煮鱼": "妈妈做了一盘水煮鱼。",
-  "葡萄干": "我喜欢吃葡萄干。",
-  "哈哈大笑": "听到笑话，大家哈哈大笑。",
-  "陆地": "海龟也会爬到陆地上。",
-  "捏着": "妹妹捏着一块橡皮。",
-  "即使": "即使下雨，我们也按时到校。",
-  "化石": "博物馆里有恐龙化石。",
-  "一件": "我有一件蓝色外套。",
-  "牵手": "过马路时，我们要牵手。",
-  "扛起": "哥哥扛起一袋米。",
-  "掉下": "树叶从枝头掉下。",
-  "脚步": "门外传来轻轻的脚步。",
-  "挺直": "站队时要挺直腰背。",
-  "休息": "午饭后大家休息一会儿。",
-  "嫩绿": "春天长出嫩绿的小芽。",
-  "场院": "爷爷把稻谷晒在场院里。",
-  "丰收": "秋天是丰收的季节。",
-  "改正": "发现错误后要及时改正。",
-  "后退": "遇到危险时先后退。",
-  "劳累": "走了很久，我感到劳累。",
-  "破洞": "袜子上有一个破洞。",
-  "涌出": "清水从泉眼里涌出。",
-  "乞巧": "七夕节也叫乞巧节。",
-  "一幅": "墙上挂着一幅画。",
-  "哗啦": "门外传来哗啦一声。",
-  "悲伤": "听到这个消息，他很悲伤。",
-  "犯错": "犯错以后要勇敢承认。",
-  "祖宗": "清明节人们祭拜祖宗。",
-  "甲乙": "这张表分为甲乙两组。",
-  "厚度": "老师量了纸板的厚度。",
-  "疲倦": "跑了很久，我感到疲倦。",
-  "痕迹": "雪地上留下脚印的痕迹。",
-  "薄膜": "杯口盖着一层薄膜。",
-  "贡献": "他为班级作出贡献。",
-  "贷款": "买房时有人会申请贷款。",
-  "咳嗽": "感冒时容易咳嗽。",
-  "差不多": "这两支笔差不多长。",
-  "糟糕": "忘带作业可真糟糕。",
-  "漏洞": "这段话里有一个漏洞。",
-  "涨红": "他急得涨红了脸。",
-  "震动": "雷声让窗户轻轻震动。",
-  "亲吻": "妈妈亲吻了宝宝的额头。",
-  "劈开": "木匠把木头劈开。",
-  "签名": "请在本子上签名。",
-  "绘画": "妹妹喜欢绘画。",
-  "应和": "溪水应和着鸟鸣。",
-  "咸味": "这碗汤有咸味。",
-  "埋藏": "种子埋藏在泥土里。",
-  "腔调": "他说话带着特别的腔调。",
-  "计划": "我们计划周末去图书馆。",
-  "舀水": "他用勺子舀水。",
-  "脊背": "他挺直了脊背。",
-  "啃咬": "他啃咬着手里的玉米。",
-  "俘虏": "敌人被战士俘虏了。",
-  "蘸水": "毛笔轻轻蘸水。",
-  "撕开": "妹妹把包装纸撕开。",
-  "雇用": "工厂雇用了一名工人。",
-  "喧哗": "图书馆里不要喧哗。",
-  "长颈鹿": "动物园里有一只长颈鹿。",
-  "嘴巴": "请张开嘴巴读一读。",
-  "长达": "这条隧道长达五公里。",
-  "嫌弃": "我们不要嫌弃别人。",
-};
-
-const sentenceWithWord = (word: DictationWord) => {
-  const text = word.text;
-  const exact = exactSentenceHints[text];
-  if (exact) {
-    return exact;
-  }
-  if (text.length === 1) {
-    return `课文《${word.lessonTitle}》里出现过这个字：${text}。`;
-  }
-  if (text.endsWith("员")) {
-    return `这位${text}工作很认真。`;
-  }
-  if (text.endsWith("船")) {
-    return `远处驶来一艘${text}。`;
-  }
-  if (text.endsWith("桥")) {
-    return `河上有一座${text}。`;
-  }
-  if (text.endsWith("车")) {
-    return `路边停着一辆${text}。`;
-  }
-  if (text.endsWith("机")) {
-    return `爸爸买了一台${text}。`;
-  }
-  if (text.endsWith("花")) {
-    return `公园里的${text}开了。`;
-  }
-  if (text.endsWith("树")) {
-    return `院子里种着一棵${text}。`;
-  }
-  if (text.endsWith("鱼")) {
-    return `水里游着一条${text}。`;
-  }
-  if (text.endsWith("鸟") || text.endsWith("虫")) {
-    return `我看见一只${text}。`;
-  }
-  if (text.endsWith("子")) {
-    return `桌上放着一个${text}。`;
-  }
-  if (text.endsWith("声")) {
-    return `远处传来${text}。`;
-  }
-  if (text.endsWith("光")) {
-    return `窗外洒进${text}。`;
-  }
-  return `课文《${word.lessonTitle}》里有这个词：${text}。`;
-};
-
-const maskWordInSentence = (sentence: string, text: string) => {
-  const index = sentence.lastIndexOf(text);
-  return index >= 0 ? `${sentence.slice(0, index)}**${sentence.slice(index + text.length)}` : `${sentence} **`;
-};
-
-const sentencePromptForWord = (word: DictationWord) => {
-  const sentence = sentenceWithWord(word);
-  return maskWordInSentence(sentence, word.text);
-};
 
 const logWrongCharCount = (log: AppState["logs"][number]) => (log.wrongChars && log.wrongChars.length > 0 ? log.wrongChars.length : log.wrongWordIds.length);
 
