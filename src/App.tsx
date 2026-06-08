@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 import type { ChangeEvent, ReactElement } from "react";
 import { gradeNames } from "./data/metadata";
 import { fetchAppData, saveRemoteState } from "./lib/api";
@@ -113,6 +114,20 @@ const samePrintedSheet = (left: PrintLog, right: PrintLog) =>
     const other = right.items[index];
     return other && item.word.id === other.word.id && item.word.text === other.word.text;
   });
+
+const addPrintLogToState = (current: AppState, nextLog: PrintLog): AppState => {
+  const existing = current.printLogs.find((log) => samePrintedSheet(log, nextLog));
+  if (existing) {
+    return {
+      ...current,
+      printLogs: [{ ...existing, date: nextLog.date }, ...current.printLogs.filter((log) => log.id !== existing.id)].slice(0, 180),
+    };
+  }
+  return {
+    ...current,
+    printLogs: [nextLog, ...current.printLogs].slice(0, 180),
+  };
+};
 
 const logWrongCharCount = (log: AppState["logs"][number]) => (log.wrongChars && log.wrongChars.length > 0 ? log.wrongChars.length : log.wrongWordIds.length);
 
@@ -365,19 +380,18 @@ function App() {
       })),
     };
 
-    setState((current) => {
-      const existing = current.printLogs.find((log) => samePrintedSheet(log, nextLog));
-      if (existing) {
-        return {
-          ...current,
-          printLogs: [{ ...existing, date: nextLog.date }, ...current.printLogs.filter((log) => log.id !== existing.id)].slice(0, 180),
-        };
-      }
-      return {
-        ...current,
-        printLogs: [nextLog, ...current.printLogs].slice(0, 180),
-      };
+    let nextState: AppState | undefined;
+    flushSync(() => {
+      setState((current) => {
+        nextState = addPrintLogToState(current, nextLog);
+        return nextState;
+      });
     });
+    if (nextState) {
+      void saveRemoteState(nextState).catch((error: unknown) => {
+        setSavedMessage(error instanceof Error ? `保存失败：${error.message}` : "保存失败");
+      });
+    }
     setSavedMessage("已加入打印历史。");
     setTimeout(() => setSavedMessage(""), 1800);
   };
