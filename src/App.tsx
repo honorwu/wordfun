@@ -917,38 +917,6 @@ function ParentDashboard({
 
         <div className="panel">
           <div className="panel-title">
-            <X size={18} aria-hidden="true" />
-            <span>高频错误</span>
-          </div>
-          <div className="trouble-list">
-            {troubleWords.length === 0 ? (
-              <p className="hint">还没有错词记录。</p>
-            ) : (
-              troubleWords.map(({ word, stat }) => (
-                <div className="trouble-item" key={word.id}>
-                  <div>
-                    <strong>{word.text}</strong>
-                    <span>{word.pinyin}</span>
-                  </div>
-                  <b>{stat?.mistakes ?? 0} 次</b>
-                </div>
-              ))
-            )}
-          </div>
-          {troubleChars.length > 0 ? (
-            <div className="char-chips">
-              {troubleChars.map(({ char, stat }) => (
-                <span key={char}>
-                  {char}
-                  <b>{stat?.mistakes}</b>
-                </span>
-              ))}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="panel">
-          <div className="panel-title">
             <Flag size={18} aria-hidden="true" />
             <span>待修正词语</span>
           </div>
@@ -1063,6 +1031,38 @@ function ParentDashboard({
               清空记录
             </button>
           </div>
+        </div>
+
+        <div className="panel full-panel">
+          <div className="panel-title">
+            <X size={18} aria-hidden="true" />
+            <span>高频错误</span>
+          </div>
+          <div className="trouble-list">
+            {troubleWords.length === 0 ? (
+              <p className="hint">还没有错词记录。</p>
+            ) : (
+              troubleWords.map(({ word, stat }) => (
+                <div className="trouble-item" key={word.id}>
+                  <div>
+                    <strong>{word.text}</strong>
+                    <span>{word.pinyin}</span>
+                  </div>
+                  <b>{stat?.mistakes ?? 0} 次</b>
+                </div>
+              ))
+            )}
+          </div>
+          {troubleChars.length > 0 ? (
+            <div className="char-chips">
+              {troubleChars.map(({ char, stat }) => (
+                <span key={char}>
+                  {char}
+                  <b>{stat?.mistakes}</b>
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
       </section>
     </section>

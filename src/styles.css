@@ -415,6 +415,10 @@ textarea {
   grid-column: span 2;
 }
 
+.full-panel {
+  grid-column: 1 / -1;
+}
+
 .grade-grid {
   display: grid;
   gap: 8px;
@@ -945,6 +949,10 @@ textarea {
     grid-column: span 2;
   }
 
+  .full-panel {
+    grid-column: 1 / -1;
+  }
+
   .dictation-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -993,6 +1001,10 @@ textarea {
   }
 
   .wide-panel {
+    grid-column: auto;
+  }
+
+  .full-panel {
     grid-column: auto;
   }
 
