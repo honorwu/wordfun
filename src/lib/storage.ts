@@ -1,4 +1,4 @@
-import type { AppState, CharacterCategory, CharacterStat, DictationWord, Grade, Lesson, Progress, ReviewLog, UnsuitableWordFlag, WordStat } from "../types";
+import type { AppState, CharacterCategory, CharacterStat, DictationWord, Grade, Lesson, PrintLog, Progress, ReviewLog, UnsuitableWordFlag, WordStat } from "../types";
 
 const fallbackProgress: Progress = {
   grade: 3,
@@ -13,6 +13,7 @@ export const createDefaultState = (progress: Progress = fallbackProgress): AppSt
   customLessons: [],
   customWords: [],
   logs: [],
+  printLogs: [],
 });
 
 const normalizeCategory = (category: unknown): CharacterCategory => (category === "一类" ? "一类" : "二类");
@@ -104,6 +105,27 @@ const normalizeLogs = (logs: AppState["logs"] | undefined): AppState["logs"] =>
       }) satisfies ReviewLog,
   );
 
+const normalizePrintLogs = (logs: AppState["printLogs"] | undefined): AppState["printLogs"] =>
+  (logs ?? [])
+    .filter((log): log is PrintLog => Boolean(log) && typeof log.id === "string" && Array.isArray(log.items))
+    .map((log): PrintLog => ({
+      id: log.id,
+      date: log.date || new Date(0).toISOString(),
+      localDate: log.localDate || (log.date || "").slice(0, 10),
+      practiceMode: log.practiceMode === "lesson" ? "lesson" : "screening",
+      lessonId: log.lessonId || "",
+      lessonLabel: log.lessonLabel || "",
+      title: log.title || (log.practiceMode === "lesson" ? "本课词语默写" : "历史生字筛查"),
+      rangeLabel: log.rangeLabel || "",
+      items: log.items
+        .filter((item) => Boolean(item?.word?.id))
+        .map((item) => ({
+          word: normalizeWord(item.word),
+          reasons: uniqueStrings(item.reasons),
+        })),
+    }))
+    .filter((log) => log.items.length > 0);
+
 export const normalizeState = (state: Partial<AppState>, fallback = fallbackProgress): AppState => {
   const base = createDefaultState(fallback);
   return {
@@ -116,6 +138,7 @@ export const normalizeState = (state: Partial<AppState>, fallback = fallbackProg
     charStats: normalizeCharStats(state.charStats),
     unsuitableWords: normalizeUnsuitableWords(state.unsuitableWords),
     logs: normalizeLogs(state.logs),
+    printLogs: normalizePrintLogs(state.printLogs),
   };
 };
 

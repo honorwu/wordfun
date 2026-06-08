@@ -290,6 +290,40 @@ CREATE TABLE IF NOT EXISTS custom_word_chars (
 );
 `;
 
+const printHistorySchemaSql = `
+CREATE TABLE IF NOT EXISTS print_logs (
+  id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  local_date TEXT NOT NULL,
+  practice_mode TEXT NOT NULL CHECK (practice_mode IN ('lesson', 'screening')),
+  lesson_id TEXT NOT NULL,
+  lesson_label TEXT NOT NULL,
+  title TEXT NOT NULL,
+  range_label TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS print_log_items (
+  log_id TEXT NOT NULL REFERENCES print_logs(id) ON DELETE CASCADE,
+  item_order INTEGER NOT NULL,
+  word_id TEXT NOT NULL,
+  text TEXT NOT NULL,
+  pinyin TEXT NOT NULL,
+  chars_json TEXT NOT NULL,
+  grade INTEGER NOT NULL,
+  word_lesson_id TEXT NOT NULL,
+  lesson_title TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('一类', '二类')),
+  reasons_json TEXT NOT NULL,
+  PRIMARY KEY (log_id, item_order)
+);
+`;
+
+const printHistoryIndexSql = `
+CREATE INDEX IF NOT EXISTS idx_print_logs_student_date ON print_logs(student_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_print_log_items_log ON print_log_items(log_id, item_order);
+`;
+
 export const ensureDataDir = () => {
   mkdirSync(dataDir, { recursive: true });
 };
@@ -318,6 +352,17 @@ const migrateLearningDatabase = (db) => {
   if (!charStatColumns.has("last_mistake_at")) {
     db.exec("ALTER TABLE char_stats ADD COLUMN last_mistake_at TEXT");
   }
+  ensurePrintHistoryTables(db);
+};
+
+const tableExists = (db, tableName) =>
+  Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName));
+
+const ensurePrintHistoryTables = (db) => {
+  if (!tableExists(db, "print_logs") || !tableExists(db, "print_log_items")) {
+    db.exec(printHistorySchemaSql);
+  }
+  db.exec(printHistoryIndexSql);
 };
 
 export const requireCatalogDatabase = (databasePath = defaultCatalogDatabasePath) => {
@@ -330,6 +375,23 @@ export const requireCatalogDatabase = (databasePath = defaultCatalogDatabasePath
 export const readJson = (relativePath) => JSON.parse(readFileSync(path.join(projectRoot, relativePath), "utf8"));
 
 export const normalizeCategory = (category) => (category === "一类" ? "一类" : "二类");
+
+const normalizeGrade = (grade) => {
+  const value = Number(grade);
+  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5 ? value : 1;
+};
+
+const parseStringArray = (value) => {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string" && item.length > 0) : [];
+  } catch {
+    return [];
+  }
+};
 
 export const runTransaction = (db, fn) => {
   db.exec("BEGIN");
@@ -521,6 +583,47 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
       wrongChars: wrongChars.map((item) => ({ wordId: item.word_id, char: item.char })),
     };
   });
+  const printLogs = allRows(
+    learningDb,
+    `SELECT id, date, local_date, practice_mode, lesson_id, lesson_label, title, range_label
+     FROM print_logs
+     WHERE student_id = ?
+     ORDER BY date DESC
+     LIMIT 180`,
+    studentId,
+  ).map((log) => {
+    const items = allRows(
+      learningDb,
+      `SELECT word_id, text, pinyin, chars_json, grade, word_lesson_id, lesson_title, category, reasons_json
+       FROM print_log_items
+       WHERE log_id = ?
+       ORDER BY item_order`,
+      log.id,
+    );
+    return {
+      id: log.id,
+      date: log.date,
+      localDate: log.local_date,
+      practiceMode: log.practice_mode === "lesson" ? "lesson" : "screening",
+      lessonId: log.lesson_id,
+      lessonLabel: log.lesson_label,
+      title: log.title,
+      rangeLabel: log.range_label,
+      items: items.map((item) => ({
+        word: {
+          id: item.word_id,
+          text: item.text,
+          pinyin: item.pinyin,
+          chars: parseStringArray(item.chars_json),
+          grade: normalizeGrade(item.grade),
+          lessonId: item.word_lesson_id,
+          lessonTitle: item.lesson_title,
+          category: normalizeCategory(item.category),
+        },
+        reasons: parseStringArray(item.reasons_json),
+      })),
+    };
+  });
   const unsuitableWords = {};
   for (const row of allRows(learningDb, "SELECT * FROM unsuitable_words WHERE student_id = ? ORDER BY last_flagged_at DESC", studentId)) {
     unsuitableWords[row.word_id] = {
@@ -555,6 +658,7 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
     customLessons: customLessons.map((lesson) => ({ ...lesson, words: customWordsByLesson.get(lesson.id) || [] })),
     customWords,
     logs,
+    printLogs,
   };
 };
 
@@ -668,6 +772,54 @@ export const saveState = (learningDb, state, studentId = defaultStudentId) => {
       }
       for (const [index, item] of wrongChars.entries()) {
         insertLogChar.run(log.id, item.wordId, item.char, Math.max(0, (log.wordIds || []).indexOf(item.wordId)), index);
+      }
+    }
+
+    learningDb.prepare("DELETE FROM print_logs WHERE student_id = ?").run(studentId);
+    const insertPrintLog = learningDb.prepare(
+      `INSERT INTO print_logs (
+         id, student_id, date, local_date, practice_mode, lesson_id, lesson_label, title, range_label
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const insertPrintLogItem = learningDb.prepare(
+      `INSERT INTO print_log_items (
+         log_id, item_order, word_id, text, pinyin, chars_json, grade, word_lesson_id, lesson_title, category, reasons_json
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const log of (state.printLogs || []).slice(0, 180)) {
+      const practiceMode = log.practiceMode === "lesson" ? "lesson" : "screening";
+      const items = Array.isArray(log.items) ? log.items.filter((item) => item?.word?.id) : [];
+      if (items.length === 0) {
+        continue;
+      }
+      insertPrintLog.run(
+        log.id,
+        studentId,
+        log.date || now,
+        log.localDate || (log.date || now).slice(0, 10),
+        practiceMode,
+        log.lessonId || "",
+        log.lessonLabel || "",
+        log.title || (practiceMode === "lesson" ? "本课词语默写" : "历史生字筛查"),
+        log.rangeLabel || "",
+      );
+      for (const [index, item] of items.entries()) {
+        const word = item.word;
+        insertPrintLogItem.run(
+          log.id,
+          index,
+          word.id,
+          word.text || "",
+          word.pinyin || "",
+          JSON.stringify(Array.isArray(word.chars) ? word.chars.filter(Boolean) : []),
+          normalizeGrade(word.grade),
+          word.lessonId || "",
+          word.lessonTitle || "",
+          normalizeCategory(word.category),
+          JSON.stringify(Array.isArray(item.reasons) ? item.reasons.filter(Boolean) : []),
+        );
       }
     }
 

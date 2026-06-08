@@ -31,7 +31,7 @@ import {
 } from "./lib/scheduler";
 import { sentencePromptForWord } from "./lib/sentenceHints";
 import { createDefaultState, exportState, normalizeState } from "./lib/storage";
-import type { AppState, CharacterCategory, CompanionDictionary, DictationWord, Grade, Lesson, PracticeItem, UnsuitableWordFlag } from "./types";
+import type { AppState, CharacterCategory, CompanionDictionary, DictationWord, Grade, Lesson, PracticeItem, PrintLog, UnsuitableWordFlag } from "./types";
 
 const targetCount = 20;
 
@@ -44,7 +44,7 @@ const termOptions = [
 type Term = (typeof termOptions)[number]["value"];
 
 type ViewMode = "student" | "parent";
-type PracticeMode = "lesson" | "screening";
+type PracticeMode = PrintLog["practiceMode"];
 
 type DashboardStats = {
   accuracy: number;
@@ -72,20 +72,20 @@ const formatDate = (date: string) =>
     minute: "2-digit",
   }).format(new Date(date));
 
-const todayText = () =>
+const todayText = (date = new Date()) =>
   new Intl.DateTimeFormat("zh-CN", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     weekday: "long",
-  }).format(new Date());
+  }).format(date);
 
-const fileDateText = () =>
+const fileDateText = (date = new Date()) =>
   new Intl.DateTimeFormat("en-CA", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(new Date());
+  }).format(date);
 
 const termLabel = (term: number) => (term === 2 ? "下册" : "上册");
 
@@ -100,7 +100,19 @@ const cleanFileNamePart = (text: string) => text.replace(/[\\/:*?"<>|]/gu, "").r
 const printTitle = (mode: PracticeMode, lesson: Lesson) =>
   ["字趣", fileDateText(), practiceModeLabel(mode), lessonLabel(lesson)].map(cleanFileNamePart).filter(Boolean).join("-");
 
+const printLogTitle = (log: PrintLog) => ["字趣", log.localDate, log.title, log.lessonLabel].map(cleanFileNamePart).filter(Boolean).join("-");
+
 const sameLocalDay = (date: string) => new Date(date).toDateString() === new Date().toDateString();
+
+const samePrintedSheet = (left: PrintLog, right: PrintLog) =>
+  left.localDate === right.localDate &&
+  left.practiceMode === right.practiceMode &&
+  left.lessonId === right.lessonId &&
+  left.items.length === right.items.length &&
+  left.items.every((item, index) => {
+    const other = right.items[index];
+    return other && item.word.id === other.word.id && item.word.text === other.word.text;
+  });
 
 const logWrongCharCount = (log: AppState["logs"][number]) => (log.wrongChars && log.wrongChars.length > 0 ? log.wrongChars.length : log.wrongWordIds.length);
 
@@ -135,6 +147,7 @@ function App() {
   const [wrongCharKeys, setWrongCharKeys] = useState<Set<string>>(() => new Set());
   const [unsuitableWordIds, setUnsuitableWordIds] = useState<Set<string>>(() => new Set());
   const [savedMessage, setSavedMessage] = useState("");
+  const [selectedPrintLogId, setSelectedPrintLogId] = useState("");
 
   const resetReviewMarks = () => {
     setWrongCharKeys(new Set());
@@ -197,6 +210,10 @@ function App() {
     return [...byId.values()];
   }, [allLessons, eligibleWords, state.customWords]);
   const wordById = useMemo(() => new Map(allKnownWords.map((word) => [word.id, word])), [allKnownWords]);
+  const selectedPrintLog = useMemo(
+    () => state.printLogs.find((log) => log.id === selectedPrintLogId),
+    [selectedPrintLogId, state.printLogs],
+  );
 
   const stats = useMemo(() => {
     const uniqueChars = Array.from(new Set(eligibleWords.flatMap((word) => word.chars)));
@@ -325,6 +342,46 @@ function App() {
     resetReviewMarks();
   };
 
+  const recordPrintedSheet = () => {
+    if (!selectedLesson || practiceItems.length === 0) {
+      return;
+    }
+
+    const printedAt = new Date();
+    const rangeLabel =
+      practiceMode === "lesson" ? lessonLabel(selectedLesson) : `一年级至上一课，不含${lessonNumberLabel(selectedLesson)}`;
+    const nextLog: PrintLog = {
+      id: crypto.randomUUID(),
+      date: printedAt.toISOString(),
+      localDate: fileDateText(printedAt),
+      practiceMode,
+      lessonId: selectedLesson.id,
+      lessonLabel: lessonLabel(selectedLesson),
+      title: practiceModeLabel(practiceMode),
+      rangeLabel,
+      items: practiceItems.map((item) => ({
+        word: { ...item.word, chars: [...item.word.chars] },
+        reasons: [...item.reasons],
+      })),
+    };
+
+    setState((current) => {
+      const existing = current.printLogs.find((log) => samePrintedSheet(log, nextLog));
+      if (existing) {
+        return {
+          ...current,
+          printLogs: [{ ...existing, date: nextLog.date }, ...current.printLogs.filter((log) => log.id !== existing.id)].slice(0, 180),
+        };
+      }
+      return {
+        ...current,
+        printLogs: [nextLog, ...current.printLogs].slice(0, 180),
+      };
+    });
+    setSavedMessage("已加入打印历史。");
+    setTimeout(() => setSavedMessage(""), 1800);
+  };
+
   const changePracticeMode = (mode: PracticeMode) => {
     setPracticeMode(mode);
     setScreeningSeed(0);
@@ -411,11 +468,13 @@ function App() {
       wordStats: {},
       charStats: {},
       logs: [],
+      printLogs: [],
     }));
+    setSelectedPrintLogId("");
     setScreeningSeed(0);
     resetReviewMarks();
     setShowAnswers(false);
-    setSavedMessage("练习记录已清空，词库保留。");
+    setSavedMessage("练习和打印记录已清空，词库保留。");
   };
 
   const sheet = selectedLesson ? (
@@ -424,7 +483,6 @@ function App() {
       practiceMode={practiceMode}
       selectedLesson={selectedLesson}
       showAnswers={showAnswers}
-      state={state}
       toggleUnsuitableWord={toggleUnsuitableWord}
       toggleWrongChar={toggleWrongChar}
       unsuitableWordIds={unsuitableWordIds}
@@ -478,13 +536,30 @@ function App() {
         </nav>
       </header>
 
-      {viewMode === "student" ? (
+      {selectedPrintLog ? (
+        <PrintHistoryViewer
+          log={selectedPrintLog}
+          onClose={() => setSelectedPrintLogId("")}
+          onSaveReview={(items, historyWrongCharKeys, historyUnsuitableWordIds) => {
+            const reviewedItems = items.filter((item) => !historyUnsuitableWordIds.has(item.word.id));
+            const unsuitableCount = items.length - reviewedItems.length;
+            const wrongCount = reviewedItems.reduce(
+              (sum, item) => sum + reviewCharsForWord(item.word).filter((char) => historyWrongCharKeys.has(charReviewKey(item.word.id, char))).length,
+              0,
+            );
+            setState((current) => applyReviewResult(current, items, historyWrongCharKeys, historyUnsuitableWordIds));
+            setSavedMessage(`已记录历史题单 ${reviewedItems.length} 个词${unsuitableCount > 0 ? `，跳过 ${unsuitableCount} 个不合适词` : ""}，${wrongCount} 个字需要回炉。`);
+            setTimeout(() => setSavedMessage(""), 2400);
+          }}
+        />
+      ) : viewMode === "student" ? (
         <StudentView
           accuracy={stats.accuracy}
           masteredChars={stats.masteredChars}
           masteredWords={stats.masteredWords}
           practiceItems={practiceItems}
           practiceMode={practiceMode}
+          recordPrintedSheet={recordPrintedSheet}
           reviewedChars={stats.reviewedChars}
           reviewedWords={stats.reviewedWords}
           saveReview={saveReview}
@@ -507,6 +582,7 @@ function App() {
           eligibleLessons={eligibleLessons}
           eligibleWords={eligibleWords}
           importBackup={importBackup}
+          openPrintLog={setSelectedPrintLogId}
           resetPracticeHistory={resetPracticeHistory}
           selectedLesson={selectedLesson}
           setProgressGrade={setProgressGrade}
@@ -534,6 +610,7 @@ function StudentView({
   masteredWords,
   practiceItems,
   practiceMode,
+  recordPrintedSheet,
   reviewedChars,
   reviewedWords,
   saveReview,
@@ -552,6 +629,7 @@ function StudentView({
   masteredWords: number;
   practiceItems: PracticeItem[];
   practiceMode: PracticeMode;
+  recordPrintedSheet: () => void;
   reviewedChars: number;
   reviewedWords: number;
   saveReview: () => void;
@@ -568,6 +646,7 @@ function StudentView({
   const hasPractice = practiceItems.length > 0;
   const unsuitableCount = practiceItems.filter((item) => unsuitableWordIds.has(item.word.id)).length;
   const printPracticeSheet = () => {
+    recordPrintedSheet();
     const originalTitle = document.title;
     document.title = printTitle(practiceMode, selectedLesson);
     window.print();
@@ -681,6 +760,7 @@ function ParentDashboard({
   eligibleLessons,
   eligibleWords,
   importBackup,
+  openPrintLog,
   resetPracticeHistory,
   selectedLesson,
   selectedTerm,
@@ -702,6 +782,7 @@ function ParentDashboard({
   eligibleLessons: Lesson[];
   eligibleWords: DictationWord[];
   importBackup: (event: ChangeEvent<HTMLInputElement>) => void;
+  openPrintLog: (logId: string) => void;
   resetPracticeHistory: () => void;
   selectedLesson: Lesson;
   selectedTerm: Term;
@@ -920,6 +1001,34 @@ function ParentDashboard({
           </div>
         </div>
 
+        <div className="panel wide-panel">
+          <div className="panel-title">
+            <Printer size={18} aria-hidden="true" />
+            <span>打印历史</span>
+          </div>
+          <div className="print-log-list">
+            {state.printLogs.length === 0 ? (
+              <p className="hint">打印一次默写纸后，这里会保存当天题单。</p>
+            ) : (
+              state.printLogs.slice(0, 8).map((log) => (
+                <div className="print-log-item" key={log.id}>
+                  <div>
+                    <strong>{formatDate(log.date)}</strong>
+                    <span>
+                      {log.title} · {log.items.length} 个词
+                    </span>
+                    <small>{log.rangeLabel || log.lessonLabel}</small>
+                  </div>
+                  <button type="button" onClick={() => openPrintLog(log.id)} title="回看打印题单">
+                    <FileText size={16} aria-hidden="true" />
+                    回看
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
         <div className="panel">
           <div className="panel-title">
             <Settings2 size={18} aria-hidden="true" />
@@ -946,33 +1055,194 @@ function ParentDashboard({
   );
 }
 
+function PrintHistoryViewer({
+  log,
+  onClose,
+  onSaveReview,
+}: {
+  log: PrintLog;
+  onClose: () => void;
+  onSaveReview: (items: PracticeItem[], wrongCharKeys: Set<string>, unsuitableWordIds: Set<string>) => void;
+}) {
+  const [showAnswers, setShowAnswers] = useState(false);
+  const [wrongCharKeys, setWrongCharKeys] = useState<Set<string>>(() => new Set());
+  const [unsuitableWordIds, setUnsuitableWordIds] = useState<Set<string>>(() => new Set());
+  const historyItems: PracticeItem[] = log.items.map((item, index) => ({
+    word: item.word,
+    score: log.items.length - index,
+    reasons: item.reasons.length > 0 ? item.reasons : ["打印历史"],
+  }));
+  const historyLesson: Lesson = {
+    id: log.lessonId,
+    grade: historyItems[0]?.word.grade ?? 1,
+    unit: 1,
+    number: 0,
+    title: log.lessonLabel || "打印历史",
+    words: historyItems.map((item) => item.word),
+  };
+  const unsuitableCount = historyItems.filter((item) => unsuitableWordIds.has(item.word.id)).length;
+
+  useEffect(() => {
+    setShowAnswers(false);
+    setWrongCharKeys(new Set());
+    setUnsuitableWordIds(new Set());
+  }, [log.id]);
+
+  const printHistoricalSheet = () => {
+    const originalTitle = document.title;
+    document.title = printLogTitle(log);
+    window.print();
+    setTimeout(() => {
+      document.title = originalTitle;
+    }, 0);
+  };
+  const toggleHistoryWrongChar = (wordId: string, char: string) => {
+    const key = charReviewKey(wordId, char);
+    setUnsuitableWordIds((current) => {
+      if (!current.has(wordId)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.delete(wordId);
+      return next;
+    });
+    setWrongCharKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+  const toggleHistoryUnsuitableWord = (word: DictationWord) => {
+    const willMark = !unsuitableWordIds.has(word.id);
+    setUnsuitableWordIds((current) => {
+      const next = new Set(current);
+      if (next.has(word.id)) {
+        next.delete(word.id);
+      } else {
+        next.add(word.id);
+      }
+      return next;
+    });
+    if (willMark) {
+      setWrongCharKeys((current) => {
+        const next = new Set(current);
+        for (const char of reviewCharsForWord(word)) {
+          next.delete(charReviewKey(word.id, char));
+        }
+        return next;
+      });
+    }
+  };
+  const saveHistoryReview = () => {
+    onSaveReview(historyItems, wrongCharKeys, unsuitableWordIds);
+    setShowAnswers(false);
+    setWrongCharKeys(new Set());
+    setUnsuitableWordIds(new Set());
+  };
+
+  return (
+    <section className="history-viewer">
+      <div className="history-viewer-bar no-print">
+        <div>
+          <p className="eyebrow">打印历史</p>
+          <h2>{log.title}</h2>
+          <span>
+            {formatDate(log.date)} · {log.items.length} 个词 · {log.rangeLabel || log.lessonLabel}
+          </span>
+        </div>
+        <div className="toolbar">
+          <button type="button" onClick={onClose} title="关闭回看">
+            <X size={17} aria-hidden="true" />
+            关闭
+          </button>
+          <button type="button" onClick={() => setShowAnswers((value) => !value)} title={showAnswers ? "隐藏答案" : "显示答案"}>
+            <FileText size={17} aria-hidden="true" />
+            {showAnswers ? "隐藏答案" : "显示答案"}
+          </button>
+          <button className="primary" type="button" onClick={printHistoricalSheet} title="再次打印">
+            <Printer size={17} aria-hidden="true" />
+            再次打印
+          </button>
+        </div>
+      </div>
+
+      <PracticeSheet
+        dateText={todayText(new Date(log.date))}
+        items={historyItems}
+        practiceMode={log.practiceMode}
+        rangeText={log.rangeLabel}
+        selectedLesson={historyLesson}
+        showAnswers={showAnswers}
+        titleText={log.title}
+        toggleUnsuitableWord={toggleHistoryUnsuitableWord}
+        toggleWrongChar={toggleHistoryWrongChar}
+        unsuitableWordIds={unsuitableWordIds}
+        wrongCharKeys={wrongCharKeys}
+      />
+
+      {showAnswers ? (
+        <div className="review-bar no-print">
+          <div>
+            <strong>{wrongCharKeys.size}</strong>
+            <span>个字已标记错误</span>
+          </div>
+          {unsuitableCount > 0 ? (
+            <div>
+              <strong>{unsuitableCount}</strong>
+              <span>个词将跳过记录</span>
+            </div>
+          ) : null}
+          <button className="primary" type="button" onClick={saveHistoryReview}>
+            <Check size={17} aria-hidden="true" />
+            保存本次核对
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function PracticeSheet({
+  dateText,
   items,
   practiceMode,
+  rangeText,
+  readOnlyAnswers = false,
   selectedLesson,
   showAnswers,
-  state,
+  titleText,
   toggleUnsuitableWord,
   toggleWrongChar,
   unsuitableWordIds,
   wrongCharKeys,
 }: {
+  dateText?: string;
   items: PracticeItem[];
   practiceMode: PracticeMode;
+  rangeText?: string;
+  readOnlyAnswers?: boolean;
   selectedLesson: Lesson;
   showAnswers: boolean;
-  state: AppState;
+  titleText?: string;
   toggleUnsuitableWord: (word: DictationWord) => void;
   toggleWrongChar: (wordId: string, char: string) => void;
   unsuitableWordIds: Set<string>;
   wrongCharKeys: Set<string>;
 }) {
+  const sheetTitle = titleText ?? practiceModeLabel(practiceMode);
+  const sheetDate = dateText ?? todayText();
+  const sheetRange = rangeText ?? (practiceMode === "lesson" ? lessonLabel(selectedLesson) : `一年级至上一课，不含${lessonNumberLabel(selectedLesson)}`);
+
   return (
     <div className="sheet">
       <header className="sheet-head">
         <div>
           <p>字趣 · 语文字词默写</p>
-          <h2>{practiceMode === "lesson" ? "本课词语默写" : "历史生字筛查"}</h2>
+          <h2>{sheetTitle}</h2>
         </div>
         <dl>
           <div className="print-only">
@@ -981,11 +1251,11 @@ function PracticeSheet({
           </div>
           <div>
             <dt>日期</dt>
-            <dd>{todayText()}</dd>
+            <dd>{sheetDate}</dd>
           </div>
           <div className="sheet-range">
             <dt>范围</dt>
-            <dd>{practiceMode === "lesson" ? lessonLabel(selectedLesson) : `一年级至上一课，不含${lessonNumberLabel(selectedLesson)}`}</dd>
+            <dd>{sheetRange}</dd>
           </div>
         </dl>
       </header>
@@ -996,6 +1266,7 @@ function PracticeSheet({
             item={item}
             index={index}
             key={item.word.id}
+            readOnlyAnswers={readOnlyAnswers}
             showAnswers={showAnswers}
             toggleUnsuitableWord={toggleUnsuitableWord}
             toggleWrongChar={toggleWrongChar}
@@ -1011,6 +1282,7 @@ function PracticeSheet({
 function DictationCard({
   item,
   index,
+  readOnlyAnswers = false,
   showAnswers,
   toggleUnsuitableWord,
   toggleWrongChar,
@@ -1019,6 +1291,7 @@ function DictationCard({
 }: {
   item: PracticeItem;
   index: number;
+  readOnlyAnswers?: boolean;
   showAnswers: boolean;
   toggleUnsuitableWord: (word: DictationWord) => void;
   toggleWrongChar: (wordId: string, char: string) => void;
@@ -1053,7 +1326,7 @@ function DictationCard({
           </span>
           <span className="reason no-print">{item.reasons.join(" / ")}</span>
         </div>
-        {showAnswers ? (
+        {showAnswers && !readOnlyAnswers ? (
           <div className="card-actions no-print">
             <span className={isWrong || isUnsuitable ? "card-status active" : "card-status"}>{statusText}</span>
             <button
@@ -1091,7 +1364,7 @@ function DictationCard({
                 <i className="mizige-line mizige-d2" aria-hidden="true" />
                 {showAnswers ? <b className="answer-char">{char ?? ""}</b> : null}
               </div>
-              {showAnswers && char ? (
+              {showAnswers && char && !readOnlyAnswers ? (
                 <button
                   className={isCharWrong ? "char-mark-button active no-print" : "char-mark-button no-print"}
                   type="button"

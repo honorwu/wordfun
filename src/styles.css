@@ -142,6 +142,8 @@ textarea {
 .card-top,
 .review-bar,
 .scope-line,
+.history-viewer-bar,
+.print-log-item,
 .trouble-item,
 .unsuitable-item,
 .log-item {
@@ -197,6 +199,9 @@ textarea {
 .sheet-head dt,
 .log-item span,
 .log-item small,
+.history-viewer-bar span,
+.print-log-item span,
+.print-log-item small,
 .trouble-item span {
   color: var(--muted);
 }
@@ -230,7 +235,8 @@ textarea {
 }
 
 .student-layout,
-.parent-layout {
+.parent-layout,
+.history-viewer {
   display: grid;
   gap: 16px;
   min-width: 0;
@@ -289,6 +295,7 @@ textarea {
 .progress-summary,
 .today-card,
 .done-card,
+.history-viewer-bar,
 .review-bar {
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(219, 225, 232, 0.95);
@@ -334,6 +341,7 @@ textarea {
 .progress-stack,
 .grade-bars,
 .log-list,
+.print-log-list,
 .trouble-list,
 .unsuitable-list {
   display: grid;
@@ -584,9 +592,44 @@ textarea {
   padding: 4px 0 8px;
 }
 
+.print-log-item {
+  border-bottom: 1px solid var(--line);
+  padding: 0 0 10px;
+}
+
+.print-log-item div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.print-log-item strong,
+.print-log-item span,
+.print-log-item small {
+  overflow-wrap: anywhere;
+}
+
+.print-log-item button {
+  min-width: 82px;
+}
+
 .log-item small {
   grid-column: 1 / -1;
   overflow-wrap: anywhere;
+}
+
+.history-viewer-bar {
+  padding: 16px;
+}
+
+.history-viewer-bar h2,
+.history-viewer-bar p {
+  margin: 0;
+}
+
+.history-viewer-bar h2 {
+  font-size: 26px;
+  line-height: 1.2;
 }
 
 .sheet {
@@ -914,6 +957,7 @@ textarea {
   .app-header,
   .top-strip,
   .sheet-head,
+  .history-viewer-bar,
   .review-bar {
     align-items: stretch;
     flex-direction: column;

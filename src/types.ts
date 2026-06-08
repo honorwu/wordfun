@@ -70,6 +70,23 @@ export interface ReviewLog {
   wrongChars?: Array<{ wordId: string; char: string }>;
 }
 
+export interface PrintLogItem {
+  word: DictationWord;
+  reasons: string[];
+}
+
+export interface PrintLog {
+  id: string;
+  date: string;
+  localDate: string;
+  practiceMode: "lesson" | "screening";
+  lessonId: string;
+  lessonLabel: string;
+  title: string;
+  rangeLabel: string;
+  items: PrintLogItem[];
+}
+
 export interface AppState {
   progress: Progress;
   wordStats: Record<string, WordStat>;
@@ -78,6 +95,7 @@ export interface AppState {
   customLessons: Lesson[];
   customWords: DictationWord[];
   logs: ReviewLog[];
+  printLogs: PrintLog[];
 }
 
 export interface PracticeItem {
