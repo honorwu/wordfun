@@ -492,6 +492,11 @@ const screeningReason = (chars: string[], state: AppState) => {
   return "历史筛查";
 };
 
+const reviewPeriodOrder = (word: DictationWord, lessonById: Map<string, Lesson>) => {
+  const lesson = lessonById.get(word.lessonId);
+  return lesson ? lesson.grade * 10 + lesson.unit : word.grade * 10;
+};
+
 export const getScreeningTargetChars = (lessons: Lesson[], customWords: DictationWord[], progress: Progress) => {
   const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
   const selectedLesson = lessonById.get(progress.lessonId);
@@ -541,6 +546,7 @@ export const generateScreeningPractice = (
     .map((word) => ({
       word,
       coverage: uniqueChars(hanChars(word.text).filter((char) => targetChars.has(char) && screeningNeedForChar(char, state) > 0)),
+      periodOrder: reviewPeriodOrder(word, lessonById),
       rotation: hashText(`${rotationKey}\u0000${word.id}\u0000${word.text}`) / 0xffffffff,
     }))
     .filter((candidate) => candidate.coverage.length > 0);
@@ -575,12 +581,27 @@ export const generateScreeningPractice = (
       newChars.length * 24 +
       freshBonus +
       lengthBonus +
-      candidate.rotation * 6 -
+      candidate.rotation * 18 -
       recentWordPenalty
     );
   };
   const hasMistakeReview = (candidate: (typeof candidates)[number]) => candidate.coverage.some((char) => isWeakScreeningChar(char, state));
   const hasMistakeRoom = (candidate: (typeof candidates)[number]) => !hasMistakeReview(candidate) || selectedMistakeReviews < mistakeQuota;
+  const periodOrders = Array.from(new Set(candidates.map((candidate) => candidate.periodOrder))).sort((a, b) => b - a);
+
+  const selectByPeriod = (canUse: (candidate: (typeof candidates)[number], newChars: string[]) => boolean) => {
+    for (const periodOrder of periodOrders) {
+      while (
+        selected.length < targetCount &&
+        selectBest((candidate, newChars) => candidate.periodOrder === periodOrder && canUse(candidate, newChars))
+      ) {
+        // Work through newer semesters first; keep random rotation inside each semester.
+      }
+      if (selected.length >= targetCount) {
+        return;
+      }
+    }
+  };
 
   const selectBest = (canUse: (candidate: (typeof candidates)[number], newChars: string[]) => boolean) => {
     let best:
@@ -637,46 +658,24 @@ export const generateScreeningPractice = (
     return true;
   };
 
-  while (
-    selected.length < targetCount &&
-    selectBest(
-      (candidate, newChars) =>
-        hasMistakeRoom(candidate) && !isRecentlyReviewedWord(candidate.word) && newChars.some((char) => isFreshScreeningChar(char, state)),
-    )
-  ) {
-    // Diagnostic pass: spend the sheet on unseen characters first.
-  }
+  selectByPeriod(
+    (candidate, newChars) =>
+      hasMistakeRoom(candidate) && !isRecentlyReviewedWord(candidate.word) && newChars.some((char) => isFreshScreeningChar(char, state)),
+  );
 
-  while (
-    selected.length < targetCount &&
-    selectBest((candidate, newChars) => hasMistakeRoom(candidate) && newChars.some((char) => isFreshScreeningChar(char, state)))
-  ) {
-    // Small scopes may need recently used words to finish covering unseen characters.
-  }
+  selectByPeriod((candidate, newChars) => hasMistakeRoom(candidate) && newChars.some((char) => isFreshScreeningChar(char, state)));
 
-  while (
-    selected.length < targetCount &&
-    selectBest(
-      (candidate, newChars) =>
-        hasMistakeRoom(candidate) && !isRecentlyReviewedWord(candidate.word) && newChars.some((char) => isDueScreeningChar(char, state)),
-    )
-  ) {
-    // Wrong characters return after a longer cooldown and stay capped per sheet.
-  }
+  selectByPeriod(
+    (candidate, newChars) =>
+      hasMistakeRoom(candidate) && !isRecentlyReviewedWord(candidate.word) && newChars.some((char) => isDueScreeningChar(char, state)),
+  );
 
-  while (
-    selected.length < targetCount &&
-    selectBest(
-      (candidate, newChars) =>
-        hasMistakeRoom(candidate) && !isRecentlyReviewedWord(candidate.word) && newChars.some((char) => screeningNeedForChar(char, state) > 0),
-    )
-  ) {
-    // Fill with older non-recent material when fresh and due pools are thin.
-  }
+  selectByPeriod(
+    (candidate, newChars) =>
+      hasMistakeRoom(candidate) && !isRecentlyReviewedWord(candidate.word) && newChars.some((char) => screeningNeedForChar(char, state) > 0),
+  );
 
-  while (selected.length < targetCount && selectBest((candidate) => hasMistakeRoom(candidate))) {
-    // Very small scopes may need recent needed words, but already-correct characters are not used to fill space.
-  }
+  selectByPeriod((candidate) => hasMistakeRoom(candidate));
 
   return selected;
 };
