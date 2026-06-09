@@ -283,11 +283,11 @@ textarea {
 .stat-band {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
 }
 
 .parent-metrics {
-  grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
 }
 
 .metric,
@@ -710,6 +710,10 @@ textarea {
   background: linear-gradient(90deg, rgba(181, 64, 59, 0.08), rgba(255, 255, 255, 0.78) 78%);
 }
 
+.word-card.mistake-review {
+  border-left: 4px solid var(--red);
+}
+
 .word-card.unsuitable {
   background: linear-gradient(90deg, rgba(183, 129, 32, 0.12), rgba(255, 255, 255, 0.8) 78%);
 }
@@ -730,6 +734,30 @@ textarea {
   height: 28px;
   justify-content: center;
   width: 28px;
+}
+
+.number-wrap {
+  height: 28px;
+  position: relative;
+  width: 28px;
+}
+
+.mistake-review-mark {
+  align-items: center;
+  background: var(--red-soft);
+  border: 1px solid #e2a29c;
+  border-radius: 999px;
+  color: var(--red);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  height: 18px;
+  justify-content: center;
+  line-height: 1;
+  position: absolute;
+  right: -9px;
+  top: -8px;
+  width: 22px;
 }
 
 .prompt {
@@ -1142,6 +1170,10 @@ textarea {
     padding: 1mm 1.7mm 0.9mm 1.2mm;
   }
 
+  .word-card.mistake-review {
+    border-left: 1.2mm solid var(--red);
+  }
+
   .word-card.wrong,
   .word-card.unsuitable {
     background: #fff;
@@ -1162,6 +1194,19 @@ textarea {
     font-size: 9.5px;
     height: 4.9mm;
     width: 4.9mm;
+  }
+
+  .number-wrap {
+    height: 4.9mm;
+    width: 4.9mm;
+  }
+
+  .mistake-review-mark {
+    font-size: 7pt;
+    height: 4mm;
+    right: -2.2mm;
+    top: -1.8mm;
+    width: 5mm;
   }
 
   .prompt {

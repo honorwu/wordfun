@@ -26,8 +26,11 @@ import {
   generateScreeningPractice,
   getEligibleLessons,
   getEligibleWords,
+  getScreeningTargetChars,
   isMasteredChar,
   isMasteredWord,
+  isPendingScreeningMistakeChar,
+  isReviewedScreeningChar,
   reviewCharsForWord,
 } from "./lib/scheduler";
 import { sentencePromptForWord } from "./lib/sentenceHints";
@@ -49,9 +52,13 @@ type PracticeMode = PrintLog["practiceMode"];
 
 type DashboardStats = {
   accuracy: number;
+  historyPendingChars: number;
+  historyReviewedChars: number;
+  historyReviewPercent: number;
+  historyTotalChars: number;
   masteredChars: number;
   masteredWords: number;
-  pendingChars: number;
+  pendingWrongChars: number;
   reviewedChars: number;
   reviewedWords: number;
   todayPracticeCount: number;
@@ -232,10 +239,13 @@ function App() {
 
   const stats = useMemo(() => {
     const uniqueChars = Array.from(new Set(eligibleWords.flatMap((word) => word.chars)));
+    const historyChars = getScreeningTargetChars(allLessons, state.customWords, state.progress);
     const reviewedChars = uniqueChars.filter((char) => state.charStats[char]?.attempts > 0);
+    const historyReviewedChars = historyChars.filter((char) => isReviewedScreeningChar(state.charStats[char]));
     const masteredChars = uniqueChars.filter((char) => isMasteredChar(state.charStats[char]));
     const reviewedWords = eligibleWords.filter((word) => state.wordStats[word.id]?.attempts > 0);
     const masteredWords = eligibleWords.filter((word) => isMasteredWord(word, state));
+    const pendingWrongChars = historyChars.filter((char) => isPendingScreeningMistakeChar(state.charStats[char]));
     const wrongWords = eligibleWords.filter((word) => {
       const stat = state.wordStats[word.id];
       return stat && stat.mistakes > 0 && !isMasteredWord(word, state);
@@ -246,22 +256,26 @@ function App() {
 
     return {
       uniqueChars,
+      historyTotalChars: historyChars.length,
+      historyReviewedChars: historyReviewedChars.length,
+      historyPendingChars: historyChars.length - historyReviewedChars.length,
+      historyReviewPercent: historyChars.length > 0 ? Math.round((historyReviewedChars.length / historyChars.length) * 100) : 0,
       totalChars: uniqueChars.length,
       reviewedChars: reviewedChars.length,
       masteredChars: masteredChars.length,
-      pendingChars: uniqueChars.length - reviewedChars.length,
       totalWords: eligibleWords.length,
       reviewedWords: reviewedWords.length,
       masteredWords: masteredWords.length,
       wrongWords: wrongWords.length,
       totalAttempts,
       totalMistakes,
+      pendingWrongChars: pendingWrongChars.length,
       accuracy: totalAttempts > 0 ? Math.round(((totalAttempts - totalMistakes) / totalAttempts) * 100) : 0,
       todayPracticeCount: todayLogs.reduce((sum, log) => sum + log.wordIds.length, 0),
       todayWrongCount: todayLogs.reduce((sum, log) => sum + logWrongCharCount(log), 0),
       unsuitableWords: Object.keys(state.unsuitableWords).length,
     };
-  }, [eligibleWords, state.charStats, state.logs, state.unsuitableWords, state.wordStats]);
+  }, [allLessons, eligibleWords, state.charStats, state.customWords, state.logs, state.progress, state.unsuitableWords, state.wordStats]);
 
   const wordsByGrade = useMemo(() => {
     return eligibleWords.reduce<Record<Grade, number>>(
@@ -569,12 +583,10 @@ function App() {
       ) : viewMode === "student" ? (
         <StudentView
           accuracy={stats.accuracy}
-          masteredChars={stats.masteredChars}
           masteredWords={stats.masteredWords}
           practiceItems={practiceItems}
           practiceMode={practiceMode}
           recordPrintedSheet={recordPrintedSheet}
-          reviewedChars={stats.reviewedChars}
           reviewedWords={stats.reviewedWords}
           saveReview={saveReview}
           selectedLesson={selectedLesson}
@@ -620,12 +632,10 @@ function App() {
 
 function StudentView({
   accuracy,
-  masteredChars,
   masteredWords,
   practiceItems,
   practiceMode,
   recordPrintedSheet,
-  reviewedChars,
   reviewedWords,
   saveReview,
   selectedLesson,
@@ -639,12 +649,10 @@ function StudentView({
   wrongCharKeys,
 }: {
   accuracy: number;
-  masteredChars: number;
   masteredWords: number;
   practiceItems: PracticeItem[];
   practiceMode: PracticeMode;
   recordPrintedSheet: () => void;
-  reviewedChars: number;
   reviewedWords: number;
   saveReview: () => void;
   selectedLesson: Lesson;
@@ -659,6 +667,13 @@ function StudentView({
 }) {
   const hasPractice = practiceItems.length > 0;
   const unsuitableCount = practiceItems.filter((item) => unsuitableWordIds.has(item.word.id)).length;
+  const historyReviewText = stats.historyTotalChars > 0 ? `${stats.historyReviewPercent}%` : "无旧课";
+  const historyHeadline =
+    stats.historyTotalChars === 0
+      ? "上一课之前还没有旧字"
+      : stats.historyReviewPercent >= 100
+        ? `历史回顾已完成${stats.pendingWrongChars > 0 ? `，${stats.pendingWrongChars} 个错字待纠正` : ""}`
+        : `历史回顾 ${stats.historyReviewPercent}%`;
   const printPracticeSheet = () => {
     recordPrintedSheet();
     const originalTitle = document.title;
@@ -709,8 +724,9 @@ function StudentView({
 
       <div className="stat-band no-print">
         <Metric label="已学汉字" value={stats.totalChars} />
-        <Metric label="已复习汉字" value={`${reviewedChars}/${stats.totalChars}`} />
-        <Metric label="掌握汉字" value={masteredChars} />
+        <Metric label="历史回顾率" value={historyReviewText} />
+        <Metric label="待回顾汉字" value={stats.historyPendingChars} />
+        <Metric label="待纠正错字" value={stats.pendingWrongChars} />
         <Metric label="正确率" value={stats.totalAttempts > 0 ? `${accuracy}%` : "未开始"} />
       </div>
 
@@ -718,10 +734,10 @@ function StudentView({
         <div className="progress-summary">
           <div>
             <p className="eyebrow">我的掌握情况</p>
-            <h3>{stats.reviewedChars === 0 ? "从今天开始积累" : `已经复习 ${stats.reviewedChars} 个生字`}</h3>
+            <h3>{historyHeadline}</h3>
           </div>
           <div className="progress-stack">
-            <ProgressBar label="生字复习" value={reviewedChars} total={stats.totalChars} />
+            <ProgressBar label="历史回顾" value={stats.historyReviewedChars} total={stats.historyTotalChars} trailing={historyReviewText} />
             <ProgressBar label="词语复习" value={reviewedWords} total={stats.totalWords} />
             <ProgressBar label="连续掌握" value={masteredWords} total={stats.totalWords} />
           </div>
@@ -811,6 +827,8 @@ function ParentDashboard({
   wordById: Map<string, DictationWord>;
   wordsByGrade: Record<Grade, number>;
 }) {
+  const historyReviewText = stats.historyTotalChars > 0 ? `${stats.historyReviewPercent}%` : "无旧课";
+
   return (
     <section className="parent-layout">
       <div className="top-strip no-print">
@@ -833,8 +851,9 @@ function ParentDashboard({
 
       <div className="stat-band parent-metrics no-print">
         <Metric label="当前已学汉字" value={stats.totalChars} />
-        <Metric label="已复习汉字" value={`${stats.reviewedChars}/${stats.totalChars}`} />
-        <Metric label="待覆盖汉字" value={stats.pendingChars} />
+        <Metric label="历史回顾率" value={historyReviewText} />
+        <Metric label="历史待回顾" value={stats.historyPendingChars} />
+        <Metric label="待纠正错字" value={stats.pendingWrongChars} />
         <Metric label="已学词语" value={stats.totalWords} />
         <Metric label="已复习词语" value={`${stats.reviewedWords}/${stats.totalWords}`} />
         <Metric label="掌握词语" value={stats.masteredWords} />
@@ -910,6 +929,7 @@ function ParentDashboard({
             <BarChart3 size={18} aria-hidden="true" />
             <span>覆盖情况</span>
           </div>
+          <ProgressBar label="历史回顾" value={stats.historyReviewedChars} total={stats.historyTotalChars} trailing={historyReviewText} />
           <ProgressBar label="生字已复习" value={stats.reviewedChars} total={stats.totalChars} />
           <ProgressBar label="词语已复习" value={stats.reviewedWords} total={stats.totalWords} />
           <ProgressBar label="汉字已掌握" value={stats.masteredChars} total={stats.totalChars} />
@@ -1318,12 +1338,14 @@ function DictationCard({
   const isUnsuitable = showAnswers && unsuitableWordIds.has(item.word.id);
   const wrongChars = isUnsuitable ? [] : chars.filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)));
   const isWrong = showAnswers && wrongChars.length > 0;
+  const isMistakeReview = item.reasons.some((reason) => reason === "错字回炉" || reason === "错题回炉");
   const statusText = isUnsuitable ? "不合适" : isWrong ? `${wrongChars.length}错` : "全对";
   const sentencePrompt = sentencePromptForWord(item.word);
   const cardClassName = [
     "word-card",
     sentencePrompt ? "has-sentence" : "no-sentence",
     cellCount >= 5 ? "long-word" : "",
+    isMistakeReview ? "mistake-review" : "",
     isWrong ? "wrong" : "",
     isUnsuitable ? "unsuitable" : "",
   ]
@@ -1333,7 +1355,14 @@ function DictationCard({
   return (
     <article className={cardClassName}>
       <div className="card-top">
-        <div className="number">{index + 1}</div>
+        <div className="number-wrap">
+          <div className="number">{index + 1}</div>
+          {isMistakeReview ? (
+            <span className="mistake-review-mark" aria-label="之前错过" title="之前错过">
+              错
+            </span>
+          ) : null}
+        </div>
         <div className="prompt">
           <span className="origin no-print">
             {gradeNames[item.word.grade]} · {item.word.lessonTitle} · {item.word.category}字

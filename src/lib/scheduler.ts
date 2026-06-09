@@ -4,8 +4,8 @@ import type { AppState, CharacterStat, CompanionDictionary, DictationWord, Lesso
 const dayMs = 24 * 60 * 60 * 1000;
 const masteryNetCorrect = 2;
 const screeningWordCooldownDays = 4;
-const screeningCharCooldownDays = 2;
-const screeningMistakeCooldownDays = 2;
+const screeningMistakeCooldownDays = 14;
+const screeningMistakeQuotaRatio = 0.25;
 
 const hanChars = (value: string) => Array.from(value).filter((char) => /\p{Script=Han}/u.test(char));
 
@@ -194,6 +194,12 @@ const hasWordTextEvidence = (stat: CharacterStat | undefined, wordText: string) 
   Boolean(stat && (stat.correctWordTexts?.includes(wordText) || stat.wrongWordTexts?.includes(wordText)));
 
 export const isMasteredChar = (stat?: CharacterStat) => charNetCorrectCount(stat) >= masteryNetCorrect;
+
+export const isReviewedScreeningChar = (stat?: CharacterStat) => Boolean(stat && stat.attempts > 0);
+
+export const isCorrectedScreeningChar = (stat?: CharacterStat) => Boolean(stat && stat.attempts > 0 && stat.streak > 0);
+
+export const isPendingScreeningMistakeChar = (stat?: CharacterStat) => Boolean(stat && stat.mistakes > 0 && stat.streak <= 0);
 
 const wordCoverageNeed = (word: DictationWord, charStats: Record<string, CharacterStat>) => {
   return word.chars.reduce((score, char) => {
@@ -445,28 +451,15 @@ const screeningNeedForChar = (char: string, state: AppState) => {
   if (!stat || stat.attempts === 0) {
     return 72;
   }
-  const reviewedDays = daysSince(stat.lastReviewedAt);
-  if (reviewedDays === 0) {
+  if (isCorrectedScreeningChar(stat)) {
     return 0;
   }
-  if (stat.mistakes > 0 && !isMasteredChar(stat)) {
+  if (isPendingScreeningMistakeChar(stat)) {
     const mistakeDays = daysSince(stat.lastMistakeAt);
-    if (reviewedDays < screeningMistakeCooldownDays && mistakeDays < screeningMistakeCooldownDays) {
-      return 12 + reviewedDays * 4;
+    if (mistakeDays < screeningMistakeCooldownDays) {
+      return 0;
     }
-    return 38 + Math.min(14, stat.mistakes * 3) + Math.min(16, mistakeDays * 2);
-  }
-  if (!isMasteredChar(stat)) {
-    if (reviewedDays < screeningCharCooldownDays) {
-      return 8;
-    }
-    return 30 + Math.min(18, reviewedDays * 2);
-  }
-  if (reviewedDays >= 21) {
-    return 10;
-  }
-  if (reviewedDays >= 10) {
-    return 6;
+    return 44 + Math.min(16, stat.mistakes * 4) + Math.min(18, mistakeDays);
   }
   return 0;
 };
@@ -478,7 +471,7 @@ const isFreshScreeningChar = (char: string, state: AppState) => {
 
 const isWeakScreeningChar = (char: string, state: AppState) => {
   const stat = state.charStats[char];
-  return Boolean(stat && stat.mistakes > 0 && !isMasteredChar(stat));
+  return isPendingScreeningMistakeChar(stat) && daysSince(stat?.lastMistakeAt) >= screeningMistakeCooldownDays;
 };
 
 const isDueScreeningChar = (char: string, state: AppState) => {
@@ -486,18 +479,7 @@ const isDueScreeningChar = (char: string, state: AppState) => {
   if (!stat || stat.attempts === 0) {
     return true;
   }
-
-  const reviewedDays = daysSince(stat.lastReviewedAt);
-  if (reviewedDays === 0) {
-    return false;
-  }
-  if (stat.mistakes > 0 && !isMasteredChar(stat)) {
-    return reviewedDays >= screeningMistakeCooldownDays || daysSince(stat.lastMistakeAt) >= screeningMistakeCooldownDays;
-  }
-  if (!isMasteredChar(stat)) {
-    return reviewedDays >= screeningCharCooldownDays;
-  }
-  return reviewedDays >= 10;
+  return isPendingScreeningMistakeChar(stat) && daysSince(stat.lastMistakeAt) >= screeningMistakeCooldownDays;
 };
 
 const screeningReason = (chars: string[], state: AppState) => {
@@ -505,12 +487,29 @@ const screeningReason = (chars: string[], state: AppState) => {
     return "未筛查生字";
   }
   if (chars.some((char) => isWeakScreeningChar(char, state))) {
-    return "错字筛查";
-  }
-  if (chars.some((char) => daysSince(state.charStats[char]?.lastReviewedAt) >= 10)) {
-    return "到期抽查";
+    return "错字回炉";
   }
   return "历史筛查";
+};
+
+export const getScreeningTargetChars = (lessons: Lesson[], customWords: DictationWord[], progress: Progress) => {
+  const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+  const selectedLesson = lessonById.get(progress.lessonId);
+  const selectedOrder = progressOrder(progress, lessons);
+  const orderForWord = (word: DictationWord) => {
+    const lesson = lessonById.get(word.lessonId);
+    return lesson ? lessonOrder(lesson) : word.grade * 1000;
+  };
+  const pastLessonIds = new Set(
+    lessons.filter((lesson) => lessonOrder(lesson) < selectedOrder && lesson.id !== selectedLesson?.id).map((lesson) => lesson.id),
+  );
+
+  return uniqueChars(
+    [
+      ...lessons.flatMap((lesson) => (pastLessonIds.has(lesson.id) ? lesson.words.flatMap((word) => word.chars) : [])),
+      ...customWords.filter((word) => orderForWord(word) < selectedOrder).flatMap((word) => word.chars),
+    ].filter(Boolean),
+  );
 };
 
 export const generateScreeningPractice = (
@@ -521,7 +520,6 @@ export const generateScreeningPractice = (
   rotationSeed = 0,
 ): PracticeItem[] => {
   const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
-  const selectedLesson = lessonById.get(state.progress.lessonId);
   const selectedOrder = progressOrder(state.progress, lessons);
   const rotationKey = `${localDateKey()}\u0000${rotationSeed}`;
   const orderForWord = (word: DictationWord) => {
@@ -529,15 +527,7 @@ export const generateScreeningPractice = (
     return lesson ? lessonOrder(lesson) : word.grade * 1000;
   };
 
-  const pastLessonIds = new Set(
-    lessons.filter((lesson) => lessonOrder(lesson) < selectedOrder && lesson.id !== selectedLesson?.id).map((lesson) => lesson.id),
-  );
-  const targetChars = new Set(
-    [
-      ...lessons.flatMap((lesson) => (pastLessonIds.has(lesson.id) ? lesson.words.flatMap((word) => word.chars) : [])),
-      ...state.customWords.filter((word) => orderForWord(word) < selectedOrder).flatMap((word) => word.chars),
-    ].filter(Boolean),
-  );
+  const targetChars = new Set(getScreeningTargetChars(lessons, state.customWords, state.progress));
 
   if (targetChars.size === 0) {
     return [];
@@ -550,7 +540,7 @@ export const generateScreeningPractice = (
   )
     .map((word) => ({
       word,
-      coverage: uniqueChars(hanChars(word.text).filter((char) => targetChars.has(char))),
+      coverage: uniqueChars(hanChars(word.text).filter((char) => targetChars.has(char) && screeningNeedForChar(char, state) > 0)),
       rotation: hashText(`${rotationKey}\u0000${word.id}\u0000${word.text}`) / 0xffffffff,
     }))
     .filter((candidate) => candidate.coverage.length > 0);
@@ -558,6 +548,8 @@ export const generateScreeningPractice = (
   const selected: PracticeItem[] = [];
   const usedTexts = new Set<string>();
   const coveredChars = new Set<string>();
+  const mistakeQuota = Math.max(1, Math.floor(targetCount * screeningMistakeQuotaRatio));
+  let selectedMistakeReviews = 0;
   const recentlyReviewedWordIds = new Set(
     state.logs.filter((log) => daysSince(log.date) < screeningWordCooldownDays).flatMap((log) => log.wordIds),
   );
@@ -577,7 +569,6 @@ export const generateScreeningPractice = (
     const length = hanLength(candidate.word.text);
     const lengthBonus = length === 2 ? 10 : length === 3 ? 8 : length === 4 ? 4 : 0;
     const freshBonus = newChars.filter((char) => isFreshScreeningChar(char, state)).length * 32;
-    const recentCharPenalty = newChars.filter((char) => daysSince(state.charStats[char]?.lastReviewedAt) < screeningCharCooldownDays).length * 22;
     const recentWordPenalty = isRecentlyReviewedWord(candidate.word) ? 90 : 0;
     return (
       newChars.reduce((sum, char) => sum + screeningNeedForChar(char, state), 0) +
@@ -585,10 +576,11 @@ export const generateScreeningPractice = (
       freshBonus +
       lengthBonus +
       candidate.rotation * 6 -
-      recentCharPenalty -
       recentWordPenalty
     );
   };
+  const hasMistakeReview = (candidate: (typeof candidates)[number]) => candidate.coverage.some((char) => isWeakScreeningChar(char, state));
+  const hasMistakeRoom = (candidate: (typeof candidates)[number]) => !hasMistakeReview(candidate) || selectedMistakeReviews < mistakeQuota;
 
   const selectBest = (canUse: (candidate: (typeof candidates)[number], newChars: string[]) => boolean) => {
     let best:
@@ -598,11 +590,16 @@ export const generateScreeningPractice = (
           newChars: string[];
           rotation: number;
           score: number;
+          hasMistakeReview: boolean;
         }
       | undefined;
 
     for (const candidate of candidates) {
       if (usedTexts.has(candidate.word.text)) {
+        continue;
+      }
+      const candidateHasMistakeReview = hasMistakeReview(candidate);
+      if (candidateHasMistakeReview && selectedMistakeReviews >= mistakeQuota) {
         continue;
       }
       const newChars = candidate.coverage.filter((char) => !coveredChars.has(char));
@@ -619,7 +616,7 @@ export const generateScreeningPractice = (
         (score === best.score && newChars.length > best.newChars.length) ||
         (score === best.score && newChars.length === best.newChars.length && candidate.rotation > best.rotation)
       ) {
-        best = { ...candidate, newChars, score };
+        best = { ...candidate, newChars, score, hasMistakeReview: candidateHasMistakeReview };
       }
     }
 
@@ -629,6 +626,9 @@ export const generateScreeningPractice = (
 
     usedTexts.add(best.word.text);
     best.coverage.forEach((char) => coveredChars.add(char));
+    if (best.hasMistakeReview) {
+      selectedMistakeReviews += 1;
+    }
     selected.push({
       word: best.word,
       score: best.score,
@@ -639,12 +639,18 @@ export const generateScreeningPractice = (
 
   while (
     selected.length < targetCount &&
-    selectBest((candidate, newChars) => !isRecentlyReviewedWord(candidate.word) && newChars.some((char) => isFreshScreeningChar(char, state)))
+    selectBest(
+      (candidate, newChars) =>
+        hasMistakeRoom(candidate) && !isRecentlyReviewedWord(candidate.word) && newChars.some((char) => isFreshScreeningChar(char, state)),
+    )
   ) {
     // Diagnostic pass: spend the sheet on unseen characters first.
   }
 
-  while (selected.length < targetCount && selectBest((candidate, newChars) => newChars.some((char) => isFreshScreeningChar(char, state)))) {
+  while (
+    selected.length < targetCount &&
+    selectBest((candidate, newChars) => hasMistakeRoom(candidate) && newChars.some((char) => isFreshScreeningChar(char, state)))
+  ) {
     // Small scopes may need recently used words to finish covering unseen characters.
   }
 
@@ -652,23 +658,24 @@ export const generateScreeningPractice = (
     selected.length < targetCount &&
     selectBest(
       (candidate, newChars) =>
-        !isRecentlyReviewedWord(candidate.word) &&
-        newChars.some((char) => isDueScreeningChar(char, state)) &&
-        newChars.some((char) => daysSince(state.charStats[char]?.lastReviewedAt) >= screeningCharCooldownDays),
+        hasMistakeRoom(candidate) && !isRecentlyReviewedWord(candidate.word) && newChars.some((char) => isDueScreeningChar(char, state)),
     )
   ) {
-    // Secondary pass after fresh coverage is exhausted.
+    // Wrong characters return after a longer cooldown and stay capped per sheet.
   }
 
   while (
     selected.length < targetCount &&
-    selectBest((candidate, newChars) => !isRecentlyReviewedWord(candidate.word) && newChars.some((char) => screeningNeedForChar(char, state) > 0))
+    selectBest(
+      (candidate, newChars) =>
+        hasMistakeRoom(candidate) && !isRecentlyReviewedWord(candidate.word) && newChars.some((char) => screeningNeedForChar(char, state) > 0),
+    )
   ) {
     // Fill with older non-recent material when fresh and due pools are thin.
   }
 
-  while (selected.length < targetCount && selectBest(() => true)) {
-    // Very small scopes may need recent words to reach the requested count.
+  while (selected.length < targetCount && selectBest((candidate) => hasMistakeRoom(candidate))) {
+    // Very small scopes may need recent needed words, but already-correct characters are not used to fill space.
   }
 
   return selected;
