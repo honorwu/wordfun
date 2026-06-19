@@ -26,6 +26,7 @@ const normalizeWord = (word: DictationWord): DictationWord => ({
 const normalizeLesson = (lesson: Lesson): Lesson => ({
   ...lesson,
   words: lesson.words.map(normalizeWord),
+  ...(lesson.textbookWords ? { textbookWords: lesson.textbookWords.map(normalizeWord) } : {}),
 });
 
 const uniqueStrings = (values: unknown): string[] => (Array.isArray(values) ? Array.from(new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))) : []);
@@ -105,25 +106,30 @@ const normalizeLogs = (logs: AppState["logs"] | undefined): AppState["logs"] =>
       }) satisfies ReviewLog,
   );
 
+const normalizePracticeMode = (mode: unknown): PrintLog["practiceMode"] => (mode === "lesson" || mode === "term" ? mode : "screening");
+
 const normalizePrintLogs = (logs: AppState["printLogs"] | undefined): AppState["printLogs"] =>
   (logs ?? [])
     .filter((log): log is PrintLog => Boolean(log) && typeof log.id === "string" && Array.isArray(log.items))
-    .map((log): PrintLog => ({
-      id: log.id,
-      date: log.date || new Date(0).toISOString(),
-      localDate: log.localDate || (log.date || "").slice(0, 10),
-      practiceMode: log.practiceMode === "lesson" ? "lesson" : "screening",
-      lessonId: log.lessonId || "",
-      lessonLabel: log.lessonLabel || "",
-      title: log.title || (log.practiceMode === "lesson" ? "本课词语默写" : "历史生字筛查"),
-      rangeLabel: log.rangeLabel || "",
-      items: log.items
-        .filter((item) => Boolean(item?.word?.id))
-        .map((item) => ({
-          word: normalizeWord(item.word),
-          reasons: uniqueStrings(item.reasons),
-        })),
-    }))
+    .map((log): PrintLog => {
+      const practiceMode = normalizePracticeMode(log.practiceMode);
+      return {
+        id: log.id,
+        date: log.date || new Date(0).toISOString(),
+        localDate: log.localDate || (log.date || "").slice(0, 10),
+        practiceMode,
+        lessonId: log.lessonId || "",
+        lessonLabel: log.lessonLabel || "",
+        title: log.title || (practiceMode === "lesson" ? "本课词语默写" : practiceMode === "term" ? "期末复习" : "历史生字筛查"),
+        rangeLabel: log.rangeLabel || "",
+        items: log.items
+          .filter((item) => Boolean(item?.word?.id))
+          .map((item) => ({
+            word: normalizeWord(item.word),
+            reasons: uniqueStrings(item.reasons),
+          })),
+      };
+    })
     .filter((log) => log.items.length > 0);
 
 export const normalizeState = (state: Partial<AppState>, fallback = fallbackProgress): AppState => {

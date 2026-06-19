@@ -24,6 +24,7 @@ import {
   charReviewKey,
   generateCurrentLessonPractice,
   generateScreeningPractice,
+  generateTermReviewPractice,
   getEligibleLessons,
   getEligibleWords,
   getScreeningTargetChars,
@@ -32,6 +33,7 @@ import {
   isPendingScreeningMistakeChar,
   isReviewedScreeningChar,
   reviewCharsForWord,
+  termMistakeReason,
 } from "./lib/scheduler";
 import { sentencePromptForWord } from "./lib/sentenceHints";
 import { createDefaultState, exportState, normalizeState } from "./lib/storage";
@@ -101,7 +103,17 @@ const lessonNumberLabel = (lesson: Lesson) => (lesson.title.startsWith("语文�
 
 const lessonLabel = (lesson: Lesson) => `${gradeNames[lesson.grade]}${termLabel(lesson.unit)} ${lessonNumberLabel(lesson)}`;
 
-const practiceModeLabel = (mode: PracticeMode) => (mode === "lesson" ? "本课词语默写" : "历史生字筛查");
+const practiceModeLabel = (mode: PracticeMode) => (mode === "lesson" ? "本课词语默写" : mode === "term" ? "期末复习" : "历史生字筛查");
+
+const practiceRangeLabel = (mode: PracticeMode, lesson: Lesson) => {
+  if (mode === "lesson") {
+    return lessonLabel(lesson);
+  }
+  if (mode === "term") {
+    return `${gradeNames[lesson.grade]}${termLabel(lesson.unit)} 词语表`;
+  }
+  return `一年级至上一课，不含${lessonNumberLabel(lesson)}`;
+};
 
 const cleanFileNamePart = (text: string) => text.replace(/[\\/:*?"<>|]/gu, "").replace(/\s+/gu, "");
 
@@ -221,11 +233,15 @@ function App() {
     () =>
       practiceMode === "lesson"
         ? generateCurrentLessonPractice(allLessons, state, companionWords)
+        : practiceMode === "term"
+          ? generateTermReviewPractice(allLessons, state)
         : generateScreeningPractice(allLessons, state, targetCount, companionWords, screeningSeed),
     [allLessons, companionWords, practiceMode, screeningSeed, state],
   );
   const allKnownWords = useMemo(() => {
-    const byId = new Map([...allLessons.flatMap((lesson) => lesson.words), ...state.customWords].map((word) => [word.id, word]));
+    const byId = new Map(
+      [...allLessons.flatMap((lesson) => [...lesson.words, ...(lesson.textbookWords ?? [])]), ...state.customWords].map((word) => [word.id, word]),
+    );
     for (const word of eligibleWords) {
       byId.set(word.id, word);
     }
@@ -377,8 +393,7 @@ function App() {
     }
 
     const printedAt = new Date();
-    const rangeLabel =
-      practiceMode === "lesson" ? lessonLabel(selectedLesson) : `一年级至上一课，不含${lessonNumberLabel(selectedLesson)}`;
+    const rangeLabel = practiceRangeLabel(practiceMode, selectedLesson);
     const nextLog: PrintLog = {
       id: crypto.randomUUID(),
       date: printedAt.toISOString(),
@@ -667,6 +682,7 @@ function StudentView({
 }) {
   const hasPractice = practiceItems.length > 0;
   const unsuitableCount = practiceItems.filter((item) => unsuitableWordIds.has(item.word.id)).length;
+  const termMistakeItems = practiceMode === "term" ? practiceItems.filter((item) => item.reasons.includes(termMistakeReason)) : [];
   const historyReviewText = stats.historyTotalChars > 0 ? `${stats.historyReviewPercent}%` : "无旧课";
   const historyHeadline =
     stats.historyTotalChars === 0
@@ -674,6 +690,16 @@ function StudentView({
       : stats.historyReviewPercent >= 100
         ? `历史回顾已完成${stats.pendingWrongChars > 0 ? `，${stats.pendingWrongChars} 个错字待纠正` : ""}`
         : `历史回顾 ${stats.historyReviewPercent}%`;
+  const currentModeName = practiceMode === "lesson" ? "本课复习" : practiceMode === "term" ? "期末复习" : "历史筛查";
+  const currentTitle = practiceMode === "term" ? `${gradeNames[selectedLesson.grade]}${termLabel(selectedLesson.unit)} 期末复习` : lessonLabel(selectedLesson);
+  const emptyTitle =
+    practiceMode === "lesson" ? "本课暂无词语" : practiceMode === "term" ? "本学期词语表暂无词语" : "历史范围暂时不用筛查";
+  const emptyDescription =
+    practiceMode === "lesson"
+      ? "当前课没有可打印的默写词语。"
+      : practiceMode === "term"
+        ? "当前册没有可用于期末复习的词语表记录。"
+        : "当前课之前还没有可筛查的已学字词。";
   const printPracticeSheet = () => {
     recordPrintedSheet();
     const originalTitle = document.title;
@@ -688,8 +714,8 @@ function StudentView({
     <section className="student-layout">
       <div className="top-strip no-print">
         <div>
-          <p className="eyebrow">{practiceMode === "lesson" ? "本课复习" : "历史筛查"}</p>
-          <h2>{lessonLabel(selectedLesson)}</h2>
+          <p className="eyebrow">{currentModeName}</p>
+          <h2>{currentTitle}</h2>
         </div>
         {hasPractice ? (
           <div className="toolbar">
@@ -720,6 +746,10 @@ function StudentView({
           <History size={16} aria-hidden="true" />
           历史筛查
         </button>
+        <button className={practiceMode === "term" ? "segmented active" : "segmented"} type="button" onClick={() => setPracticeMode("term")}>
+          <FileText size={16} aria-hidden="true" />
+          期末复习
+        </button>
       </div>
 
       <div className="stat-band no-print">
@@ -728,6 +758,8 @@ function StudentView({
         <Metric label="待回顾汉字" value={stats.historyPendingChars} />
         <Metric label="待纠正错字" value={stats.pendingWrongChars} />
         <Metric label="正确率" value={stats.totalAttempts > 0 ? `${accuracy}%` : "未开始"} />
+        {practiceMode === "term" ? <Metric label="本学期词语" value={practiceItems.length} /> : null}
+        {practiceMode === "term" ? <Metric label="重点错词" value={termMistakeItems.length} /> : null}
       </div>
 
       <section className="student-status no-print">
@@ -751,12 +783,15 @@ function StudentView({
       </section>
 
       {hasPractice ? (
-        sheet
+        <>
+          {practiceMode === "term" ? <TermMistakeFocus items={termMistakeItems} /> : null}
+          {sheet}
+        </>
       ) : (
         <section className="done-card no-print">
           <p className="eyebrow">今日状态</p>
-          <h3>{practiceMode === "lesson" ? "本课暂无词语" : "历史范围暂时不用筛查"}</h3>
-          <p>{practiceMode === "lesson" ? "当前课没有可打印的默写词语。" : "当前课之前还没有可筛查的已学字词。"}</p>
+          <h3>{emptyTitle}</h3>
+          <p>{emptyDescription}</p>
         </section>
       )}
 
@@ -778,6 +813,31 @@ function StudentView({
           </button>
         </div>
       ) : null}
+    </section>
+  );
+}
+
+function TermMistakeFocus({ items }: { items: PracticeItem[] }) {
+  return (
+    <section className="term-review-focus">
+      <div>
+        <p className="eyebrow">本学期错词重点</p>
+        <h3>{items.length > 0 ? `${items.length} 个词需要重点回看` : "本学期还没有错词记录"}</h3>
+      </div>
+      {items.length > 0 ? (
+        <div className="term-review-chip-list">
+          {items.map((item) => (
+            <span className="term-review-chip" key={item.word.id}>
+              <strong>{item.word.text}</strong>
+              <small>
+                {item.word.pinyin} · {item.word.lessonTitle}
+              </small>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="hint">完整词语表仍会按课本顺序列在下面。</p>
+      )}
     </section>
   );
 }
@@ -1269,7 +1329,7 @@ function PracticeSheet({
 }) {
   const sheetTitle = titleText ?? practiceModeLabel(practiceMode);
   const sheetDate = dateText ?? todayText();
-  const sheetRange = rangeText ?? (practiceMode === "lesson" ? lessonLabel(selectedLesson) : `一年级至上一课，不含${lessonNumberLabel(selectedLesson)}`);
+  const sheetRange = rangeText ?? practiceRangeLabel(practiceMode, selectedLesson);
 
   return (
     <div className="sheet">
@@ -1338,7 +1398,7 @@ function DictationCard({
   const isUnsuitable = showAnswers && unsuitableWordIds.has(item.word.id);
   const wrongChars = isUnsuitable ? [] : chars.filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)));
   const isWrong = showAnswers && wrongChars.length > 0;
-  const isMistakeReview = item.reasons.some((reason) => reason === "错字回炉" || reason === "错题回炉");
+  const isMistakeReview = item.reasons.some((reason) => reason === "错字回炉" || reason === "错题回炉" || reason === termMistakeReason);
   const statusText = isUnsuitable ? "不合适" : isWrong ? `${wrongChars.length}错` : "全对";
   const sentencePrompt = sentencePromptForWord(item.word);
   const cardClassName = [

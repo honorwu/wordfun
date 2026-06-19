@@ -295,6 +295,7 @@ textarea {
 .progress-summary,
 .today-card,
 .done-card,
+.term-review-focus,
 .history-viewer-bar,
 .review-bar {
   background: rgba(255, 255, 255, 0.9);
@@ -389,6 +390,50 @@ textarea {
 .done-card > p:last-child {
   color: var(--muted);
   line-height: 1.5;
+}
+
+.term-review-focus {
+  border-left: 5px solid var(--red);
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.term-review-focus h3,
+.term-review-focus p {
+  margin: 0;
+}
+
+.term-review-focus h3 {
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.term-review-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.term-review-chip {
+  align-items: baseline;
+  background: var(--red-soft);
+  border: 1px solid #e2a29c;
+  border-radius: 8px;
+  color: var(--red);
+  display: inline-flex;
+  gap: 8px;
+  max-width: 100%;
+  padding: 7px 9px;
+}
+
+.term-review-chip strong,
+.term-review-chip small {
+  overflow-wrap: anywhere;
+}
+
+.term-review-chip small {
+  color: #7a413d;
 }
 
 .panel {
@@ -1079,6 +1124,44 @@ textarea {
 }
 
 @media print {
+  .term-review-focus {
+    background: #fff;
+    border: 0.4mm solid #111;
+    border-left: 1.2mm solid var(--red);
+    box-shadow: none;
+    break-inside: avoid;
+    gap: 2mm;
+    margin: 0 auto 3mm;
+    padding: 2.4mm 3mm;
+    width: 194mm;
+  }
+
+  .term-review-focus .eyebrow {
+    color: #111;
+    font-size: 9px;
+  }
+
+  .term-review-focus h3 {
+    font-size: 14px;
+  }
+
+  .term-review-chip-list {
+    gap: 1.4mm;
+  }
+
+  .term-review-chip {
+    background: #fff;
+    border-color: #777;
+    color: #111;
+    font-size: 10px;
+    gap: 1.5mm;
+    padding: 1mm 1.3mm;
+  }
+
+  .term-review-chip small {
+    color: #333;
+  }
+
   .sheet {
     background: #fff;
     border: 1px solid #d6d6d6;

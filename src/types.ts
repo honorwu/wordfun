@@ -23,6 +23,7 @@ export interface Lesson {
   lessonKind?: "regular" | "garden" | "pinyin" | "classical_poetry" | "classical_prose" | "traditional_rhyme";
   directDictation?: boolean;
   words: DictationWord[];
+  textbookWords?: DictationWord[];
   textCompanions?: CompanionDictionary;
 }
 
@@ -79,7 +80,7 @@ export interface PrintLog {
   id: string;
   date: string;
   localDate: string;
-  practiceMode: "lesson" | "screening";
+  practiceMode: "lesson" | "screening" | "term";
   lessonId: string;
   lessonLabel: string;
   title: string;

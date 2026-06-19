@@ -311,6 +311,8 @@ const sortPracticeItems = (items: PracticeItem[]) => [...items].sort((a, b) => b
 
 const uniqueByText = (words: DictationWord[]) => [...new Map(words.map((word) => [word.text, word])).values()];
 
+export const termMistakeReason = "本学期错词";
+
 const isGardenLesson = (lesson: Lesson) => lesson.title.startsWith("语文园地");
 
 const currentTeachingUnitFloor = (lessons: Lesson[], selectedLesson?: Lesson) => {
@@ -445,6 +447,37 @@ export const generateCurrentLessonPractice = (lessons: Lesson[], state: AppState
     reasons: [isDirectDictationLesson(selectedLesson) ? "课文直接默写" : "本课词语"],
   }));
 };
+
+export const hasMistakeSignalForWord = (word: DictationWord, state: AppState) => {
+  const stat = state.wordStats[word.id];
+  if (stat && stat.mistakes > 0) {
+    return true;
+  }
+
+  return reviewCharsForWord(word).some((char) => state.charStats[char]?.wrongWordTexts?.includes(word.text));
+};
+
+export const getCurrentTermTextbookWords = (lessons: Lesson[], progress: Progress) => {
+  const selectedLesson = lessons.find((lesson) => lesson.id === progress.lessonId);
+  if (!selectedLesson) {
+    return [];
+  }
+
+  return lessons
+    .filter((lesson) => lesson.grade === selectedLesson.grade && lesson.unit === selectedLesson.unit)
+    .sort((a, b) => lessonOrder(a) - lessonOrder(b))
+    .flatMap((lesson) => lesson.textbookWords ?? []);
+};
+
+export const generateTermReviewPractice = (lessons: Lesson[], state: AppState): PracticeItem[] =>
+  getCurrentTermTextbookWords(lessons, state.progress).map((word, index) => {
+    const isMistake = hasMistakeSignalForWord(word, state);
+    return {
+      word,
+      score: isMistake ? 2000 - index : 1000 - index,
+      reasons: isMistake ? [termMistakeReason, "词语表"] : ["词语表"],
+    };
+  });
 
 const screeningNeedForChar = (char: string, state: AppState) => {
   const stat = state.charStats[char];
