@@ -736,6 +736,20 @@ textarea {
   padding: 16px 20px 12px;
 }
 
+.page-locator {
+  align-items: center;
+  background: #ecf3ef;
+  border: 1px solid #d6e4de;
+  border-radius: 8px;
+  color: var(--accent-dark);
+  display: flex;
+  font-size: 13px;
+  font-weight: 800;
+  grid-column: 1 / -1;
+  justify-content: center;
+  min-height: 32px;
+}
+
 .word-card {
   background: rgba(255, 255, 255, 0.7);
   border: 1px solid rgba(203, 187, 164, 0.84);
@@ -745,6 +759,10 @@ textarea {
   grid-template-columns: 30px minmax(0, 1fr);
   min-height: 112px;
   padding: 10px;
+}
+
+.print-page-badge {
+  display: none;
 }
 
 .word-card.long-word {
@@ -1243,6 +1261,7 @@ textarea {
     background: #fff;
     border-color: #aaa;
     border-radius: 1.2mm;
+    break-inside: avoid;
     display: grid;
     gap: 0.4mm 1.4mm;
     grid-template-columns: 5.2mm minmax(0, 1fr);
@@ -1251,6 +1270,23 @@ textarea {
     min-height: 0;
     overflow: visible;
     padding: 1mm 1.7mm 0.9mm 1.2mm;
+    position: relative;
+  }
+
+  .print-page-badge {
+    background: #fff;
+    border: 0.25mm solid #777;
+    border-radius: 0.8mm;
+    bottom: 0.7mm;
+    color: #111;
+    display: block;
+    font-size: 7.5px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0.55mm 0.9mm;
+    position: absolute;
+    right: 1.3mm;
+    z-index: 2;
   }
 
   .word-card.mistake-review {

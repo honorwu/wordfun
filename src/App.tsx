@@ -14,7 +14,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ChangeEvent, ReactElement } from "react";
 import { gradeNames } from "./data/metadata";
@@ -46,6 +46,7 @@ const termOptions = [
   { label: "上册", value: 1 },
   { label: "下册", value: 2 },
 ] as const;
+const printedPageItemCount = 20;
 
 type Term = (typeof termOptions)[number]["value"];
 
@@ -1330,6 +1331,7 @@ function PracticeSheet({
   const sheetTitle = titleText ?? practiceModeLabel(practiceMode);
   const sheetDate = dateText ?? todayText();
   const sheetRange = rangeText ?? practiceRangeLabel(practiceMode, selectedLesson);
+  const showPageLocators = items.length > printedPageItemCount;
 
   return (
     <div className="sheet">
@@ -1355,19 +1357,29 @@ function PracticeSheet({
       </header>
 
       <div className="dictation-grid">
-        {items.map((item, index) => (
-          <DictationCard
-            item={item}
-            index={index}
-            key={item.word.id}
-            readOnlyAnswers={readOnlyAnswers}
-            showAnswers={showAnswers}
-            toggleUnsuitableWord={toggleUnsuitableWord}
-            toggleWrongChar={toggleWrongChar}
-            unsuitableWordIds={unsuitableWordIds}
-            wrongCharKeys={wrongCharKeys}
-          />
-        ))}
+        {items.map((item, index) => {
+          const isPageStart = showPageLocators && index % printedPageItemCount === 0;
+          const pageNumber = Math.floor(index / printedPageItemCount) + 1;
+          const pageEnd = Math.min(index + printedPageItemCount, items.length);
+          const pageLabel = isPageStart ? `第 ${pageNumber} 页 · 第 ${index + 1}-${pageEnd} 题` : undefined;
+
+          return (
+            <Fragment key={item.word.id}>
+              {pageLabel ? <div className="page-locator no-print">{pageLabel}</div> : null}
+              <DictationCard
+                item={item}
+                index={index}
+                printPageLabel={pageLabel}
+                readOnlyAnswers={readOnlyAnswers}
+                showAnswers={showAnswers}
+                toggleUnsuitableWord={toggleUnsuitableWord}
+                toggleWrongChar={toggleWrongChar}
+                unsuitableWordIds={unsuitableWordIds}
+                wrongCharKeys={wrongCharKeys}
+              />
+            </Fragment>
+          );
+        })}
       </div>
     </div>
   );
@@ -1376,6 +1388,7 @@ function PracticeSheet({
 function DictationCard({
   item,
   index,
+  printPageLabel,
   readOnlyAnswers = false,
   showAnswers,
   toggleUnsuitableWord,
@@ -1385,6 +1398,7 @@ function DictationCard({
 }: {
   item: PracticeItem;
   index: number;
+  printPageLabel?: string;
   readOnlyAnswers?: boolean;
   showAnswers: boolean;
   toggleUnsuitableWord: (word: DictationWord) => void;
@@ -1414,6 +1428,7 @@ function DictationCard({
 
   return (
     <article className={cardClassName}>
+      {printPageLabel ? <span className="print-page-badge">{printPageLabel}</span> : null}
       <div className="card-top">
         <div className="number-wrap">
           <div className="number">{index + 1}</div>
