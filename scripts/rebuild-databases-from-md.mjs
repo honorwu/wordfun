@@ -9,15 +9,15 @@ import {
   defaultLearningDatabasePath,
   defaultStudentId,
   ensureDefaultStudent,
-  learningSchemaSql,
+  openLearningDatabase,
   projectRoot,
 } from "../server/db.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const mdRoot = path.join(root, "md");
-const wordMdDir = path.join(mdRoot, "字词");
-const classicalMdDir = path.join(mdRoot, "古诗词");
+const wordMdDir = path.join(mdRoot, "词语");
+const classicalMdDir = path.join(mdRoot, "古诗文");
 const catalogDbPath = process.env.ZIQU_CATALOG_DB_PATH ? path.resolve(process.env.ZIQU_CATALOG_DB_PATH) : defaultCatalogDatabasePath;
 const learningDbPath = process.env.ZIQU_LEARNING_DB_PATH ? path.resolve(process.env.ZIQU_LEARNING_DB_PATH) : defaultLearningDatabasePath;
 const now = new Date().toISOString();
@@ -231,11 +231,11 @@ const parseSupplementWords = (value, filePath, lineNumber) => {
     .map((part) => part.trim())
     .filter(Boolean)
     .map((part) => {
-      const match = part.match(/^(\p{Script=Han})：(.+?)\(([^)]+)\)$/u);
+      const match = part.match(/^((?:\p{Script=Han})(?:、\p{Script=Han})*)：(.+?)\(([^)]+)\)$/u);
       if (!match) {
         throw new Error(`${toSourcePath(filePath)}:${lineNumber} cannot parse supplement word: ${part}`);
       }
-      return { targetChar: match[1], text: match[2], pinyin: match[3] };
+      return { targetChars: match[1].split("、"), text: match[2], pinyin: match[3] };
     });
 };
 
@@ -354,16 +354,18 @@ const buildWordCatalog = () => {
       });
 
       parseSupplementWords(row["未覆盖生字组词"], filePath, lineNumber).forEach((item, index) => {
-        addWord({
-          lessonId,
-          text: item.text,
-          pinyin: item.pinyin,
-          kind: "supplement",
-          sourceFile,
-          sourceRow,
-          sourceColumn: "未覆盖生字组词",
-          targetChar: item.targetChar,
-          wordOrder: 1000 + index,
+        item.targetChars.forEach((targetChar, targetIndex) => {
+          addWord({
+            lessonId,
+            text: item.text,
+            pinyin: item.pinyin,
+            kind: "supplement",
+            sourceFile,
+            sourceRow,
+            sourceColumn: "未覆盖生字组词",
+            targetChar,
+            wordOrder: 1000 + index * 10 + targetIndex,
+          });
         });
       });
     }
@@ -542,7 +544,7 @@ const chooseCompanions = (lessonCharacters, lessonWords, wordsById) => {
     if (!word) {
       continue;
     }
-    if (lessonWord.sourceColumn === "词语表") {
+    if (["词语表", "古诗词标题", "古诗词正文"].includes(lessonWord.sourceColumn)) {
       textbookByLesson.set(lessonWord.lessonId, [...(textbookByLesson.get(lessonWord.lessonId) ?? []), { ...word, lessonWord }]);
     }
     if (lessonWord.sourceColumn === "未覆盖生字组词" && lessonWord.targetChar) {
@@ -729,18 +731,13 @@ const rebuild = () => {
   catalogDb.exec(catalogSchemaSql);
   saveCatalog(catalogDb, catalog);
 
-  const learningDb = new DatabaseSync(learningDbPath);
-  learningDb.exec(learningSchemaSql);
+  const learningDb = openLearningDatabase(learningDbPath);
   ensureDefaultStudent(learningDb, catalogDb, defaultStudentId);
-  if (!resetLearning) {
-    learningDb.prepare("DELETE FROM unsuitable_words").run();
-  }
 
   const summary = {
     catalogDb: catalogDbPath,
     learningDb: learningDbPath,
     learningReset: resetLearning,
-    unsuitableWordsCleared: true,
     sourceFiles: catalogDb.prepare("SELECT COUNT(*) AS count FROM source_files").get().count,
     lessons: catalogDb.prepare("SELECT COUNT(*) AS count FROM lessons").get().count,
     lessonsWithChars: catalogDb.prepare("SELECT COUNT(*) AS count FROM (SELECT DISTINCT lesson_id FROM lesson_characters)").get().count,

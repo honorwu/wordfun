@@ -1,0 +1,17 @@
+services:
+  wordfun:
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "5174"
+      ZIQU_CATALOG_DB_PATH: /app/data/ziqu-catalog.sqlite
+      ZIQU_LEARNING_DB_PATH: /var/lib/ziqu/ziqu-learning.sqlite
+    ports:
+      - "${PORT:-5174}:5174"
+    volumes:
+      - ziqu-data:/var/lib/ziqu
+
+volumes:
+  ziqu-data:

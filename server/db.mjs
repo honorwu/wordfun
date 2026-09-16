@@ -149,7 +149,6 @@ CREATE INDEX IF NOT EXISTS idx_lesson_words_scope ON lesson_words(lesson_id, wor
 CREATE INDEX IF NOT EXISTS idx_lesson_uncovered_characters_char ON lesson_uncovered_characters(char);
 CREATE INDEX IF NOT EXISTS idx_companions_char ON char_companion_words(char, source);
 CREATE INDEX IF NOT EXISTS idx_classical_texts_scope ON classical_texts(grade, term, unit_index, text_order);
-CREATE INDEX IF NOT EXISTS idx_classical_lines_text ON classical_lines(text);
 
 CREATE VIEW IF NOT EXISTS lesson_chars AS
 SELECT lesson_id, char, category, pinyin, char_order, source_column AS source_table
@@ -173,16 +172,16 @@ CREATE TABLE IF NOT EXISTS students (
 
 CREATE TABLE IF NOT EXISTS progress (
   student_id TEXT PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE,
-  grade INTEGER NOT NULL,
+  grade INTEGER NOT NULL CHECK (grade BETWEEN 1 AND 6),
   lesson_id TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS word_stats (
   student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
   word_id TEXT NOT NULL,
-  attempts INTEGER NOT NULL,
-  mistakes INTEGER NOT NULL,
-  streak INTEGER NOT NULL,
+  attempts INTEGER NOT NULL CHECK (attempts >= 0),
+  mistakes INTEGER NOT NULL CHECK (mistakes >= 0 AND mistakes <= attempts),
+  streak INTEGER NOT NULL CHECK (streak >= 0),
   last_reviewed_at TEXT,
   last_mistake_at TEXT,
   PRIMARY KEY (student_id, word_id)
@@ -191,9 +190,9 @@ CREATE TABLE IF NOT EXISTS word_stats (
 CREATE TABLE IF NOT EXISTS char_stats (
   student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
   char TEXT NOT NULL,
-  attempts INTEGER NOT NULL,
-  mistakes INTEGER NOT NULL,
-  streak INTEGER NOT NULL DEFAULT 0,
+  attempts INTEGER NOT NULL CHECK (attempts >= 0),
+  mistakes INTEGER NOT NULL CHECK (mistakes >= 0 AND mistakes <= attempts),
+  streak INTEGER NOT NULL DEFAULT 0 CHECK (streak >= 0),
   last_reviewed_at TEXT,
   last_mistake_at TEXT,
   PRIMARY KEY (student_id, char)
@@ -203,32 +202,13 @@ CREATE TABLE IF NOT EXISTS char_word_evidence (
   student_id TEXT NOT NULL,
   char TEXT NOT NULL,
   word_text TEXT NOT NULL,
-  correct_count INTEGER NOT NULL DEFAULT 0,
-  mistake_count INTEGER NOT NULL DEFAULT 0,
+  correct_count INTEGER NOT NULL DEFAULT 0 CHECK (correct_count IN (0, 1)),
+  mistake_count INTEGER NOT NULL DEFAULT 0 CHECK (mistake_count IN (0, 1)),
   last_reviewed_at TEXT,
   last_mistake_at TEXT,
   PRIMARY KEY (student_id, char, word_text),
   FOREIGN KEY (student_id, char) REFERENCES char_stats(student_id, char) ON DELETE CASCADE
 );
-
-CREATE INDEX IF NOT EXISTS idx_char_word_evidence_student_char ON char_word_evidence(student_id, char);
-
-CREATE TABLE IF NOT EXISTS unsuitable_words (
-  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-  word_id TEXT NOT NULL,
-  text TEXT NOT NULL,
-  pinyin TEXT NOT NULL,
-  grade INTEGER NOT NULL,
-  lesson_id TEXT NOT NULL,
-  lesson_title TEXT NOT NULL,
-  category TEXT NOT NULL CHECK (category IN ('一类', '二类')),
-  flagged_count INTEGER NOT NULL DEFAULT 1,
-  first_flagged_at TEXT NOT NULL,
-  last_flagged_at TEXT NOT NULL,
-  PRIMARY KEY (student_id, word_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_unsuitable_words_student_date ON unsuitable_words(student_id, last_flagged_at DESC);
 
 CREATE TABLE IF NOT EXISTS review_logs (
   id TEXT PRIMARY KEY,
@@ -239,8 +219,8 @@ CREATE TABLE IF NOT EXISTS review_logs (
 CREATE TABLE IF NOT EXISTS review_log_words (
   log_id TEXT NOT NULL REFERENCES review_logs(id) ON DELETE CASCADE,
   word_id TEXT NOT NULL,
-  is_wrong INTEGER NOT NULL,
-  item_order INTEGER NOT NULL,
+  is_wrong INTEGER NOT NULL CHECK (is_wrong IN (0, 1)),
+  item_order INTEGER NOT NULL CHECK (item_order >= 0),
   PRIMARY KEY (log_id, word_id)
 );
 
@@ -248,80 +228,14 @@ CREATE TABLE IF NOT EXISTS review_log_chars (
   log_id TEXT NOT NULL REFERENCES review_logs(id) ON DELETE CASCADE,
   word_id TEXT NOT NULL,
   char TEXT NOT NULL,
-  item_order INTEGER NOT NULL,
-  char_order INTEGER NOT NULL,
+  item_order INTEGER NOT NULL CHECK (item_order >= 0),
+  char_order INTEGER NOT NULL CHECK (char_order >= 0),
   PRIMARY KEY (log_id, word_id, char)
 );
 
 CREATE INDEX IF NOT EXISTS idx_review_logs_student_date ON review_logs(student_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_review_log_words_log ON review_log_words(log_id, item_order);
 CREATE INDEX IF NOT EXISTS idx_review_log_chars_log ON review_log_chars(log_id, item_order, char_order);
-
-CREATE TABLE IF NOT EXISTS custom_lessons (
-  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-  id TEXT NOT NULL,
-  grade INTEGER NOT NULL,
-  unit REAL NOT NULL,
-  number REAL NOT NULL,
-  title TEXT NOT NULL,
-  PRIMARY KEY (student_id, id)
-);
-
-CREATE TABLE IF NOT EXISTS custom_words (
-  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-  id TEXT NOT NULL,
-  lesson_id TEXT NOT NULL,
-  text TEXT NOT NULL,
-  pinyin TEXT NOT NULL,
-  category TEXT NOT NULL CHECK (category IN ('一类', '二类')),
-  grade INTEGER NOT NULL,
-  lesson_title TEXT NOT NULL,
-  word_order INTEGER NOT NULL,
-  PRIMARY KEY (student_id, id)
-);
-
-CREATE TABLE IF NOT EXISTS custom_word_chars (
-  student_id TEXT NOT NULL,
-  word_id TEXT NOT NULL,
-  char TEXT NOT NULL,
-  char_order INTEGER NOT NULL,
-  PRIMARY KEY (student_id, word_id, char),
-  FOREIGN KEY (student_id, word_id) REFERENCES custom_words(student_id, id) ON DELETE CASCADE
-);
-`;
-
-const printHistorySchemaSql = `
-CREATE TABLE IF NOT EXISTS print_logs (
-  id TEXT PRIMARY KEY,
-  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-  date TEXT NOT NULL,
-  local_date TEXT NOT NULL,
-  practice_mode TEXT NOT NULL CHECK (practice_mode IN ('lesson', 'screening', 'term')),
-  lesson_id TEXT NOT NULL,
-  lesson_label TEXT NOT NULL,
-  title TEXT NOT NULL,
-  range_label TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS print_log_items (
-  log_id TEXT NOT NULL REFERENCES print_logs(id) ON DELETE CASCADE,
-  item_order INTEGER NOT NULL,
-  word_id TEXT NOT NULL,
-  text TEXT NOT NULL,
-  pinyin TEXT NOT NULL,
-  chars_json TEXT NOT NULL,
-  grade INTEGER NOT NULL,
-  word_lesson_id TEXT NOT NULL,
-  lesson_title TEXT NOT NULL,
-  category TEXT NOT NULL CHECK (category IN ('一类', '二类')),
-  reasons_json TEXT NOT NULL,
-  PRIMARY KEY (log_id, item_order)
-);
-`;
-
-const printHistoryIndexSql = `
-CREATE INDEX IF NOT EXISTS idx_print_logs_student_date ON print_logs(student_id, date DESC);
-CREATE INDEX IF NOT EXISTS idx_print_log_items_log ON print_log_items(log_id, item_order);
 `;
 
 export const ensureDataDir = () => {
@@ -329,8 +243,9 @@ export const ensureDataDir = () => {
 };
 
 const openDatabaseWithSchema = (databasePath, schemaSql) => {
-  ensureDataDir();
+  mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath);
+  db.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   db.exec(schemaSql);
   return db;
 };
@@ -339,6 +254,7 @@ export const openCatalogDatabase = (databasePath = defaultCatalogDatabasePath) =
 
 export const openLearningDatabase = (databasePath = defaultLearningDatabasePath) => {
   const db = openDatabaseWithSchema(databasePath, learningSchemaSql);
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
   migrateLearningDatabase(db);
   return db;
 };
@@ -352,60 +268,15 @@ const migrateLearningDatabase = (db) => {
   if (!charStatColumns.has("last_mistake_at")) {
     db.exec("ALTER TABLE char_stats ADD COLUMN last_mistake_at TEXT");
   }
-  ensurePrintHistoryTables(db);
-};
-
-const tableExists = (db, tableName) =>
-  Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName));
-
-const ensurePrintHistoryTables = (db) => {
-  if (!tableExists(db, "print_logs") || !tableExists(db, "print_log_items")) {
-    db.exec(printHistorySchemaSql);
-  } else {
-    const printLogSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'print_logs'").get()?.sql || "";
-    if (!printLogSql.includes("'term'")) {
-      const logs = db.prepare("SELECT id, student_id, date, local_date, practice_mode, lesson_id, lesson_label, title, range_label FROM print_logs").all();
-      const items = db
-        .prepare(
-          `SELECT log_id, item_order, word_id, text, pinyin, chars_json, grade, word_lesson_id, lesson_title, category, reasons_json
-           FROM print_log_items
-           ORDER BY log_id, item_order`,
-        )
-        .all();
-      db.exec("DROP TABLE IF EXISTS print_log_items");
-      db.exec("DROP TABLE IF EXISTS print_logs");
-      db.exec(printHistorySchemaSql);
-      const insertLog = db.prepare(
-        `INSERT INTO print_logs (id, student_id, date, local_date, practice_mode, lesson_id, lesson_label, title, range_label)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-      const insertItem = db.prepare(
-        `INSERT INTO print_log_items (
-           log_id, item_order, word_id, text, pinyin, chars_json, grade, word_lesson_id, lesson_title, category, reasons_json
-         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-      for (const log of logs) {
-        insertLog.run(log.id, log.student_id, log.date, log.local_date, log.practice_mode, log.lesson_id, log.lesson_label, log.title, log.range_label);
-      }
-      for (const item of items) {
-        insertItem.run(
-          item.log_id,
-          item.item_order,
-          item.word_id,
-          item.text,
-          item.pinyin,
-          item.chars_json,
-          item.grade,
-          item.word_lesson_id,
-          item.lesson_title,
-          item.category,
-          item.reasons_json,
-        );
-      }
-    }
-  }
-  db.exec(printHistoryIndexSql);
+  db.exec(`
+    DROP TABLE IF EXISTS print_log_items;
+    DROP TABLE IF EXISTS print_logs;
+    DROP TABLE IF EXISTS custom_word_chars;
+    DROP TABLE IF EXISTS custom_words;
+    DROP TABLE IF EXISTS custom_lessons;
+    DROP TABLE IF EXISTS unsuitable_words;
+    DROP INDEX IF EXISTS idx_char_word_evidence_student_char;
+  `);
 };
 
 export const requireCatalogDatabase = (databasePath = defaultCatalogDatabasePath) => {
@@ -418,25 +289,6 @@ export const requireCatalogDatabase = (databasePath = defaultCatalogDatabasePath
 export const readJson = (relativePath) => JSON.parse(readFileSync(path.join(projectRoot, relativePath), "utf8"));
 
 export const normalizeCategory = (category) => (category === "一类" ? "一类" : "二类");
-
-const normalizePracticeMode = (mode) => (mode === "lesson" || mode === "term" ? mode : "screening");
-
-const normalizeGrade = (grade) => {
-  const value = Number(grade);
-  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5 ? value : 1;
-};
-
-const parseStringArray = (value) => {
-  if (!value) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string" && item.length > 0) : [];
-  } catch {
-    return [];
-  }
-};
 
 export const runTransaction = (db, fn) => {
   db.exec("BEGIN");
@@ -481,11 +333,22 @@ const ensureStudent = (learningDb, studentId = defaultStudentId) => {
 
 export const ensureDefaultStudent = (learningDb, catalogDb, studentId = defaultStudentId) => {
   ensureStudent(learningDb, studentId);
-  const progress = oneRow(learningDb, "SELECT student_id FROM progress WHERE student_id = ?", studentId);
-  if (!progress) {
-    const lesson = defaultProgress(catalogDb);
-    learningDb.prepare("INSERT INTO progress (student_id, grade, lesson_id) VALUES (?, ?, ?)").run(studentId, lesson.grade, lesson.lesson_id);
+  const progress = oneRow(learningDb, "SELECT grade, lesson_id FROM progress WHERE student_id = ?", studentId);
+  const savedLesson = progress ? oneRow(catalogDb, "SELECT grade FROM lessons WHERE id = ?", progress.lesson_id) : null;
+  if (savedLesson) {
+    if (progress.grade !== savedLesson.grade) {
+      learningDb.prepare("UPDATE progress SET grade = ? WHERE student_id = ?").run(savedLesson.grade, studentId);
+    }
+    return;
   }
+  const lesson = defaultProgress(catalogDb);
+  learningDb
+    .prepare(
+      `INSERT INTO progress (student_id, grade, lesson_id)
+       VALUES (?, ?, ?)
+       ON CONFLICT(student_id) DO UPDATE SET grade = excluded.grade, lesson_id = excluded.lesson_id`,
+    )
+    .run(studentId, lesson.grade, lesson.lesson_id);
 };
 
 export const getLessons = (catalogDb) => {
@@ -549,7 +412,20 @@ export const getLessons = (catalogDb) => {
      JOIN words w ON w.id = lw.word_id
      JOIN lessons l ON l.id = lw.lesson_id
      WHERE lw.source_column = '词语表'
-     ORDER BY lw.lesson_id, lw.word_order`,
+    ORDER BY lw.lesson_id, lw.word_order`,
+  );
+  const classicalTextRows = allRows(
+    catalogDb,
+    `SELECT id, lesson_id, title, title_pinyin, author, dynasty, text_order
+     FROM classical_texts
+     WHERE lesson_id IS NOT NULL
+     ORDER BY lesson_id, text_order`,
+  );
+  const classicalLineRows = allRows(
+    catalogDb,
+    `SELECT text_id, line_order, text, pinyin
+     FROM classical_lines
+     ORDER BY text_id, line_order`,
   );
   const wordsByLesson = new Map();
   for (const row of words) {
@@ -588,6 +464,25 @@ export const getLessons = (catalogDb) => {
     ];
     companionsByLesson.set(row.lesson_id, lessonCompanions);
   }
+  const classicalLinesByText = new Map();
+  for (const row of classicalLineRows) {
+    classicalLinesByText.set(row.text_id, [
+      ...(classicalLinesByText.get(row.text_id) || []),
+      { text: row.text, pinyin: row.pinyin },
+    ]);
+  }
+  const classicalTextsByLesson = new Map();
+  for (const row of classicalTextRows) {
+    const text = {
+      id: row.id,
+      title: row.title,
+      titlePinyin: row.title_pinyin,
+      author: row.author || undefined,
+      dynasty: row.dynasty || undefined,
+      lines: classicalLinesByText.get(row.id) || [],
+    };
+    classicalTextsByLesson.set(row.lesson_id, [...(classicalTextsByLesson.get(row.lesson_id) || []), text]);
+  }
   return lessons.map((lesson) => ({
     id: lesson.id,
     grade: lesson.grade,
@@ -600,6 +495,7 @@ export const getLessons = (catalogDb) => {
     words: wordsByLesson.get(lesson.id) || [],
     textbookWords: textbookWordsByLesson.get(lesson.id) || [],
     textCompanions: companionsByLesson.get(lesson.id) || {},
+    classicalTexts: classicalTextsByLesson.get(lesson.id) || [],
   }));
 };
 
@@ -660,9 +556,30 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
       stat.wrongWordTexts.push(row.word_text);
     }
   }
-  const logs = allRows(learningDb, "SELECT id, date FROM review_logs WHERE student_id = ? ORDER BY date DESC LIMIT 120", studentId).map((log) => {
-    const items = allRows(learningDb, "SELECT word_id, is_wrong FROM review_log_words WHERE log_id = ? ORDER BY item_order", log.id);
-    const wrongChars = allRows(learningDb, "SELECT word_id, char FROM review_log_chars WHERE log_id = ? ORDER BY item_order, char_order", log.id);
+  const logRows = allRows(learningDb, "SELECT id, date FROM review_logs WHERE student_id = ? ORDER BY date DESC LIMIT 120", studentId);
+  const wordsByLog = new Map();
+  const wrongCharsByLog = new Map();
+  if (logRows.length > 0) {
+    const placeholders = logRows.map(() => "?").join(", ");
+    const logIds = logRows.map((log) => log.id);
+    for (const item of allRows(
+      learningDb,
+      `SELECT log_id, word_id, is_wrong FROM review_log_words WHERE log_id IN (${placeholders}) ORDER BY log_id, item_order`,
+      ...logIds,
+    )) {
+      wordsByLog.set(item.log_id, [...(wordsByLog.get(item.log_id) || []), item]);
+    }
+    for (const item of allRows(
+      learningDb,
+      `SELECT log_id, word_id, char FROM review_log_chars WHERE log_id IN (${placeholders}) ORDER BY log_id, item_order, char_order`,
+      ...logIds,
+    )) {
+      wrongCharsByLog.set(item.log_id, [...(wrongCharsByLog.get(item.log_id) || []), item]);
+    }
+  }
+  const logs = logRows.map((log) => {
+    const items = wordsByLog.get(log.id) || [];
+    const wrongChars = wrongCharsByLog.get(log.id) || [];
     return {
       id: log.id,
       date: log.date,
@@ -671,106 +588,12 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
       wrongChars: wrongChars.map((item) => ({ wordId: item.word_id, char: item.char })),
     };
   });
-  const printLogs = allRows(
-    learningDb,
-    `SELECT id, date, local_date, practice_mode, lesson_id, lesson_label, title, range_label
-     FROM print_logs
-     WHERE student_id = ?
-     ORDER BY date DESC
-     LIMIT 180`,
-    studentId,
-  ).map((log) => {
-    const items = allRows(
-      learningDb,
-      `SELECT word_id, text, pinyin, chars_json, grade, word_lesson_id, lesson_title, category, reasons_json
-       FROM print_log_items
-       WHERE log_id = ?
-       ORDER BY item_order`,
-      log.id,
-    );
-    return {
-      id: log.id,
-      date: log.date,
-      localDate: log.local_date,
-      practiceMode: normalizePracticeMode(log.practice_mode),
-      lessonId: log.lesson_id,
-      lessonLabel: log.lesson_label,
-      title: log.title,
-      rangeLabel: log.range_label,
-      items: items.map((item) => ({
-        word: {
-          id: item.word_id,
-          text: item.text,
-          pinyin: item.pinyin,
-          chars: parseStringArray(item.chars_json),
-          grade: normalizeGrade(item.grade),
-          lessonId: item.word_lesson_id,
-          lessonTitle: item.lesson_title,
-          category: normalizeCategory(item.category),
-        },
-        reasons: parseStringArray(item.reasons_json),
-      })),
-    };
-  });
-  const unsuitableWords = {};
-  for (const row of allRows(learningDb, "SELECT * FROM unsuitable_words WHERE student_id = ? ORDER BY last_flagged_at DESC", studentId)) {
-    unsuitableWords[row.word_id] = {
-      wordId: row.word_id,
-      text: row.text,
-      pinyin: row.pinyin,
-      grade: row.grade,
-      lessonId: row.lesson_id,
-      lessonTitle: row.lesson_title,
-      category: normalizeCategory(row.category),
-      flaggedCount: row.flagged_count,
-      firstFlaggedAt: row.first_flagged_at,
-      lastFlaggedAt: row.last_flagged_at,
-    };
-  }
-  const customLessons = allRows(
-    learningDb,
-    "SELECT id, grade, unit, number, title FROM custom_lessons WHERE student_id = ? ORDER BY grade, unit, number",
-    studentId,
-  );
-  const customWords = getCustomWords(learningDb, studentId);
-  const customWordsByLesson = new Map();
-  for (const word of customWords) {
-    customWordsByLesson.set(word.lessonId, [...(customWordsByLesson.get(word.lessonId) || []), word]);
-  }
-
   return {
     progress: { grade: progress?.grade || 3, lessonId: progress?.lesson_id || "" },
     wordStats,
     charStats,
-    unsuitableWords,
-    customLessons: customLessons.map((lesson) => ({ ...lesson, words: customWordsByLesson.get(lesson.id) || [] })),
-    customWords,
     logs,
-    printLogs,
   };
-};
-
-const getCustomWords = (learningDb, studentId) => {
-  const words = allRows(
-    learningDb,
-    "SELECT id, lesson_id, text, pinyin, category, grade, lesson_title FROM custom_words WHERE student_id = ? ORDER BY word_order",
-    studentId,
-  );
-  const chars = allRows(learningDb, "SELECT word_id, char FROM custom_word_chars WHERE student_id = ? ORDER BY word_id, char_order", studentId);
-  const charsByWord = new Map();
-  for (const row of chars) {
-    charsByWord.set(row.word_id, [...(charsByWord.get(row.word_id) || []), row.char]);
-  }
-  return words.map((word) => ({
-    id: word.id,
-    text: word.text,
-    pinyin: word.pinyin,
-    chars: charsByWord.get(word.id) || [],
-    grade: word.grade,
-    lessonId: word.lesson_id,
-    lessonTitle: word.lesson_title,
-    category: normalizeCategory(word.category),
-  }));
 };
 
 export const saveState = (learningDb, state, studentId = defaultStudentId) => {
@@ -821,31 +644,6 @@ export const saveState = (learningDb, state, studentId = defaultStudentId) => {
       }
     }
 
-    const now = new Date().toISOString();
-    learningDb.prepare("DELETE FROM unsuitable_words WHERE student_id = ?").run(studentId);
-    const insertUnsuitableWord = learningDb.prepare(
-      `INSERT INTO unsuitable_words (
-         student_id, word_id, text, pinyin, grade, lesson_id, lesson_title, category, flagged_count, first_flagged_at, last_flagged_at
-       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    for (const [wordId, word] of Object.entries(state.unsuitableWords || {})) {
-      const firstFlaggedAt = word.firstFlaggedAt || word.lastFlaggedAt || now;
-      insertUnsuitableWord.run(
-        studentId,
-        word.wordId || wordId,
-        word.text || "",
-        word.pinyin || "",
-        word.grade || 1,
-        word.lessonId || "",
-        word.lessonTitle || "",
-        normalizeCategory(word.category),
-        word.flaggedCount || 1,
-        firstFlaggedAt,
-        word.lastFlaggedAt || firstFlaggedAt,
-      );
-    }
-
     learningDb.prepare("DELETE FROM review_logs WHERE student_id = ?").run(studentId);
     const insertLog = learningDb.prepare("INSERT INTO review_logs (id, student_id, date) VALUES (?, ?, ?)");
     const insertLogWord = learningDb.prepare("INSERT INTO review_log_words (log_id, word_id, is_wrong, item_order) VALUES (?, ?, ?, ?)");
@@ -863,85 +661,5 @@ export const saveState = (learningDb, state, studentId = defaultStudentId) => {
       }
     }
 
-    learningDb.prepare("DELETE FROM print_logs WHERE student_id = ?").run(studentId);
-    const insertPrintLog = learningDb.prepare(
-      `INSERT INTO print_logs (
-         id, student_id, date, local_date, practice_mode, lesson_id, lesson_label, title, range_label
-       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    const insertPrintLogItem = learningDb.prepare(
-      `INSERT INTO print_log_items (
-         log_id, item_order, word_id, text, pinyin, chars_json, grade, word_lesson_id, lesson_title, category, reasons_json
-       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    for (const log of (state.printLogs || []).slice(0, 180)) {
-      const practiceMode = normalizePracticeMode(log.practiceMode);
-      const items = Array.isArray(log.items) ? log.items.filter((item) => item?.word?.id) : [];
-      if (items.length === 0) {
-        continue;
-      }
-      insertPrintLog.run(
-        log.id,
-        studentId,
-        log.date || now,
-        log.localDate || (log.date || now).slice(0, 10),
-        practiceMode,
-        log.lessonId || "",
-        log.lessonLabel || "",
-        log.title || (practiceMode === "lesson" ? "本课词语默写" : practiceMode === "term" ? "期末复习" : "历史生字筛查"),
-        log.rangeLabel || "",
-      );
-      for (const [index, item] of items.entries()) {
-        const word = item.word;
-        insertPrintLogItem.run(
-          log.id,
-          index,
-          word.id,
-          word.text || "",
-          word.pinyin || "",
-          JSON.stringify(Array.isArray(word.chars) ? word.chars.filter(Boolean) : []),
-          normalizeGrade(word.grade),
-          word.lessonId || "",
-          word.lessonTitle || "",
-          normalizeCategory(word.category),
-          JSON.stringify(Array.isArray(item.reasons) ? item.reasons.filter(Boolean) : []),
-        );
-      }
-    }
-
-    saveCustomData(learningDb, state, studentId);
   });
-};
-
-const saveCustomData = (learningDb, state, studentId) => {
-  learningDb.prepare("DELETE FROM custom_lessons WHERE student_id = ?").run(studentId);
-  learningDb.prepare("DELETE FROM custom_words WHERE student_id = ?").run(studentId);
-  const insertLesson = learningDb.prepare("INSERT INTO custom_lessons (student_id, id, grade, unit, number, title) VALUES (?, ?, ?, ?, ?, ?)");
-  const insertWord = learningDb.prepare(
-    `INSERT INTO custom_words (student_id, id, lesson_id, text, pinyin, category, grade, lesson_title, word_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const insertChar = learningDb.prepare("INSERT INTO custom_word_chars (student_id, word_id, char, char_order) VALUES (?, ?, ?, ?)");
-  const wordIds = new Set();
-  for (const lesson of state.customLessons || []) {
-    insertLesson.run(studentId, lesson.id, lesson.grade, lesson.unit, lesson.number, lesson.title);
-    for (const [index, word] of (lesson.words || []).entries()) {
-      wordIds.add(word.id);
-      insertWord.run(studentId, word.id, word.lessonId, word.text, word.pinyin, normalizeCategory(word.category), word.grade, word.lessonTitle, index);
-      for (const [charIndex, char] of (word.chars || []).entries()) {
-        insertChar.run(studentId, word.id, char, charIndex);
-      }
-    }
-  }
-  for (const [index, word] of (state.customWords || []).entries()) {
-    if (wordIds.has(word.id)) {
-      continue;
-    }
-    insertWord.run(studentId, word.id, word.lessonId, word.text, word.pinyin, normalizeCategory(word.category), word.grade, word.lessonTitle, index);
-    for (const [charIndex, char] of (word.chars || []).entries()) {
-      insertChar.run(studentId, word.id, char, charIndex);
-    }
-  }
 };

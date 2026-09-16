@@ -16,7 +16,14 @@ const requestJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed: ${response.status}`);
+    let message = text;
+    try {
+      const payload = JSON.parse(text) as { error?: unknown };
+      if (typeof payload.error === "string") message = payload.error;
+    } catch {
+      // 非 JSON 错误沿用服务器返回的原文。
+    }
+    throw new Error(message || `请求失败（${response.status}）`);
   }
   return (await response.json()) as T;
 };

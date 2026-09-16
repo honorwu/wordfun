@@ -15,6 +15,7 @@ import {
 } from "./db.mjs";
 
 const port = Number(process.env.PORT || 5174);
+const host = process.env.HOST || "127.0.0.1";
 const catalogDb = requireCatalogDatabase();
 const learningDb = openLearningDatabase();
 const distDir = path.join(projectRoot, "dist");
@@ -28,17 +29,22 @@ const server = createServer(async (request, response) => {
     }
     await serveStatic(response, url.pathname);
   } catch (error) {
-    sendJson(response, 500, { error: error instanceof Error ? error.message : "Unknown error" });
+    const status = error && typeof error === "object" && "statusCode" in error ? Number(error.statusCode) : 500;
+    sendJson(response, status, { error: error instanceof Error ? error.message : "Unknown error" });
   }
 });
 
-server.listen(port, "127.0.0.1", () => {
-  console.log(`Ziqu API server listening on http://127.0.0.1:${port}`);
+server.listen(port, host, () => {
+  console.log(`Ziqu API server listening on http://${host}:${port}`);
 });
 
 const handleApi = async (request, response, url) => {
   if (request.method === "GET" && url.pathname === "/api/health") {
-    sendJson(response, 200, { ok: true, catalogDb: defaultCatalogDatabasePath, learningDb: defaultLearningDatabasePath });
+    sendJson(response, 200, {
+      ok: true,
+      catalogDb: defaultCatalogDatabasePath,
+      learningDb: defaultLearningDatabasePath,
+    });
     return;
   }
 
@@ -66,11 +72,25 @@ const handleApi = async (request, response, url) => {
 
 const readBody = async (request) => {
   const chunks = [];
+  let totalBytes = 0;
   for await (const chunk of request) {
+    totalBytes += chunk.length;
+    if (totalBytes > 4 * 1024 * 1024) {
+      const error = new Error("学习记录过大，无法保存");
+      error.statusCode = 413;
+      throw error;
+    }
     chunks.push(chunk);
   }
   const raw = Buffer.concat(chunks).toString("utf8");
-  return raw ? JSON.parse(raw) : {};
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const error = new Error("保存内容格式不正确");
+    error.statusCode = 400;
+    throw error;
+  }
 };
 
 const sendJson = (response, status, payload) => {

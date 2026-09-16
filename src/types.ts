@@ -2,6 +2,15 @@ export type CharacterCategory = "一类" | "二类";
 
 export type Grade = 1 | 2 | 3 | 4 | 5;
 
+export interface ClassicalText {
+  id: string;
+  title: string;
+  titlePinyin: string;
+  author?: string;
+  dynasty?: string;
+  lines: Array<{ text: string; pinyin: string }>;
+}
+
 export interface DictationWord {
   id: string;
   text: string;
@@ -25,6 +34,7 @@ export interface Lesson {
   words: DictationWord[];
   textbookWords?: DictationWord[];
   textCompanions?: CompanionDictionary;
+  classicalTexts?: ClassicalText[];
 }
 
 export interface Progress {
@@ -50,19 +60,6 @@ export interface CharacterStat {
   lastMistakeAt?: string;
 }
 
-export interface UnsuitableWordFlag {
-  wordId: string;
-  text: string;
-  pinyin: string;
-  grade: Grade;
-  lessonId: string;
-  lessonTitle: string;
-  category: CharacterCategory;
-  flaggedCount: number;
-  firstFlaggedAt: string;
-  lastFlaggedAt: string;
-}
-
 export interface ReviewLog {
   id: string;
   date: string;
@@ -71,32 +68,11 @@ export interface ReviewLog {
   wrongChars?: Array<{ wordId: string; char: string }>;
 }
 
-export interface PrintLogItem {
-  word: DictationWord;
-  reasons: string[];
-}
-
-export interface PrintLog {
-  id: string;
-  date: string;
-  localDate: string;
-  practiceMode: "lesson" | "screening" | "term";
-  lessonId: string;
-  lessonLabel: string;
-  title: string;
-  rangeLabel: string;
-  items: PrintLogItem[];
-}
-
 export interface AppState {
   progress: Progress;
   wordStats: Record<string, WordStat>;
   charStats: Record<string, CharacterStat>;
-  unsuitableWords: Record<string, UnsuitableWordFlag>;
-  customLessons: Lesson[];
-  customWords: DictationWord[];
   logs: ReviewLog[];
-  printLogs: PrintLog[];
 }
 
 export interface PracticeItem {
