@@ -50,6 +50,16 @@ const normalizeLogs = (logs: AppState["logs"] | undefined): AppState["logs"] =>
       ({
         id: log.id,
         date: log.date,
+        practiceMode: log.practiceMode === "lesson" || log.practiceMode === "history" ? log.practiceMode : undefined,
+        lessons: Array.isArray(log.lessons)
+          ? Array.from(
+              new Map(
+                log.lessons
+                  .filter((lesson) => typeof lesson?.id === "string" && lesson.id.length > 0)
+                  .map((lesson) => [lesson.id, { id: lesson.id, title: typeof lesson.title === "string" ? lesson.title : "" }]),
+              ).values(),
+            )
+          : undefined,
         wordIds: uniqueStrings(log.wordIds),
         wrongWordIds: uniqueStrings(log.wrongWordIds),
         wrongChars: Array.isArray(log.wrongChars)

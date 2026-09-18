@@ -540,6 +540,7 @@ export const applyReviewResult = (
   items: PracticeItem[],
   wrongCharKeys: Set<string>,
   reviewedCharsByWord?: ReadonlyMap<string, readonly string[]>,
+  context?: { practiceMode: "lesson" | "history"; lessons: Array<{ id: string; title: string }> },
 ): AppState => {
   const now = new Date().toISOString();
   const addWordText = (texts: string[] | undefined, wordText: string) => uniqueTexts([...(texts ?? []), wordText]);
@@ -560,6 +561,8 @@ export const applyReviewResult = (
           {
             id: crypto.randomUUID(),
             date: now,
+            practiceMode: context?.practiceMode,
+            lessons: context?.lessons,
             wordIds: reviewedItems.map((item) => item.word.id),
             wrongWordIds,
             wrongChars,

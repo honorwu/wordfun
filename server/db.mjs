@@ -213,7 +213,16 @@ CREATE TABLE IF NOT EXISTS char_word_evidence (
 CREATE TABLE IF NOT EXISTS review_logs (
   id TEXT PRIMARY KEY,
   student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-  date TEXT NOT NULL
+  date TEXT NOT NULL,
+  practice_mode TEXT CHECK (practice_mode IN ('lesson', 'history'))
+);
+
+CREATE TABLE IF NOT EXISTS review_log_lessons (
+  log_id TEXT NOT NULL REFERENCES review_logs(id) ON DELETE CASCADE,
+  lesson_id TEXT NOT NULL,
+  lesson_title TEXT NOT NULL,
+  lesson_order INTEGER NOT NULL CHECK (lesson_order >= 0),
+  PRIMARY KEY (log_id, lesson_id)
 );
 
 CREATE TABLE IF NOT EXISTS review_log_words (
@@ -234,6 +243,7 @@ CREATE TABLE IF NOT EXISTS review_log_chars (
 );
 
 CREATE INDEX IF NOT EXISTS idx_review_logs_student_date ON review_logs(student_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_review_log_lessons_log ON review_log_lessons(log_id, lesson_order);
 CREATE INDEX IF NOT EXISTS idx_review_log_words_log ON review_log_words(log_id, item_order);
 CREATE INDEX IF NOT EXISTS idx_review_log_chars_log ON review_log_chars(log_id, item_order, char_order);
 `;
@@ -268,6 +278,10 @@ const migrateLearningDatabase = (db) => {
   if (!charStatColumns.has("last_mistake_at")) {
     db.exec("ALTER TABLE char_stats ADD COLUMN last_mistake_at TEXT");
   }
+  const reviewLogColumns = new Set(db.prepare("PRAGMA table_info(review_logs)").all().map((column) => column.name));
+  if (!reviewLogColumns.has("practice_mode")) {
+    db.exec("ALTER TABLE review_logs ADD COLUMN practice_mode TEXT CHECK (practice_mode IN ('lesson', 'history'))");
+  }
   db.exec(`
     DROP TABLE IF EXISTS print_log_items;
     DROP TABLE IF EXISTS print_logs;
@@ -277,6 +291,7 @@ const migrateLearningDatabase = (db) => {
     DROP TABLE IF EXISTS unsuitable_words;
     DROP INDEX IF EXISTS idx_char_word_evidence_student_char;
   `);
+  db.exec("PRAGMA optimize");
 };
 
 export const requireCatalogDatabase = (databasePath = defaultCatalogDatabasePath) => {
@@ -556,9 +571,10 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
       stat.wrongWordTexts.push(row.word_text);
     }
   }
-  const logRows = allRows(learningDb, "SELECT id, date FROM review_logs WHERE student_id = ? ORDER BY date DESC LIMIT 120", studentId);
+  const logRows = allRows(learningDb, "SELECT id, date, practice_mode FROM review_logs WHERE student_id = ? ORDER BY date DESC LIMIT 120", studentId);
   const wordsByLog = new Map();
   const wrongCharsByLog = new Map();
+  const lessonsByLog = new Map();
   if (logRows.length > 0) {
     const placeholders = logRows.map(() => "?").join(", ");
     const logIds = logRows.map((log) => log.id);
@@ -576,13 +592,44 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
     )) {
       wrongCharsByLog.set(item.log_id, [...(wrongCharsByLog.get(item.log_id) || []), item]);
     }
+    for (const item of allRows(
+      learningDb,
+      `SELECT log_id, lesson_id, lesson_title FROM review_log_lessons WHERE log_id IN (${placeholders}) ORDER BY log_id, lesson_order`,
+      ...logIds,
+    )) {
+      lessonsByLog.set(item.log_id, [...(lessonsByLog.get(item.log_id) || []), { id: item.lesson_id, title: item.lesson_title }]);
+    }
   }
+  const catalogLessons = allRows(catalogDb, "SELECT id, title FROM lessons ORDER BY LENGTH(id) DESC");
+  const poetryLessons = new Map(
+    allRows(
+      catalogDb,
+      `SELECT 'poem-' || ct.id AS word_id, l.id AS lesson_id, l.title
+       FROM classical_texts ct
+       JOIN lessons l ON l.id = ct.lesson_id`,
+    ).map((row) => [row.word_id, { id: row.lesson_id, title: row.title }]),
+  );
+  const inferLessons = (items) => {
+    const inferred = new Map();
+    for (const item of items) {
+      const poetryLesson = poetryLessons.get(item.word_id);
+      const lesson = poetryLesson || catalogLessons.find((candidate) => item.word_id.startsWith(`${candidate.id}-`));
+      if (lesson) inferred.set(lesson.id, { id: lesson.id, title: lesson.title });
+    }
+    return [...inferred.values()];
+  };
   const logs = logRows.map((log) => {
     const items = wordsByLog.get(log.id) || [];
     const wrongChars = wrongCharsByLog.get(log.id) || [];
+    const lessons = lessonsByLog.get(log.id) || inferLessons(items);
+    const practiceMode = log.practice_mode === "lesson" || log.practice_mode === "history"
+      ? log.practice_mode
+      : lessons.length === 1 ? "lesson" : lessons.length > 1 ? "history" : undefined;
     return {
       id: log.id,
       date: log.date,
+      practiceMode,
+      lessons,
       wordIds: items.map((item) => item.word_id),
       wrongWordIds: items.filter((item) => item.is_wrong).map((item) => item.word_id),
       wrongChars: wrongChars.map((item) => ({ wordId: item.word_id, char: item.char })),
@@ -645,14 +692,24 @@ export const saveState = (learningDb, state, studentId = defaultStudentId) => {
     }
 
     learningDb.prepare("DELETE FROM review_logs WHERE student_id = ?").run(studentId);
-    const insertLog = learningDb.prepare("INSERT INTO review_logs (id, student_id, date) VALUES (?, ?, ?)");
+    const insertLog = learningDb.prepare("INSERT INTO review_logs (id, student_id, date, practice_mode) VALUES (?, ?, ?, ?)");
+    const insertLogLesson = learningDb.prepare(
+      "INSERT INTO review_log_lessons (log_id, lesson_id, lesson_title, lesson_order) VALUES (?, ?, ?, ?)",
+    );
     const insertLogWord = learningDb.prepare("INSERT INTO review_log_words (log_id, word_id, is_wrong, item_order) VALUES (?, ?, ?, ?)");
     const insertLogChar = learningDb.prepare("INSERT INTO review_log_chars (log_id, word_id, char, item_order, char_order) VALUES (?, ?, ?, ?, ?)");
     for (const log of (state.logs || []).slice(0, 120)) {
       const wrongIds = new Set(log.wrongWordIds || []);
       const wrongChars = log.wrongChars || [];
       const wrongCharWordIds = new Set(wrongChars.map((item) => item.wordId));
-      insertLog.run(log.id, studentId, log.date);
+      const practiceMode = log.practiceMode === "lesson" || log.practiceMode === "history" ? log.practiceMode : null;
+      insertLog.run(log.id, studentId, log.date, practiceMode);
+      const seenLessonIds = new Set();
+      for (const [index, lesson] of (log.lessons || []).entries()) {
+        if (!lesson?.id || seenLessonIds.has(lesson.id)) continue;
+        seenLessonIds.add(lesson.id);
+        insertLogLesson.run(log.id, lesson.id, lesson.title || "", index);
+      }
       for (const [index, wordId] of (log.wordIds || []).entries()) {
         insertLogWord.run(log.id, wordId, wrongIds.has(wordId) || wrongCharWordIds.has(wordId) ? 1 : 0, index);
       }

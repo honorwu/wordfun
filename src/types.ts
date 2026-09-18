@@ -63,6 +63,8 @@ export interface CharacterStat {
 export interface ReviewLog {
   id: string;
   date: string;
+  practiceMode?: "lesson" | "history";
+  lessons?: Array<{ id: string; title: string }>;
   wordIds: string[];
   wrongWordIds: string[];
   wrongChars?: Array<{ wordId: string; char: string }>;

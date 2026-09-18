@@ -214,7 +214,20 @@ function App() {
       (sum, item) => sum + (reviewedCharsByWord.get(item.word.id) ?? []).filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char))).length,
       0,
     );
-    setState((current) => applyReviewResult(current, practiceItems, wrongCharKeys, reviewedCharsByWord));
+    const reviewedLessons = practiceMode === "lesson"
+      ? [{ id: selectedLesson.id, title: selectedLesson.title }]
+      : Array.from(
+          new Map(
+            practiceItems.map((item) => {
+              const sourceLesson = allLessons.find((lesson) => lesson.id === item.word.lessonId);
+              return [item.word.lessonId, { id: item.word.lessonId, title: sourceLesson?.title ?? item.word.lessonTitle }];
+            }),
+          ).values(),
+        );
+    setState((current) => applyReviewResult(current, practiceItems, wrongCharKeys, reviewedCharsByWord, {
+      practiceMode,
+      lessons: reviewedLessons,
+    }));
     setLastResult({ total: practiceItems.length, wrong: wrongCount });
     setWrongCharKeys(new Set());
     setHintedWordIds(new Set());
@@ -265,6 +278,7 @@ function App() {
         />
       ) : (
         <ParentView
+          lessons={allLessons}
           selectedLesson={selectedLesson}
           state={state}
           wordById={allKnownWords}
@@ -738,10 +752,12 @@ function DictationCard({
 }
 
 function ParentView({
+  lessons,
   selectedLesson,
   state,
   wordById,
 }: {
+  lessons: Lesson[];
   selectedLesson: Lesson;
   state: AppState;
   wordById: Map<string, DictationWord>;
@@ -753,7 +769,18 @@ function ParentView({
   const pendingWrongChars = Object.entries(state.charStats)
     .filter(([, stat]) => stat.mistakes > 0 && !isMasteredChar(stat))
     .sort((left, right) => right[1].mistakes - left[1].mistakes);
-  const wrongChars = pendingWrongChars.slice(0, 24);
+  const wrongWordsByText = new Map<string, { chars: Set<string>; lastMistakeAt: string }>();
+  for (const [char, stat] of pendingWrongChars) {
+    for (const wordText of stat.wrongWordTexts ?? []) {
+      const existing = wrongWordsByText.get(wordText) ?? { chars: new Set<string>(), lastMistakeAt: "" };
+      existing.chars.add(char);
+      if ((stat.lastMistakeAt ?? "") > existing.lastMistakeAt) existing.lastMistakeAt = stat.lastMistakeAt ?? "";
+      wrongWordsByText.set(wordText, existing);
+    }
+  }
+  const wrongWords = [...wrongWordsByText.entries()]
+    .sort((left, right) => right[1].lastMistakeAt.localeCompare(left[1].lastMistakeAt) || right[1].chars.size - left[1].chars.size)
+    .slice(0, 24);
   const totalPracticeCount = state.logs.reduce((total, log) => total + log.wordIds.length, 0);
   const totalCheckinDays = new Set(state.logs.map((log) => localDateKey(new Date(log.date)))).size;
   const todayStart = new Date();
@@ -819,9 +846,22 @@ function ParentView({
               const wrongText = log.wrongChars
                 ? Array.from(new Set(log.wrongChars.map((item) => item.char))).join("、")
                 : log.wrongWordIds.map((id) => wordById.get(id)?.text).filter(Boolean).join("、");
+              const reviewedLessons = (log.lessons ?? []).map((reference) => ({
+                reference,
+                lesson: lessons.find((lesson) => lesson.id === reference.id),
+              }));
+              const lessonText = reviewedLessons.length === 0
+                ? "课文信息未记录"
+                : reviewedLessons
+                    .slice(0, 2)
+                    .map(({ reference, lesson }) => lesson ? lessonLabel(lesson) : reference.title)
+                    .join("、") + (reviewedLessons.length > 2 ? ` 等 ${reviewedLessons.length} 课` : "");
+              const modeText = log.practiceMode === "lesson" ? "当课复习" : log.practiceMode === "history" ? "历史复习" : "旧记录";
               return (
                 <div className="recent-item" key={log.id}>
-                  <span>{formatDate(log.date)}</span><strong>{log.wordIds.length} 项 · {wrong === 0 ? "全对" : `错 ${wrong} 字`}</strong><small>{wrongText || "表现很棒"}</small>
+                  <div className="recent-item-heading"><span>{formatDate(log.date)}</span><b className={`review-mode ${log.practiceMode ?? "legacy"}`}>{modeText}</b></div>
+                  <strong className="recent-lesson">{lessonText}</strong>
+                  <small>{log.wordIds.length} 项 · {wrong === 0 ? "全部正确" : `错 ${wrong} 字：${wrongText}`}</small>
                 </div>
               );
             })}
@@ -859,8 +899,24 @@ function ParentView({
 
         <section className="panel wide">
           <div className="panel-heading"><ClipboardCheck size={20} /><h2>待巩固错字</h2></div>
-          {wrongChars.length === 0 ? <p className="muted">目前没有待巩固的错字。新的批改结果会自动记在这里。</p> : (
-            <div className="wrong-char-list">{wrongChars.map(([char, stat]) => <span key={char}><strong>{char}</strong><small>错 {stat.mistakes} 次</small></span>)}</div>
+          {wrongWords.length === 0 ? <p className="muted">目前没有待巩固的错字。新的批改结果会自动记在这里。</p> : (
+            <>
+              <p className="panel-note">按默写时的词语归类，红色标出仍需巩固的字。</p>
+              <div className="wrong-word-list">{wrongWords.map(([wordText, detail]) => {
+                const isLongText = Array.from(wordText).filter((char) => /\p{Script=Han}/u.test(char)).length > 10;
+                const displayText = isLongText ? `《${wordText.split("\n")[0]}》全文` : wordText;
+                return (
+                  <div className="wrong-word-item" key={wordText}>
+                    <strong className="wrong-word-text">
+                      {Array.from(displayText).map((char, index) => (
+                        <span className={detail.chars.has(char) ? "wrong-character" : ""} key={`${char}-${index}`}>{char}</span>
+                      ))}
+                    </strong>
+                    <small>错字：{[...detail.chars].map((char) => <b key={char}>{char}</b>)}</small>
+                  </div>
+                );
+              })}</div>
+            </>
           )}
         </section>
 
