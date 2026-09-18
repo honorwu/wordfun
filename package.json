@@ -12,6 +12,7 @@
     "rebuild:catalog": "node scripts/rebuild-databases-from-md.mjs",
     "rebuild:data": "node scripts/rebuild-databases-from-md.mjs",
     "rebuild:all": "node scripts/rebuild-databases-from-md.mjs --reset-learning",
+    "prompts:audit": "node scripts/audit-dictation-prompts.mjs",
     "sentences:audit": "node --experimental-strip-types --experimental-transform-types scripts/audit-sentence-hints.mjs",
     "sentences:fetch": "node --experimental-strip-types --experimental-transform-types scripts/fetch-sentence-candidates.mjs",
     "build": "tsc -b && vite build",

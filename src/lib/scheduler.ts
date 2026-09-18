@@ -110,12 +110,30 @@ const companionWord = (
   };
 };
 
+const mergeSameCompanionWords = (words: DictationWord[]) => {
+  const mergedByPrompt = new Map<string, DictationWord>();
+  for (const word of words) {
+    const key = `${word.lessonId}\u0000${word.text}\u0000${word.pinyin}`;
+    const existing = mergedByPrompt.get(key);
+    if (!existing) {
+      mergedByPrompt.set(key, word);
+      continue;
+    }
+    mergedByPrompt.set(key, {
+      ...existing,
+      chars: uniqueChars([...existing.chars, ...word.chars]),
+      category: existing.category === "一类" || word.category === "一类" ? "一类" : "二类",
+    });
+  }
+  return [...mergedByPrompt.values()];
+};
+
 const withDictationCompanions = (words: DictationWord[], lessons: Lesson[], companionWords: CompanionDictionary) => {
   const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
   const eligibleChars = new Set(words.flatMap((word) => word.chars));
   const candidatesByChar = buildCompanionCandidates(words, lessonById);
 
-  return words.map((word) => {
+  const companionPrompts = words.map((word) => {
     const chars = hanChars(word.text);
     if (chars.length !== 1) {
       return word;
@@ -138,6 +156,7 @@ const withDictationCompanions = (words: DictationWord[], lessons: Lesson[], comp
 
     return word;
   });
+  return mergeSameCompanionWords(companionPrompts);
 };
 
 const localDayStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
