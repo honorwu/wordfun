@@ -376,6 +376,11 @@ export const getLessons = (catalogDb) => {
        FROM lesson_characters lc
        WHERE lc.lesson_id = lessons.id
      )
+        OR EXISTS (
+          SELECT 1
+          FROM classical_texts ct
+          WHERE ct.lesson_id = lessons.id
+        )
      ORDER BY grade, term, sort_order`,
   );
   const words = allRows(

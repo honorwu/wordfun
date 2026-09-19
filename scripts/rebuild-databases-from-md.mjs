@@ -390,6 +390,7 @@ const parseClassicalTexts = (lessons) => {
   const wordCharacters = [];
   const lessonWords = [];
   const lessonsByScope = new Map();
+  const assignedClassicalTextCounts = new Map();
   for (const lesson of lessons) {
     const key = `${lesson.grade}\u0000${lesson.term}`;
     lessonsByScope.set(key, [...(lessonsByScope.get(key) ?? []), lesson]);
@@ -416,13 +417,59 @@ const parseClassicalTexts = (lessons) => {
     });
   };
 
-  const findLesson = ({ grade, term, unitIndex, title }) => {
+  const classicalTextCapacity = (lesson) => {
+    const match = lesson.title.match(/古诗(?:词)?([一二三四五六七八九十]+)首/u);
+    return match ? parseChineseNumber(match[1]) : null;
+  };
+
+  const createStandaloneClassicalLesson = ({ grade, term, unitIndex, title, sourceFile, sourceRow }) => {
+    const scoped = lessonsByScope.get(`${grade}\u0000${term}`) ?? [];
+    const unitLessons = scoped.filter((lesson) => lesson.unitIndex === unitIndex);
+    const anchorLesson = unitLessons.find((lesson) => lesson.lessonKind === "garden") ?? unitLessons.at(-1);
+    const sameAnchorCount = scoped.filter(
+      (lesson) => lesson.section === "日积月累" && lesson.sortOrder >= (anchorLesson?.sortOrder ?? 0) && lesson.sortOrder < (anchorLesson?.sortOrder ?? 0) + 1,
+    ).length;
+    const lesson = {
+      id: stableId("classical-lesson", [grade, term, unitIndex ?? "", title]),
+      grade,
+      term,
+      termName: termName(term),
+      unitName: unitIndex ? `第${numberNames.get(unitIndex) ?? unitIndex}单元·日积月累` : "日积月累",
+      unitIndex,
+      section: "日积月累",
+      lessonNumber: (anchorLesson?.lessonNumber ?? anchorLesson?.sortOrder ?? 0) + (sameAnchorCount + 1) / 100,
+      sortOrder: (anchorLesson?.sortOrder ?? 0) + (sameAnchorCount + 1) / 100,
+      title,
+      lessonType: "古诗词",
+      lessonKind: "classical_poetry",
+      isClassical: true,
+      directDictation: true,
+      sourceFile,
+      sourceRow,
+    };
+    lessons.push(lesson);
+    lessonsByScope.set(`${grade}\u0000${term}`, [...scoped, lesson]);
+    return lesson;
+  };
+
+  const findLesson = ({ grade, term, unitIndex, title, sourceFile, sourceRow }) => {
     const scoped = lessonsByScope.get(`${grade}\u0000${term}`) ?? [];
     const exact = scoped.find((lesson) => lesson.title === title);
     if (exact) {
       return exact;
     }
-    return scoped.find((lesson) => lesson.unitIndex === unitIndex && lesson.isClassical) ?? null;
+    const groupedLesson = scoped.find((lesson) => {
+      if (lesson.unitIndex !== unitIndex || lesson.lessonKind !== "classical_poetry") {
+        return false;
+      }
+      const capacity = classicalTextCapacity(lesson);
+      return capacity !== null && (assignedClassicalTextCounts.get(lesson.id) ?? 0) < capacity;
+    });
+    if (groupedLesson) {
+      assignedClassicalTextCounts.set(groupedLesson.id, (assignedClassicalTextCounts.get(groupedLesson.id) ?? 0) + 1);
+      return groupedLesson;
+    }
+    return createStandaloneClassicalLesson({ grade, term, unitIndex, title, sourceFile, sourceRow });
   };
 
   for (const fileName of readdirSync(classicalMdDir).filter((name) => name.endsWith(".md")).sort()) {
@@ -474,7 +521,7 @@ const parseClassicalTexts = (lessons) => {
         throw new Error(`${sourceFile}:${startLine} classical line count mismatch for ${title}`);
       }
 
-      const lesson = findLesson({ grade: book.grade, term: book.term, unitIndex, title });
+      const lesson = findLesson({ grade: book.grade, term: book.term, unitIndex, title, sourceFile, sourceRow: startLine });
       const textId = stableId("classical", [sourceFile, title, textOrder]);
       classicalTexts.push({
         id: textId,
