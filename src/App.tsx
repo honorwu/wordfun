@@ -35,16 +35,55 @@ const historyBatchSize = 20;
 
 type ViewMode = "student" | "parent";
 type PracticeMode = "lesson" | "history";
-type PracticePhase = "dictating" | "reviewing" | "done";
+type PracticePhase = "dictating" | "reviewing" | "correcting" | "done";
+type CorrectionItem = { char: string; mistakeCount: number; repetitions: number };
 
 const termLabel = (term: number) => (term === 2 ? "下册" : "上册");
 
-const lessonNumberLabel = (lesson: Lesson) => {
-  if (lesson.title.startsWith("语文园地")) return lesson.title;
-  return Number.isInteger(lesson.number) ? `第${lesson.number}课·${lesson.title}` : lesson.title;
+const lessonNumberLabel = (lesson: Lesson, title = lesson.title) => {
+  if (lesson.title.startsWith("语文园地")) return title;
+  return Number.isInteger(lesson.number) ? `第${lesson.number}课·${title}` : title;
 };
 
-const lessonLabel = (lesson: Lesson) => `${gradeNames[lesson.grade]}${termLabel(lesson.unit)} · ${lessonNumberLabel(lesson)}`;
+const lessonLabel = (lesson: Lesson, title = lesson.title) => `${gradeNames[lesson.grade]}${termLabel(lesson.unit)} · ${lessonNumberLabel(lesson, title)}`;
+
+type TitleMaskWord = Pick<DictationWord, "text" | "pinyin">;
+
+const hanCharacterCount = (value: string) => Array.from(value).filter((char) => /\p{Script=Han}/u.test(char)).length;
+
+const pinyinForSubstring = (word: TitleMaskWord, substring: string) => {
+  const startIndex = word.text.indexOf(substring);
+  if (startIndex < 0) return "";
+  const syllables = word.pinyin
+    .split(/\s+/u)
+    .map((syllable) => syllable.replace(/[^\p{Letter}]/gu, ""))
+    .filter(Boolean);
+  const startSyllable = hanCharacterCount(word.text.slice(0, startIndex));
+  return syllables.slice(startSyllable, startSyllable + hanCharacterCount(substring)).join(" ");
+};
+
+export const maskLessonTitle = (title: string, words: readonly TitleMaskWord[]) => {
+  const replacements = new Map<string, string>();
+  for (const word of words) {
+    const text = word.text.trim();
+    const pinyin = word.pinyin.trim();
+    if (!text || !pinyin) continue;
+    if (title.includes(text)) {
+      replacements.set(text, pinyin);
+      continue;
+    }
+    if (text.includes(title)) {
+      const titlePinyin = pinyinForSubstring(word, title);
+      if (titlePinyin) replacements.set(title, titlePinyin);
+    }
+  }
+
+  let maskedTitle = title;
+  for (const [text, pinyin] of [...replacements].sort((left, right) => right[0].length - left[0].length)) {
+    maskedTitle = maskedTitle.split(text).join(` ${pinyin} `);
+  }
+  return maskedTitle.replace(/\s+/gu, " ").trim();
+};
 
 const formatDate = (date: string) =>
   new Intl.DateTimeFormat("zh-CN", {
@@ -94,6 +133,7 @@ function App() {
   const [phase, setPhase] = useState<PracticePhase>("dictating");
   const [wrongCharKeys, setWrongCharKeys] = useState<Set<string>>(() => new Set());
   const [hintedWordIds, setHintedWordIds] = useState<Set<string>>(() => new Set());
+  const [correctionItems, setCorrectionItems] = useState<CorrectionItem[]>([]);
   const [savedMessage, setSavedMessage] = useState("");
   const [lastResult, setLastResult] = useState({ total: 0, wrong: 0 });
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -178,6 +218,7 @@ function App() {
     setPhase("dictating");
     setWrongCharKeys(new Set());
     setHintedWordIds(new Set());
+    setCorrectionItems([]);
     setLastResult({ total: 0, wrong: 0 });
   };
 
@@ -203,12 +244,15 @@ function App() {
 
   const saveReview = () => {
     const reviewedCharsByWord = new Map(
-      practiceItems.map((item) => [
-        item.word.id,
-        selectedLesson?.lessonKind === "classical_poetry" || practiceMode === "history" || hintedWordIds.has(item.word.id)
+      practiceItems.map((item) => {
+        const baseReviewChars = hintedWordIds.has(item.word.id)
           ? reviewCharsForWord(item.word)
-          : fullDictationCharsForWord(item.word),
-      ]),
+          : fullDictationCharsForWord(item.word);
+        const explicitlyWrongChars = fullDictationCharsForWord(item.word).filter((char) =>
+          wrongCharKeys.has(charReviewKey(item.word.id, char)),
+        );
+        return [item.word.id, Array.from(new Set([...baseReviewChars, ...explicitlyWrongChars]))] as const;
+      }),
     );
     const wrongCount = practiceItems.reduce(
       (sum, item) => sum + (reviewedCharsByWord.get(item.word.id) ?? []).filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char))).length,
@@ -224,15 +268,26 @@ function App() {
             }),
           ).values(),
         );
-    setState((current) => applyReviewResult(current, practiceItems, wrongCharKeys, reviewedCharsByWord, {
+    const nextState = applyReviewResult(state, practiceItems, wrongCharKeys, reviewedCharsByWord, {
       practiceMode,
       lessons: reviewedLessons,
-    }));
+    });
+    const seenCorrectionChars = new Set<string>();
+    const nextCorrectionItems = practiceItems.flatMap((item) =>
+      fullDictationCharsForWord(item.word).flatMap((char) => {
+        if (!wrongCharKeys.has(charReviewKey(item.word.id, char)) || seenCorrectionChars.has(char)) return [];
+        seenCorrectionChars.add(char);
+        const mistakeCount = nextState.charStats[char]?.mistakes ?? 1;
+        return [{ char, mistakeCount, repetitions: Math.max(2, mistakeCount + 1) }];
+      }),
+    );
+    setState(nextState);
+    setCorrectionItems(nextCorrectionItems);
     setLastResult({ total: practiceItems.length, wrong: wrongCount });
     setWrongCharKeys(new Set());
     setHintedWordIds(new Set());
-    setPhase("done");
-    setSavedMessage("批改结果已记录");
+    setPhase(nextCorrectionItems.length > 0 ? "correcting" : "done");
+    setSavedMessage(nextCorrectionItems.length > 0 ? "批改结果已记录，请完成订正" : "批改结果已记录");
     window.setTimeout(() => setSavedMessage(""), 1800);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -260,12 +315,17 @@ function App() {
       {viewMode === "student" ? (
         <StudentView
           items={practiceItems}
+          correctionItems={correctionItems}
           hintedWordIds={hintedWordIds}
           lastResult={lastResult}
           lesson={selectedLesson}
           lessons={allLessons}
           mode={practiceMode}
           onFinish={finishDictation}
+          onFinishCorrection={() => {
+            setPhase("done");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
           onRevealHint={(wordId) => setHintedWordIds((current) => new Set(current).add(wordId))}
           onRestart={() => resetPractice(practiceMode)}
           onSave={saveReview}
@@ -291,6 +351,7 @@ function App() {
 }
 
 function StudentView({
+  correctionItems,
   hintedWordIds,
   items,
   lastResult,
@@ -298,6 +359,7 @@ function StudentView({
   lessons,
   mode,
   onFinish,
+  onFinishCorrection,
   onRevealHint,
   onRestart,
   onSave,
@@ -308,6 +370,7 @@ function StudentView({
   stats,
   wrongCharKeys,
 }: {
+  correctionItems: CorrectionItem[];
   hintedWordIds: ReadonlySet<string>;
   items: PracticeItem[];
   lastResult: { total: number; wrong: number };
@@ -315,6 +378,7 @@ function StudentView({
   lessons: Lesson[];
   mode: PracticeMode;
   onFinish: () => void;
+  onFinishCorrection: () => void;
   onRevealHint: (wordId: string) => void;
   onRestart: () => void;
   onSave: () => void;
@@ -337,6 +401,12 @@ function StudentView({
   const grades = availableGrades(lessons);
   const terms = Array.from(new Set(lessons.filter((item) => item.grade === lesson.grade).map((item) => item.unit))).sort();
   const scopedLessons = lessons.filter((item) => item.grade === lesson.grade && item.unit === lesson.unit);
+  const titleMaskWords = isPoetryMode
+    ? (lesson.classicalTexts ?? []).map((poem) => ({ text: poem.title, pinyin: poem.titlePinyin }))
+    : items.map((item) => item.word);
+  const displayedLessonTitle = phase === "dictating" && mode === "lesson"
+    ? maskLessonTitle(lesson.title, titleMaskWords)
+    : lesson.title;
 
   const pickFirstLesson = (grade: Grade, term?: number) => {
     const first = lessons.find((item) => item.grade === grade && (term ? item.unit === term : true));
@@ -370,13 +440,22 @@ function StudentView({
     onFinish();
   };
 
+  if (phase === "correcting") {
+    return (
+      <CorrectionView
+        items={correctionItems}
+        onFinish={onFinishCorrection}
+      />
+    );
+  }
+
   if (phase === "done") {
     return (
       <section className="student-main">
         <div className="result-card">
           <span className="result-spark"><Sparkles size={34} /></span>
           <p className="eyebrow">默写完成</p>
-          <h1>{lastResult.wrong === 0 ? "全部写对了！" : "批改完成，继续加油"}</h1>
+          <h1>{lastResult.wrong === 0 ? "全部写对了！" : "订正完成，继续加油"}</h1>
           <p>
             这次完成了 <strong>{lastResult.total}</strong> 项内容，
             {lastResult.wrong === 0 ? "没有错字。" : <><strong>{lastResult.wrong}</strong> 个字已收进错字记录。</>}
@@ -394,7 +473,7 @@ function StudentView({
       <div className="lesson-banner">
         <div>
           <p className="eyebrow">我现在学到</p>
-          <h1>{lessonLabel(lesson)}</h1>
+          <h1>{lessonLabel(lesson, displayedLessonTitle)}</h1>
           <div className="student-lesson-picker" aria-label="选择当前课次">
             <label>
               <span>年级</span>
@@ -414,7 +493,11 @@ function StudentView({
                 const nextLesson = lessons.find((item) => item.id === event.target.value);
                 if (nextLesson) onSelectLesson(nextLesson);
               }}>
-                {scopedLessons.map((item) => <option key={item.id} value={item.id}>{lessonNumberLabel(item)}</option>)}
+                {scopedLessons.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {lessonNumberLabel(item, item.id === lesson.id ? displayedLessonTitle : item.title)}
+                  </option>
+                ))}
               </select>
             </label>
           </div>
@@ -476,7 +559,6 @@ function StudentView({
                 />
               ) : (
                 <DictationCard
-                  focusOnly={mode === "history"}
                   index={globalIndex}
                   item={item}
                   key={`${item.word.id}-${globalIndex}`}
@@ -516,6 +598,42 @@ function StudentView({
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; onFinish: () => void }) {
+  return (
+    <section className="student-main correction-view">
+      <div className="correction-heading">
+        <div>
+          <p className="eyebrow">第 3 步 · 订正错字</p>
+          <h1>把错字认真写正确</h1>
+          <p>请在本子上按要求订正。第一次写错订正 2 遍，以后每错一次增加 1 遍。</p>
+        </div>
+        <div className="correction-total"><strong>{items.length}</strong><span>个错字</span></div>
+      </div>
+
+      <div className="correction-grid">
+        {items.map((item, index) => (
+          <article className="correction-card" key={item.char}>
+            <span className="correction-number">{String(index + 1).padStart(2, "0")}</span>
+            <strong className="correction-character">{item.char}</strong>
+            <div className="correction-requirement">
+              <b>订正 {item.repetitions} 遍</b>
+              <span>这是第 {item.mistakeCount} 次写错</span>
+            </div>
+            <div className="correction-writing-count" aria-label={`${item.char}需要订正${item.repetitions}遍`}>
+              {Array.from({ length: item.repetitions }, (_, repeatIndex) => <i key={repeatIndex}>{repeatIndex + 1}</i>)}
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className="correction-actions">
+        <div><strong>订正完成后再继续</strong><span>请确认每个错字都写够要求的遍数</span></div>
+        <button className="primary-button" type="button" onClick={onFinish}><Check size={19} />我已完成订正</button>
+      </div>
     </section>
   );
 }
@@ -617,7 +735,6 @@ function PoetryCard({
 }
 
 function DictationCard({
-  focusOnly,
   hintRevealed,
   index,
   item,
@@ -626,7 +743,6 @@ function DictationCard({
   reviewing,
   wrongCharKeys,
 }: {
-  focusOnly: boolean;
   hintRevealed: boolean;
   index: number;
   item: PracticeItem;
@@ -645,8 +761,9 @@ function DictationCard({
     .filter(Boolean);
   const targets = new Set(reviewCharsForWord(item.word));
   const helpersVisible = reviewing || hintRevealed;
-  const restrictReviewToTargets = focusOnly || hintRevealed;
-  const reviewTargets = restrictReviewToTargets ? targets : new Set(fullDictationCharsForWord(item.word));
+  const restrictReviewToTargets = hintRevealed;
+  const fullReviewTargets = new Set(fullDictationCharsForWord(item.word));
+  const reviewTargets = reviewing ? fullReviewTargets : restrictReviewToTargets ? targets : fullReviewTargets;
   const targetIndexes = new Set<number>();
   chars.forEach((char, index) => {
     if (targets.has(char)) targetIndexes.add(index);
@@ -703,7 +820,7 @@ function DictationCard({
     <article className={`dictation-card ${chars.length >= 5 ? "long-word" : ""} ${reviewing ? "revealed" : ""} ${hasWrong ? "has-wrong" : ""}`}>
       <div className="card-meta">
         <span className="question-number">{String(index + 1).padStart(2, "0")}</span>
-        <span>{item.word.lessonTitle}</span>
+        <span>{reviewing ? item.word.lessonTitle : maskLessonTitle(item.word.lessonTitle, [item.word])}</span>
         {reviewing ? <b>{hasWrong ? "有错字" : "待批改"}</b> : null}
       </div>
       <div className="card-listen-actions">
@@ -719,12 +836,13 @@ function DictationCard({
       <div className="word-cells" aria-label={`第 ${index + 1} 题`}>
         {chars.map((char, charIndex) => {
           const isCoreTarget = targetIndexes.has(charIndex);
-          const isReviewTarget = !restrictReviewToTargets || isCoreTarget;
-          const displayAsTarget = !helpersVisible || isCoreTarget;
+          const isReviewTarget = reviewing || !restrictReviewToTargets || isCoreTarget;
+          const isHelperChar = hintRevealed && !isCoreTarget;
+          const displayAsTarget = !hintRevealed || isCoreTarget;
           const isWrong = isReviewTarget && wrongCharKeys.has(charReviewKey(item.word.id, char));
           const showPinyin = reviewing || (hintRevealed && isCoreTarget);
           const cellHint = reviewing
-            ? isReviewTarget ? (isWrong ? "写错了" : "点击标错") : "提示字，不计分"
+            ? isWrong ? "写错了" : isHelperChar ? "提示字，也可标错" : "点击标错"
             : hintRevealed
               ? isCoreTarget ? "按拼音默写" : "提示字"
               : "待默写";

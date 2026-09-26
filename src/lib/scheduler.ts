@@ -439,10 +439,15 @@ export const generateCurrentLessonPractice = (lessons: Lesson[], state: AppState
   return getEligibleWords(lessons, state.progress, companionWords)
     .filter((word) => word.lessonId === selectedLesson.id)
     .map((word, index) => ({
-    word,
-    score: 1000 - index,
-    reasons: [isDirectDictationLesson(selectedLesson) ? "课文直接默写" : "本课词语"],
-    }));
+      word,
+      score: 1000 - index,
+      reasons: [isDirectDictationLesson(selectedLesson) ? "课文直接默写" : "本课词语"],
+    }))
+    .sort((left, right) => {
+      const leftCovered = reviewCharsForWord(left.word).every((char) => isMasteredChar(state.charStats[char]));
+      const rightCovered = reviewCharsForWord(right.word).every((char) => isMasteredChar(state.charStats[char]));
+      return Number(leftCovered) - Number(rightCovered) || right.score - left.score;
+    });
 };
 
 export const hasMistakeSignalForWord = (word: DictationWord, state: AppState) => {
