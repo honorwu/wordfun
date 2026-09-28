@@ -36,7 +36,8 @@ const historyBatchSize = 20;
 type ViewMode = "student" | "parent";
 type PracticeMode = "lesson" | "history";
 type PracticePhase = "dictating" | "reviewing" | "correcting" | "done";
-type CorrectionItem = { char: string; mistakeCount: number; repetitions: number };
+type CorrectionMistake = { char: string; mistakeCount: number; repetitions: number };
+type CorrectionItem = { wordId: string; text: string; wrongChars: CorrectionMistake[] };
 
 const termLabel = (term: number) => (term === 2 ? "下册" : "上册");
 
@@ -272,15 +273,16 @@ function App() {
       practiceMode,
       lessons: reviewedLessons,
     });
-    const seenCorrectionChars = new Set<string>();
-    const nextCorrectionItems = practiceItems.flatMap((item) =>
-      fullDictationCharsForWord(item.word).flatMap((char) => {
-        if (!wrongCharKeys.has(charReviewKey(item.word.id, char)) || seenCorrectionChars.has(char)) return [];
-        seenCorrectionChars.add(char);
-        const mistakeCount = nextState.charStats[char]?.mistakes ?? 1;
+    const runningMistakeCounts = new Map<string, number>();
+    const nextCorrectionItems = practiceItems.flatMap((item) => {
+      const wrongChars = fullDictationCharsForWord(item.word).flatMap((char) => {
+        if (!wrongCharKeys.has(charReviewKey(item.word.id, char))) return [];
+        const mistakeCount = (runningMistakeCounts.get(char) ?? state.charStats[char]?.mistakes ?? 0) + 1;
+        runningMistakeCounts.set(char, mistakeCount);
         return [{ char, mistakeCount, repetitions: Math.max(2, mistakeCount + 1) }];
-      }),
-    );
+      });
+      return wrongChars.length > 0 ? [{ wordId: item.word.id, text: item.word.text, wrongChars }] : [];
+    });
     setState(nextState);
     setCorrectionItems(nextCorrectionItems);
     setLastResult({ total: practiceItems.length, wrong: wrongCount });
@@ -603,35 +605,52 @@ function StudentView({
 }
 
 function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; onFinish: () => void }) {
+  const wrongCharTotal = items.reduce((sum, item) => sum + item.wrongChars.length, 0);
+
   return (
     <section className="student-main correction-view">
       <div className="correction-heading">
         <div>
           <p className="eyebrow">第 3 步 · 订正错字</p>
-          <h1>把错字认真写正确</h1>
-          <p>请在本子上按要求订正。第一次写错订正 2 遍，以后每错一次增加 1 遍。</p>
+          <h1>把写错的词认真订正好</h1>
+          <p>先看完整词语，红色字是本次错字。第一次写错订正 2 遍，以后每错一次增加 1 遍。</p>
         </div>
-        <div className="correction-total"><strong>{items.length}</strong><span>个错字</span></div>
+        <div className="correction-total"><strong>{items.length}</strong><span>个错词</span><small>共 {wrongCharTotal} 个错字</small></div>
       </div>
 
       <div className="correction-grid">
         {items.map((item, index) => (
-          <article className="correction-card" key={item.char}>
-            <span className="correction-number">{String(index + 1).padStart(2, "0")}</span>
-            <strong className="correction-character">{item.char}</strong>
-            <div className="correction-requirement">
-              <b>订正 {item.repetitions} 遍</b>
-              <span>这是第 {item.mistakeCount} 次写错</span>
+          <article className="correction-card" key={`${item.wordId}-${index}`}>
+            <div className="correction-card-heading">
+              <span className="correction-number">{String(index + 1).padStart(2, "0")}</span>
+              <span>{item.wrongChars.length > 1 ? `${item.wrongChars.length} 个错字` : "1 个错字"}</span>
             </div>
-            <div className="correction-writing-count" aria-label={`${item.char}需要订正${item.repetitions}遍`}>
-              {Array.from({ length: item.repetitions }, (_, repeatIndex) => <i key={repeatIndex}>{repeatIndex + 1}</i>)}
+            <div className="correction-word" aria-label={`错词：${item.text}`}>
+              {Array.from(item.text).map((char, charIndex) => {
+                const isWrong = item.wrongChars.some((mistake) => mistake.char === char);
+                return <span className={isWrong ? "wrong" : ""} key={`${char}-${charIndex}`}>{char}</span>;
+              })}
+            </div>
+            <div className="correction-error-list">
+              {item.wrongChars.map((mistake) => (
+                <div className="correction-error-detail" key={mistake.char}>
+                  <strong className="correction-character">{mistake.char}</strong>
+                  <div className="correction-requirement">
+                    <b>订正 {mistake.repetitions} 遍</b>
+                    <span>这是第 {mistake.mistakeCount} 次写错</span>
+                  </div>
+                  <div className="correction-writing-count" aria-label={`${mistake.char}需要订正${mistake.repetitions}遍`}>
+                    {Array.from({ length: mistake.repetitions }, (_, repeatIndex) => <i key={repeatIndex}>{repeatIndex + 1}</i>)}
+                  </div>
+                </div>
+              ))}
             </div>
           </article>
         ))}
       </div>
 
       <div className="correction-actions">
-        <div><strong>订正完成后再继续</strong><span>请确认每个错字都写够要求的遍数</span></div>
+        <div><strong>订正完成后再继续</strong><span>请对照完整词语，确认每个红色错字都写够要求的遍数</span></div>
         <button className="primary-button" type="button" onClick={onFinish}><Check size={19} />我已完成订正</button>
       </div>
     </section>
