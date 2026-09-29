@@ -52,13 +52,15 @@ type TitleMaskWord = Pick<DictationWord, "text" | "pinyin">;
 
 const hanCharacterCount = (value: string) => Array.from(value).filter((char) => /\p{Script=Han}/u.test(char)).length;
 
+const pinyinSyllables = (pinyin: string) => pinyin
+  .split(/\s+/u)
+  .map((syllable) => syllable.replace(/[^\p{Letter}]/gu, ""))
+  .filter(Boolean);
+
 const pinyinForSubstring = (word: TitleMaskWord, substring: string) => {
   const startIndex = word.text.indexOf(substring);
   if (startIndex < 0) return "";
-  const syllables = word.pinyin
-    .split(/\s+/u)
-    .map((syllable) => syllable.replace(/[^\p{Letter}]/gu, ""))
-    .filter(Boolean);
+  const syllables = pinyinSyllables(word.pinyin);
   const startSyllable = hanCharacterCount(word.text.slice(0, startIndex));
   return syllables.slice(startSyllable, startSyllable + hanCharacterCount(substring)).join(" ");
 };
@@ -83,6 +85,20 @@ export const maskLessonTitle = (title: string, words: readonly TitleMaskWord[]) 
   for (const [text, pinyin] of [...replacements].sort((left, right) => right[0].length - left[0].length)) {
     maskedTitle = maskedTitle.split(text).join(` ${pinyin} `);
   }
+
+  const pinyinByCharacter = new Map<string, string>();
+  for (const word of words) {
+    const chars = Array.from(word.text).filter((char) => /\p{Script=Han}/u.test(char));
+    const syllables = pinyinSyllables(word.pinyin);
+    chars.forEach((char, index) => {
+      const syllable = syllables[index];
+      if (syllable && !pinyinByCharacter.has(char)) pinyinByCharacter.set(char, syllable);
+    });
+  }
+  maskedTitle = Array.from(maskedTitle)
+    .map((char) => pinyinByCharacter.has(char) ? ` ${pinyinByCharacter.get(char)} ` : char)
+    .join("");
+
   return maskedTitle.replace(/\s+/gu, " ").trim();
 };
 
@@ -409,6 +425,18 @@ function StudentView({
   const displayedLessonTitle = phase === "dictating" && mode === "lesson"
     ? maskLessonTitle(lesson.title, titleMaskWords)
     : lesson.title;
+  const dictationLessonTitles = useMemo(() => {
+    const wordsByLesson = new Map<string, DictationWord[]>();
+    for (const item of items) {
+      wordsByLesson.set(item.word.lessonId, [...(wordsByLesson.get(item.word.lessonId) ?? []), item.word]);
+    }
+    return new Map(
+      [...wordsByLesson].map(([lessonId, lessonWords]) => [
+        lessonId,
+        maskLessonTitle(lessonWords[0].lessonTitle, lessonWords),
+      ]),
+    );
+  }, [items]);
 
   const pickFirstLesson = (grade: Grade, term?: number) => {
     const first = lessons.find((item) => item.grade === grade && (term ? item.unit === term : true));
@@ -561,6 +589,7 @@ function StudentView({
                 />
               ) : (
                 <DictationCard
+                  dictationLessonTitle={dictationLessonTitles.get(item.word.lessonId) ?? item.word.lessonTitle}
                   index={globalIndex}
                   item={item}
                   key={`${item.word.id}-${globalIndex}`}
@@ -754,6 +783,7 @@ function PoetryCard({
 }
 
 function DictationCard({
+  dictationLessonTitle,
   hintRevealed,
   index,
   item,
@@ -762,6 +792,7 @@ function DictationCard({
   reviewing,
   wrongCharKeys,
 }: {
+  dictationLessonTitle: string;
   hintRevealed: boolean;
   index: number;
   item: PracticeItem;
@@ -839,7 +870,7 @@ function DictationCard({
     <article className={`dictation-card ${chars.length >= 5 ? "long-word" : ""} ${reviewing ? "revealed" : ""} ${hasWrong ? "has-wrong" : ""}`}>
       <div className="card-meta">
         <span className="question-number">{String(index + 1).padStart(2, "0")}</span>
-        <span>{reviewing ? item.word.lessonTitle : maskLessonTitle(item.word.lessonTitle, [item.word])}</span>
+        <span>{reviewing ? item.word.lessonTitle : dictationLessonTitle}</span>
         {reviewing ? <b>{hasWrong ? "有错字" : "待批改"}</b> : null}
       </div>
       <div className="card-listen-actions">
