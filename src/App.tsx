@@ -271,10 +271,11 @@ function App() {
         return [item.word.id, Array.from(new Set([...baseReviewChars, ...explicitlyWrongChars]))] as const;
       }),
     );
-    const wrongCount = practiceItems.reduce(
-      (sum, item) => sum + (reviewedCharsByWord.get(item.word.id) ?? []).filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char))).length,
-      0,
-    );
+    const wrongCount = new Set(
+      practiceItems.flatMap((item) =>
+        (reviewedCharsByWord.get(item.word.id) ?? []).filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char))),
+      ),
+    ).size;
     const reviewedLessons = practiceMode === "lesson"
       ? [{ id: selectedLesson.id, title: selectedLesson.title }]
       : Array.from(
@@ -289,12 +290,10 @@ function App() {
       practiceMode,
       lessons: reviewedLessons,
     });
-    const runningMistakeCounts = new Map<string, number>();
     const nextCorrectionItems = practiceItems.flatMap((item) => {
       const wrongChars = fullDictationCharsForWord(item.word).flatMap((char) => {
         if (!wrongCharKeys.has(charReviewKey(item.word.id, char))) return [];
-        const mistakeCount = (runningMistakeCounts.get(char) ?? state.charStats[char]?.mistakes ?? 0) + 1;
-        runningMistakeCounts.set(char, mistakeCount);
+        const mistakeCount = nextState.charStats[char]?.mistakes ?? 1;
         return [{ char, mistakeCount, repetitions: Math.max(2, mistakeCount + 1) }];
       });
       return wrongChars.length > 0 ? [{ wordId: item.word.id, text: item.word.text, wrongChars }] : [];
@@ -548,7 +547,7 @@ function StudentView({
         <div className="history-progress">
           <div><span>历史复习进度</span><strong>{stats.historyReviewed} / {stats.historyTotal} 字已掌握</strong></div>
           <div className="progress-track"><i style={{ width: `${reviewPercent}%` }} /></div>
-          <p>{stats.pendingMistakes > 0 ? `${stats.pendingMistakes} 个待巩固 · 错后间隔 7 天` : `已掌握 ${reviewPercent}%`}</p>
+          <p>{stats.pendingMistakes > 0 ? `${stats.pendingMistakes} 个待巩固 · 每次练习间隔 7 天` : `已掌握 ${reviewPercent}%`}</p>
         </div>
       ) : null}
 
@@ -556,7 +555,7 @@ function StudentView({
         <div className="empty-card">
           <Check size={34} />
           <h2>{mode === "history" ? stats.waitingReview > 0 ? "错字正在间隔复习" : stats.historyTotal > 0 ? "以前的字都写对了" : "前面还没有可复习的课" : isPoetryMode ? "这一课还没有古诗正文" : "这一课还没有可默写的词语"}</h2>
-          <p>{mode === "history" ? stats.waitingReview > 0 ? "写错后至少间隔 7 天，目前还没有到期的字。" : stats.historyTotal > 0 ? "继续学习新课后，再回来巩固吧。" : "学完下一课后，这里会从后往前复习。" : isPoetryMode ? "请让家长检查本课的古诗内容。" : "请选择其他课次。"}</p>
+          <p>{mode === "history" ? stats.waitingReview > 0 ? "待巩固的字每次练习后至少间隔 7 天，目前还没有到期。" : stats.historyTotal > 0 ? "继续学习新课后，再回来巩固吧。" : "学完下一课后，这里会从后往前复习。" : isPoetryMode ? "请让家长检查本课的古诗内容。" : "请选择其他课次。"}</p>
         </div>
       ) : (
         <>
@@ -634,7 +633,7 @@ function StudentView({
 }
 
 function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; onFinish: () => void }) {
-  const wrongCharTotal = items.reduce((sum, item) => sum + item.wrongChars.length, 0);
+  const wrongCharTotal = new Set(items.flatMap((item) => item.wrongChars.map((mistake) => mistake.char))).size;
 
   return (
     <section className="student-main correction-view">

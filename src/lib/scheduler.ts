@@ -196,7 +196,7 @@ export const isCorrectedScreeningChar = (stat?: CharacterStat) => isMasteredChar
 export const isPendingScreeningMistakeChar = (stat?: CharacterStat) => Boolean(stat && stat.mistakes > 0 && !isMasteredChar(stat));
 
 export const isHistoryCharCoolingDown = (stat?: CharacterStat) =>
-  Boolean(isPendingScreeningMistakeChar(stat) && daysSince(stat?.lastMistakeAt) < historyMistakeCooldownDays);
+  Boolean(isPendingScreeningMistakeChar(stat) && daysSince(stat?.lastReviewedAt || stat?.lastMistakeAt) < historyMistakeCooldownDays);
 
 const isHistoryCharDue = (stat?: CharacterStat) => !isMasteredChar(stat) && !isHistoryCharCoolingDown(stat);
 
@@ -548,7 +548,6 @@ export const applyReviewResult = (
   context?: { practiceMode: "lesson" | "history"; lessons: Array<{ id: string; title: string }> },
 ): AppState => {
   const now = new Date().toISOString();
-  const addWordText = (texts: string[] | undefined, wordText: string) => uniqueTexts([...(texts ?? []), wordText]);
   const reviewedItems = items;
   const reviewedCharsForItem = (item: PracticeItem) =>
     uniqueChars([...(reviewedCharsByWord?.get(item.word.id) ?? reviewCharsForWord(item.word))]).filter((char) => hanChars(item.word.text).includes(char));
@@ -580,6 +579,7 @@ export const applyReviewResult = (
     charStats: { ...state.charStats },
     logs: [...reviewLogs, ...state.logs].slice(0, 120),
   };
+  const sessionCharReviews = new Map<string, { isWrong: boolean; correctWordTexts: Set<string>; wrongWordTexts: Set<string> }>();
 
   for (const item of reviewedItems) {
     const reviewChars = reviewedCharsForItem(item);
@@ -595,17 +595,29 @@ export const applyReviewResult = (
 
     for (const char of reviewChars) {
       const isCharWrong = wrongCharKeys.has(charReviewKey(item.word.id, char));
-      const charPrevious = next.charStats[char] ?? { attempts: 0, mistakes: 0, streak: 0 };
-      next.charStats[char] = {
-        attempts: charPrevious.attempts + 1,
-        mistakes: charPrevious.mistakes + (isCharWrong ? 1 : 0),
-        streak: isCharWrong ? 0 : charPrevious.streak + 1,
-        correctWordTexts: isCharWrong ? uniqueTexts(charPrevious.correctWordTexts) : addWordText(charPrevious.correctWordTexts, item.word.text),
-        wrongWordTexts: isCharWrong ? addWordText(charPrevious.wrongWordTexts, item.word.text) : uniqueTexts(charPrevious.wrongWordTexts),
-        lastReviewedAt: now,
-        lastMistakeAt: isCharWrong ? now : charPrevious.lastMistakeAt,
+      const sessionReview = sessionCharReviews.get(char) ?? {
+        isWrong: false,
+        correctWordTexts: new Set<string>(),
+        wrongWordTexts: new Set<string>(),
       };
+      sessionReview.isWrong ||= isCharWrong;
+      (isCharWrong ? sessionReview.wrongWordTexts : sessionReview.correctWordTexts).add(item.word.text);
+      sessionCharReviews.set(char, sessionReview);
     }
+  }
+
+  // 同一场默写里，同一个字无论出现于多少个词，都只累计一次作答；任一处写错则本场记错一次。
+  for (const [char, sessionReview] of sessionCharReviews) {
+    const charPrevious = state.charStats[char] ?? { attempts: 0, mistakes: 0, streak: 0 };
+    next.charStats[char] = {
+      attempts: charPrevious.attempts + 1,
+      mistakes: charPrevious.mistakes + (sessionReview.isWrong ? 1 : 0),
+      streak: sessionReview.isWrong ? 0 : charPrevious.streak + 1,
+      correctWordTexts: uniqueTexts([...(charPrevious.correctWordTexts ?? []), ...sessionReview.correctWordTexts]),
+      wrongWordTexts: uniqueTexts([...(charPrevious.wrongWordTexts ?? []), ...sessionReview.wrongWordTexts]),
+      lastReviewedAt: now,
+      lastMistakeAt: sessionReview.isWrong ? now : charPrevious.lastMistakeAt,
+    };
   }
 
   return next;
