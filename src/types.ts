@@ -68,6 +68,11 @@ export interface ReviewLog {
   wordIds: string[];
   wrongWordIds: string[];
   wrongChars?: Array<{ wordId: string; char: string }>;
+  reviewedItems?: Array<{
+    wordId: string;
+    wordText: string;
+    reviewedChars: string[];
+  }>;
 }
 
 export interface AppState {

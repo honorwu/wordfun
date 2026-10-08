@@ -65,6 +65,15 @@ const normalizeLogs = (logs: AppState["logs"] | undefined): AppState["logs"] =>
         wrongChars: Array.isArray(log.wrongChars)
           ? log.wrongChars.filter((item): item is { wordId: string; char: string } => typeof item?.wordId === "string" && typeof item?.char === "string")
           : undefined,
+        reviewedItems: Array.isArray(log.reviewedItems)
+          ? log.reviewedItems
+              .filter((item) => typeof item?.wordId === "string" && item.wordId.length > 0)
+              .map((item) => ({
+                wordId: item.wordId,
+                wordText: typeof item.wordText === "string" ? item.wordText : "",
+                reviewedChars: uniqueStrings(item.reviewedChars),
+              }))
+          : undefined,
       }) satisfies ReviewLog,
   );
 
