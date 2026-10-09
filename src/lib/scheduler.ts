@@ -701,11 +701,8 @@ export const addMissedWrongChars = (
       ? (targetLog.reviewedItems ?? []).map((item) => [item.wordId, new Set(item.reviewedChars)] as const)
       : targetLog.wordIds.map((wordId) => {
         const word = wordById.get(wordId);
-        const safelyRecoverableChars = word
-          ? fullDictationCharsForWord(word).filter((char) =>
-              word.chars.includes(char) || state.charStats[char]?.lastReviewedAt === targetLog.date,
-            )
-          : [];
+        // 旧记录没有逐题计分快照；同场其他题也可能更新字的时间戳，不能据此推断本题的提示字曾被计分。
+        const safelyRecoverableChars = word ? reviewCharsForWord(word) : [];
         return [wordId, new Set(safelyRecoverableChars)] as const;
       }),
   );

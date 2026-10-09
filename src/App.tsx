@@ -3,10 +3,8 @@ import {
   BookOpen,
   CalendarDays,
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
   ClipboardCheck,
   Eye,
   History,
@@ -16,7 +14,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { gradeNames } from "./data/metadata";
 import { fetchAppData, saveRemoteState } from "./lib/api";
 import {
@@ -44,7 +42,7 @@ type ViewMode = "student" | "parent";
 type PracticeMode = "lesson" | "history";
 type PracticePhase = "dictating" | "reviewing" | "correcting" | "done";
 type CorrectionMistake = { char: string; mistakeCount: number; repetitions: number };
-type CorrectionItem = { wordId: string; text: string; wrongChars: CorrectionMistake[] };
+type CorrectionItem = { wordId: string; text: string; pinyin: string; wrongChars: CorrectionMistake[] };
 type PlaybackStage = "idle" | "first" | "waiting" | "second";
 type SpeechPlayback = { index: number | null; stage: PlaybackStage; countdown: number };
 
@@ -309,7 +307,7 @@ function App() {
         const mistakeCount = nextState.charStats[char]?.mistakes ?? 1;
         return [{ char, mistakeCount, repetitions: Math.max(2, mistakeCount + 1) }];
       });
-      return wrongChars.length > 0 ? [{ wordId: item.word.id, text: item.word.text, wrongChars }] : [];
+      return wrongChars.length > 0 ? [{ wordId: item.word.id, text: item.word.text, pinyin: item.word.pinyin, wrongChars }] : [];
     });
     setState(nextState);
     setCorrectionItems(nextCorrectionItems);
@@ -444,8 +442,6 @@ function StudentView({
   stats: { historyTotal: number; historyReviewed: number; pendingMistakes: number; waitingReview: number; todayCount: number };
   wrongCharKeys: Set<string>;
 }) {
-  const pageSize = 4;
-  const [itemPage, setItemPage] = useState(0);
   const [finishArmed, setFinishArmed] = useState(false);
   const [activeItemIndex, setActiveItemIndex] = useState(0);
   const [speechPlayback, setSpeechPlayback] = useState<SpeechPlayback>(idleSpeechPlayback);
@@ -455,11 +451,7 @@ function StudentView({
   const countdownIntervalRef = useRef<number | null>(null);
   const speechSafetyTimeoutRef = useRef<number | null>(null);
   const reviewPercent = stats.historyTotal > 0 ? Math.round((stats.historyReviewed / stats.historyTotal) * 100) : 0;
-  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
-  const safePage = Math.min(itemPage, totalPages - 1);
   const safeActiveItemIndex = Math.max(0, Math.min(activeItemIndex, Math.max(0, items.length - 1)));
-  const visibleItems = items.slice(safePage * pageSize, safePage * pageSize + pageSize);
-  const isLastPage = safePage === totalPages - 1;
   const isPoetryMode = mode === "lesson" && lesson.lessonKind === "classical_poetry";
   const grades = availableGrades(lessons);
   const terms = Array.from(new Set(lessons.filter((item) => item.grade === lesson.grade).map((item) => item.unit))).sort();
@@ -482,6 +474,10 @@ function StudentView({
       ]),
     );
   }, [items]);
+  const protectedChars = useMemo(
+    () => new Set(items.flatMap((item) => reviewCharsForWord(item.word))),
+    [items],
+  );
 
   const pickFirstLesson = (grade: Grade, term?: number) => {
     const first = lessons.find((item) => item.grade === grade && (term ? item.unit === term : true));
@@ -606,7 +602,6 @@ function StudentView({
 
   useEffect(() => {
     stopPlayback();
-    setItemPage(0);
     setActiveItemIndex(0);
     setFinishArmed(false);
   }, [items.length, lesson.id, mode, stopPlayback]);
@@ -616,7 +611,6 @@ function StudentView({
       stopPlayback();
       return;
     }
-    setItemPage(0);
     setActiveItemIndex(0);
   }, [phase, stopPlayback]);
 
@@ -641,22 +635,10 @@ function StudentView({
     return () => window.clearTimeout(timeout);
   }, [finishArmed]);
 
-  const goToPage = (nextPage: number) => {
-    const clampedPage = Math.max(0, Math.min(totalPages - 1, nextPage));
-    if (clampedPage === safePage) return;
-    stopPlayback();
-    setItemPage(clampedPage);
-    setActiveItemIndex(Math.min(clampedPage * pageSize, Math.max(0, items.length - 1)));
-    setFinishArmed(false);
-    window.requestAnimationFrame(() => document.querySelector(".practice-heading")?.scrollIntoView({ behavior: "smooth", block: "start" }));
-  };
-
   const activateItem = (nextIndex: number) => {
     const clampedIndex = Math.max(0, Math.min(items.length - 1, nextIndex));
     if (clampedIndex !== safeActiveItemIndex) stopPlayback();
     setActiveItemIndex(clampedIndex);
-    const nextPage = Math.floor(clampedIndex / pageSize);
-    if (nextPage !== safePage) setItemPage(nextPage);
   };
 
   const moveActiveItem = (direction: -1 | 1) => {
@@ -664,8 +646,6 @@ function StudentView({
     if (nextIndex === safeActiveItemIndex) return;
     stopPlayback();
     setActiveItemIndex(nextIndex);
-    const nextPage = Math.floor(nextIndex / pageSize);
-    if (nextPage !== safePage) setItemPage(nextPage);
     window.requestAnimationFrame(() => {
       document.querySelector(`[data-item-index="${nextIndex}"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
@@ -678,7 +658,6 @@ function StudentView({
     }
     stopPlayback();
     setFinishArmed(false);
-    setItemPage(0);
     setActiveItemIndex(0);
     onFinish();
   };
@@ -686,9 +665,9 @@ function StudentView({
   useEffect(() => {
     if (phase !== "dictating" || isPoetryMode || items.length === 0) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
       const target = event.target as HTMLElement | null;
-      if (target?.matches("input, select, textarea, [contenteditable='true']")) return;
+      if (target?.closest("button, a, input, select, textarea, [contenteditable='true']")) return;
 
       if (event.code === "Space") {
         if (event.repeat) return;
@@ -701,14 +680,10 @@ function StudentView({
         moveActiveItem(event.key === "ArrowLeft" ? -1 : 1);
         return;
       }
-      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-        event.preventDefault();
-        goToPage(safePage + (event.key === "ArrowUp" ? -1 : 1));
-      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isPoetryMode, items.length, phase, safeActiveItemIndex, safePage, startDoublePlayback]);
+  }, [isPoetryMode, items.length, phase, safeActiveItemIndex, startDoublePlayback]);
 
   if (phase === "correcting") {
     return (
@@ -803,10 +778,9 @@ function StudentView({
           <div className="practice-heading">
             <div>
               <p className="eyebrow">{phase === "dictating" ? isPoetryMode ? "看题目拼音，背诵默写" : mode === "history" ? "先听词语，专练不会的字" : "先听词语，再动笔" : "完整答案"}</p>
-              <h2>{phase === "dictating" ? isPoetryMode ? `古诗背诵默写 · 共 ${items.length} 篇` : mode === "history" ? `本组 ${visibleItems.length} 题 · 只默写需要巩固的字` : `本组 ${visibleItems.length} 题 · 每个字和拼音都要写` : "请点选写错的字"}</h2>
+              <h2>{phase === "dictating" ? isPoetryMode ? `古诗背诵默写 · 共 ${items.length} 篇` : mode === "history" ? `共 ${items.length} 题 · 只默写需要巩固的字` : `共 ${items.length} 题 · 每个字和拼音都要写` : "请点选写错的字"}</h2>
             </div>
             <div className="practice-status">
-              <span className="page-counter">第 {safePage + 1} / {totalPages} 组</span>
               <div className={`phase-badge ${phase}`}>
                 {phase === "dictating" ? <><span>1</span> 正在默写</> : <><span>2</span> 自己批改</>}
               </div>
@@ -817,14 +791,12 @@ function StudentView({
             <div className="keyboard-guide" aria-label="键盘快捷操作">
               <strong>当前第 {safeActiveItemIndex + 1} / {items.length} 题</strong>
               <span><kbd>←</kbd><kbd>→</kbd> 上一题 / 下一题</span>
-              <span><kbd>↑</kbd><kbd>↓</kbd> 上一组 / 下一组</span>
               <span><kbd>空格</kbd> 播放 / 停止 · 自动播 2 遍，间隔 10 秒</span>
             </div>
           ) : null}
 
           <div className={`dictation-grid ${isPoetryMode ? "poetry-grid" : ""}`}>
-            {visibleItems.map((item, index) => {
-              const globalIndex = safePage * pageSize + index;
+            {items.map((item, globalIndex) => {
               const poem = lesson.classicalTexts?.[globalIndex];
               return isPoetryMode && poem ? (
                 <PoetryCard
@@ -848,6 +820,7 @@ function StudentView({
                   onTogglePlayback={() => void startDoublePlayback(globalIndex)}
                   onRevealHint={() => onRevealHint(item.word.id)}
                   playback={speechPlayback.index === globalIndex ? speechPlayback : idleSpeechPlayback}
+                  protectedChars={protectedChars}
                   reviewing={phase === "reviewing"}
                   onToggleWrong={onToggleWrong}
                   wrongCharKeys={wrongCharKeys}
@@ -860,23 +833,20 @@ function StudentView({
             <div>
               {phase === "dictating" ? (
                 <>
-                  <strong>{finishArmed ? "确认要结束默写吗？" : isLastPage ? isPoetryMode ? "题目、朝代、作者和全文都写好了吗？" : "最后一组写好了吗？" : "这一组写好了吗？"}</strong>
-                  <span>{finishArmed ? "请再次点击橙色按钮；4 秒后自动取消" : isLastPage ? "结束后显示完整答案" : "进入下一组，不会提前显示答案"}</span>
+                  <strong>{finishArmed ? "确认要结束默写吗？" : isPoetryMode ? "题目、朝代、作者和全文都写好了吗？" : "所有题目都写好了吗？"}</strong>
+                  <span>{finishArmed ? "请再次点击橙色按钮；4 秒后自动取消" : "结束后显示完整答案"}</span>
                 </>
               ) : (
-                <><strong>已标记 {wrongCharKeys.size} 个错字</strong><span>{isLastPage ? "只需点选写错的字" : "批改好这一组，再继续下一组"}</span></>
+                <><strong>已标记 {wrongCharKeys.size} 个错字</strong><span>检查全部题目，只需点选写错的字</span></>
               )}
             </div>
             <div className="action-buttons">
-              {safePage > 0 ? <button className="secondary-button" type="button" onClick={() => goToPage(safePage - 1)}><ChevronUp size={18} />上一组</button> : null}
-              {!isLastPage ? (
-                <button className="primary-button" type="button" onClick={() => goToPage(safePage + 1)}>下一组<ChevronDown size={19} /></button>
-              ) : phase === "dictating" ? (
+              {phase === "dictating" ? (
                 <button className={`primary-button ${finishArmed ? "finish-confirm" : ""}`} type="button" onClick={confirmFinish}>
                   <ClipboardCheck size={19} />{finishArmed ? "确认结束并看答案" : "结束默写"}
                 </button>
               ) : (
-                <button className="primary-button" type="button" onClick={() => { setItemPage(0); onSave(); }}><Check size={19} />完成批改</button>
+                <button className="primary-button" type="button" onClick={onSave}><Check size={19} />完成批改</button>
               )}
             </div>
           </div>
@@ -887,7 +857,23 @@ function StudentView({
 }
 
 function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; onFinish: () => void }) {
+  const [finishArmed, setFinishArmed] = useState(false);
   const wrongCharTotal = new Set(items.flatMap((item) => item.wrongChars.map((mistake) => mistake.char))).size;
+
+  useEffect(() => {
+    if (!finishArmed) return;
+    const timeout = window.setTimeout(() => setFinishArmed(false), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [finishArmed]);
+
+  const confirmFinish = () => {
+    if (!finishArmed) {
+      setFinishArmed(true);
+      return;
+    }
+    setFinishArmed(false);
+    onFinish();
+  };
 
   return (
     <section className="student-main correction-view">
@@ -900,40 +886,56 @@ function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; onFinish
         <div className="correction-total"><strong>{items.length}</strong><span>个错词</span><small>共 {wrongCharTotal} 个错字</small></div>
       </div>
 
-      <div className="correction-grid">
-        {items.map((item, index) => (
-          <article className="correction-card" key={`${item.wordId}-${index}`}>
+      <div className={`correction-grid ${items.length === 1 ? "single" : ""}`}>
+        {items.map((item, index) => {
+          const mistakeOrder = new Map(item.wrongChars.map((mistake, mistakeIndex) => [mistake.char, mistakeIndex + 1]));
+          const isLongText = item.text.includes("\n") || hanCharacterCount(item.text) > 10;
+          const isPoetry = item.wordId.startsWith("poem-");
+          const hasRepeatedWrongChar = item.wrongChars.some((mistake) => Array.from(item.text).filter((char) => char === mistake.char).length > 1);
+          return <article className={`correction-card ${isLongText ? "long-text" : ""}`} key={`${item.wordId}-${index}`}>
             <div className="correction-card-heading">
               <span className="correction-number">{String(index + 1).padStart(2, "0")}</span>
               <span>{item.wrongChars.length > 1 ? `${item.wrongChars.length} 个错字` : "1 个错字"}</span>
             </div>
-            <div className="correction-word" aria-label={`错词：${item.text}`}>
-              {Array.from(item.text).map((char, charIndex) => {
-                const isWrong = item.wrongChars.some((mistake) => mistake.char === char);
-                return <span className={isWrong ? "wrong" : ""} key={`${char}-${charIndex}`}>{char}</span>;
-              })}
+            <div className="correction-answer">
+              <div className="correction-pinyin">
+                <span>{isPoetry ? "题目与正文拼音" : "拼音"}</span>
+                <p>{item.pinyin.trim() || "暂无拼音"}</p>
+                {isPoetry ? <small>朝代、作者未标注拼音</small> : null}
+              </div>
+              <div className="correction-word" aria-label={`错词：${item.text}；错字：${item.wrongChars.map((mistake) => mistake.char).join("、")}`}>
+                {Array.from(item.text).map((char, charIndex) => {
+                  const order = mistakeOrder.get(char);
+                  return <span className={order ? "wrong" : ""} key={`${char}-${charIndex}`}>{char}{order && item.wrongChars.length > 1 ? <sup aria-hidden="true">{order}</sup> : null}</span>;
+                })}
+              </div>
             </div>
+            {hasRepeatedWrongChar ? <p className="correction-duplicate-note">同一个红字在原文中出现多次，只需按下方要求订正一次。</p> : null}
             <div className="correction-error-list">
-              {item.wrongChars.map((mistake) => (
+              {item.wrongChars.map((mistake, mistakeIndex) => (
                 <div className="correction-error-detail" key={mistake.char}>
-                  <strong className="correction-character">{mistake.char}</strong>
                   <div className="correction-requirement">
-                    <b>订正 {mistake.repetitions} 遍</b>
+                    <b>{item.wrongChars.length > 1 ? `红字 ${mistakeIndex + 1}：` : "红字："}订正 {mistake.repetitions} 遍</b>
                     <span>这是第 {mistake.mistakeCount} 次写错</span>
                   </div>
-                  <div className="correction-writing-count" aria-label={`${mistake.char}需要订正${mistake.repetitions}遍`}>
+                  <div className="correction-writing-count" aria-label={`红字 ${mistakeIndex + 1} 需要订正 ${mistake.repetitions} 遍`}>
                     {Array.from({ length: mistake.repetitions }, (_, repeatIndex) => <i key={repeatIndex}>{repeatIndex + 1}</i>)}
                   </div>
                 </div>
               ))}
             </div>
-          </article>
-        ))}
+          </article>;
+        })}
       </div>
 
       <div className="correction-actions">
-        <div><strong>订正完成后再继续</strong><span>请对照完整词语，确认每个红色错字都写够要求的遍数</span></div>
-        <button className="primary-button" type="button" onClick={onFinish}><Check size={19} />我已完成订正</button>
+        <div>
+          <strong>{finishArmed ? "确认要完成订正吗？" : "订正完成后再继续"}</strong>
+          <span>{finishArmed ? "请再次点击橙色按钮；4 秒后自动取消" : "请对照完整词语，确认每个红色错字都写够要求的遍数"}</span>
+        </div>
+        <button className={`primary-button ${finishArmed ? "finish-confirm" : ""}`} type="button" onClick={confirmFinish}>
+          <Check size={19} />{finishArmed ? "确认完成订正" : "我已完成订正"}
+        </button>
       </div>
     </section>
   );
@@ -1046,6 +1048,7 @@ function DictationCard({
   onTogglePlayback,
   onToggleWrong,
   playback,
+  protectedChars,
   reviewing,
   wrongCharKeys,
 }: {
@@ -1059,6 +1062,7 @@ function DictationCard({
   onTogglePlayback: () => void;
   onToggleWrong: (wordId: string, char: string) => void;
   playback: SpeechPlayback;
+  protectedChars: ReadonlySet<string>;
   reviewing: boolean;
   wrongCharKeys: Set<string>;
 }) {
@@ -1127,15 +1131,16 @@ function DictationCard({
       <div className="word-cells" aria-label={`第 ${index + 1} 题`}>
         {chars.map((char, charIndex) => {
           const isCoreTarget = targetIndexes.has(charIndex);
+          const isProtectedHelper = hintRevealed && !isCoreTarget && protectedChars.has(char);
           const isReviewTarget = reviewing || !restrictReviewToTargets || isCoreTarget;
           const isHelperChar = hintRevealed && !isCoreTarget;
-          const displayAsTarget = !hintRevealed || isCoreTarget;
+          const displayAsTarget = !hintRevealed || isCoreTarget || isProtectedHelper;
           const isWrong = isReviewTarget && wrongCharKeys.has(charReviewKey(item.word.id, char));
-          const showPinyin = reviewing || (hintRevealed && isCoreTarget);
+          const showPinyin = reviewing || (hintRevealed && (isCoreTarget || isProtectedHelper));
           const cellHint = reviewing
             ? isWrong ? "写错了" : isHelperChar ? "提示字，也可标错" : "点击标错"
             : hintRevealed
-              ? isCoreTarget ? "按拼音默写" : "提示字"
+              ? isCoreTarget ? "按拼音默写" : isProtectedHelper ? "本轮默写字" : "提示字"
               : "待默写";
           return (
             <div className={`word-cell ${displayAsTarget ? "target" : "helper"} ${isWrong ? "wrong" : ""}`} key={`${char}-${charIndex}`}>
@@ -1148,7 +1153,7 @@ function DictationCard({
                 </button>
               ) : (
                 <div className="character-box">
-                  {helpersVisible && !isCoreTarget ? <strong>{char}</strong> : <span className="writing-line" />}
+                  {helpersVisible && !isCoreTarget && !isProtectedHelper ? <strong>{char}</strong> : <span className="writing-line" />}
                 </div>
               )}
               <em>{cellHint}</em>
@@ -1174,6 +1179,7 @@ function ParentView({
   wordById: Map<string, DictationWord>;
 }) {
   const [showAllLogs, setShowAllLogs] = useState(false);
+  const [activeCorrectionLogId, setActiveCorrectionLogId] = useState<string | null>(null);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1);
@@ -1193,6 +1199,23 @@ function ParentView({
     document.documentElement.dataset.printReport = report;
     window.print();
   };
+
+  const activeCorrectionLog = state.logs.find((log) => log.id === activeCorrectionLogId);
+  if (activeCorrectionLog) {
+    return (
+      <ReviewCorrectionPage
+        key={activeCorrectionLog.id}
+        lessons={lessons}
+        log={activeCorrectionLog}
+        onBack={() => {
+          setActiveCorrectionLogId(null);
+          window.requestAnimationFrame(() => document.getElementById(`review-correction-open-${activeCorrectionLog.id}`)?.focus());
+        }}
+        onSupplementReviewMistakes={onSupplementReviewMistakes}
+        wordById={wordById}
+      />
+    );
+  }
 
   const pendingWrongChars = Object.entries(state.charStats)
     .filter(([, stat]) => stat.mistakes > 0 && !isMasteredChar(stat))
@@ -1313,8 +1336,10 @@ function ParentView({
                 key={log.id}
                 lessons={lessons}
                 log={log}
-                onSupplementReviewMistakes={onSupplementReviewMistakes}
-                state={state}
+                onOpenCorrection={() => {
+                  setActiveCorrectionLogId(log.id);
+                  window.scrollTo({ top: 0, behavior: "auto" });
+                }}
                 wordById={wordById}
               />
             ))}
@@ -1449,48 +1474,15 @@ function ParentView({
 function RecentReviewItem({
   lessons,
   log,
-  onSupplementReviewMistakes,
-  state,
+  onOpenCorrection,
   wordById,
 }: {
   lessons: Lesson[];
   log: ReviewLog;
-  onSupplementReviewMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => number;
-  state: AppState;
+  onOpenCorrection: () => void;
   wordById: Map<string, DictationWord>;
 }) {
-  const panelId = useId();
-  const toggleButtonRef = useRef<HTMLButtonElement>(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
-  const isLegacyRecord = !log.reviewedItems || log.reviewedItems.length === 0;
-  const snapshotByWordId = new Map((log.reviewedItems ?? []).map((item) => [item.wordId, item]));
-  const existingWrongKeys = new Set((log.wrongChars ?? []).map((item) => charReviewKey(item.wordId, item.char)));
   const wrongWordsWithCharDetails = new Set((log.wrongChars ?? []).map((item) => item.wordId));
-  const correctionItems = log.wordIds.map((wordId) => {
-    const snapshot = snapshotByWordId.get(wordId);
-    const word = wordById.get(wordId);
-    const wordText = snapshot?.wordText || word?.text || "";
-    const isUndetailedLegacyWrongWord = isLegacyRecord
-      && log.wrongWordIds.includes(wordId)
-      && !wrongWordsWithCharDetails.has(wordId);
-    const possibleChars = snapshot
-      ? snapshot.reviewedChars
-      : word ? fullDictationCharsForWord(word) : [];
-    const chars = Array.from(new Set(possibleChars)).map((char) => ({
-      char,
-      canCorrect: !isUndetailedLegacyWrongWord
-        && Boolean(snapshot || word?.chars.includes(char) || state.charStats[char]?.lastReviewedAt === log.date),
-      isUndetailedLegacyWrongWord,
-    }));
-    const sourceLesson = word ? lessons.find((lesson) => lesson.id === word.lessonId) : undefined;
-    return {
-      wordId,
-      wordText,
-      chars,
-      lessonText: sourceLesson ? lessonLabel(sourceLesson) : word?.lessonTitle || "课次信息缺失",
-    };
-  });
   const reviewedLessons = (log.lessons ?? []).map((reference) => ({
     reference,
     lesson: lessons.find((lesson) => lesson.id === reference.id),
@@ -1514,13 +1506,85 @@ function RecentReviewItem({
       ].filter(Boolean).join("；");
   const modeText = log.practiceMode === "lesson" ? "当课复习" : log.practiceMode === "history" ? "历史复习" : "旧记录";
   const canSupplementMistakes = log.practiceMode === "lesson" || log.practiceMode === "history";
-  const selectedCount = selectedKeys.size;
 
-  const closeEditor = () => {
-    setIsEditing(false);
-    setSelectedKeys(new Set());
-    window.requestAnimationFrame(() => toggleButtonRef.current?.focus());
-  };
+  return (
+    <div className="recent-item">
+      <div className="recent-item-heading"><time dateTime={log.date}>{formatDate(log.date)}</time><b className={`review-mode ${log.practiceMode ?? "legacy"}`}>{modeText}</b></div>
+      <strong className="recent-lesson">{lessonText}</strong>
+      <small>{log.wordIds.length} 项 · {wrongSummary}</small>
+      {canSupplementMistakes ? (
+        <div className="recent-item-actions">
+          <button
+            aria-label={`打开${modeText}错字补记页面，${formatDate(log.date)}`}
+            className="supplement-mistakes-button"
+            id={`review-correction-open-${log.id}`}
+            type="button"
+            onClick={onOpenCorrection}
+          >
+            <ClipboardCheck size={15} />补记错字
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ReviewCorrectionPage({
+  lessons,
+  log,
+  onBack,
+  onSupplementReviewMistakes,
+  wordById,
+}: {
+  lessons: Lesson[];
+  log: ReviewLog;
+  onBack: () => void;
+  onSupplementReviewMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => number;
+  wordById: Map<string, DictationWord>;
+}) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+  const isLegacyRecord = !log.reviewedItems || log.reviewedItems.length === 0;
+  const snapshotByWordId = new Map((log.reviewedItems ?? []).map((item) => [item.wordId, item]));
+  const existingWrongKeys = new Set((log.wrongChars ?? []).map((item) => charReviewKey(item.wordId, item.char)));
+  const wrongWordsWithCharDetails = new Set((log.wrongChars ?? []).map((item) => item.wordId));
+  const correctionItems = log.wordIds.map((wordId) => {
+    const snapshot = snapshotByWordId.get(wordId);
+    const word = wordById.get(wordId);
+    const wordText = snapshot ? snapshot.wordText : word?.text ?? "";
+    const isUndetailedLegacyWrongWord = isLegacyRecord
+      && log.wrongWordIds.includes(wordId)
+      && !wrongWordsWithCharDetails.has(wordId);
+    const possibleChars = snapshot
+      ? snapshot.reviewedChars
+      : word ? fullDictationCharsForWord(word) : [];
+    const chars = Array.from(new Set(possibleChars)).map((char) => ({
+      char,
+      canCorrect: !isUndetailedLegacyWrongWord
+        && wordText.includes(char)
+        && (isLegacyRecord ? Boolean(word && reviewCharsForWord(word).includes(char)) : Boolean(snapshot)),
+      isUndetailedLegacyWrongWord,
+    }));
+    const sourceLesson = word ? lessons.find((lesson) => lesson.id === word.lessonId) : undefined;
+    return {
+      wordId,
+      wordText,
+      chars,
+      lessonText: sourceLesson ? lessonLabel(sourceLesson) : word?.lessonTitle || "课次信息缺失",
+    };
+  });
+  const modeText = log.practiceMode === "history" ? "历史复习" : "当课复习";
+  const reviewedLessons = (log.lessons ?? []).map((reference) => {
+    const lesson = lessons.find((item) => item.id === reference.id);
+    return lesson ? lessonLabel(lesson) : reference.title;
+  });
+  const lessonText = reviewedLessons.length === 0
+    ? "课文信息未记录"
+    : reviewedLessons.slice(0, 2).join("、") + (reviewedLessons.length > 2 ? ` 等 ${reviewedLessons.length} 课` : "");
+
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, []);
 
   const submitCorrections = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1530,78 +1594,83 @@ function RecentReviewItem({
         : [],
     ));
     if (corrections.length === 0) return;
-    if (onSupplementReviewMistakes(log.id, corrections) > 0) closeEditor();
+    if (onSupplementReviewMistakes(log.id, corrections) > 0) onBack();
   };
 
   return (
-    <div className={`recent-item ${isEditing ? "editing" : ""}`}>
-      <div className="recent-item-heading"><time dateTime={log.date}>{formatDate(log.date)}</time><b className={`review-mode ${log.practiceMode ?? "legacy"}`}>{modeText}</b></div>
-      <strong className="recent-lesson">{lessonText}</strong>
-      <small>{log.wordIds.length} 项 · {wrongSummary}</small>
-      {canSupplementMistakes ? (
-        <div className="recent-item-actions">
-          <button
-            aria-label={`${isEditing ? "关闭" : "打开"}${modeText}错字补记，${formatDate(log.date)}`}
-            aria-controls={panelId}
-            aria-expanded={isEditing}
-            className="supplement-mistakes-button"
-            ref={toggleButtonRef}
-            type="button"
-            onClick={() => isEditing ? closeEditor() : setIsEditing(true)}
-          >
-            <ClipboardCheck size={15} />{isEditing ? "取消更正" : "补记错字"}
-          </button>
+    <section className={`parent-main review-correction-page practice-mode-${log.practiceMode === "history" ? "history" : "lesson"}`}>
+      <div className="review-correction-hero">
+        <button className="review-correction-back" type="button" onClick={onBack}><ChevronLeft size={19} />返回默写记录</button>
+        <p className="eyebrow">{modeText} · 错字补记</p>
+        <h1 ref={headingRef} tabIndex={-1}>补记这次漏标的错字</h1>
+        <div className="review-correction-meta">
+          <time dateTime={log.date}>{new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(log.date))}</time>
+          <span>{lessonText}</span>
+          <span>共 {correctionItems.length} 题</span>
         </div>
-      ) : null}
-      {isEditing ? (
-        <form className="review-correction-panel" id={panelId} onSubmit={submitCorrections}>
-          <fieldset>
-            <legend>选择这次漏标的错字</legend>
-            <p>“已有错字”会保持锁定；请从“原记正确”中选择漏标项。作答次数和其他字不会变化。</p>
-            {isLegacyRecord ? <p className="legacy-correction-note">这是一条未保存逐字快照的旧记录，题词按当前词库还原；系统只开放能够确认当场计分的字，已有整词错误不会重复累计。请先核对当时题词。</p> : null}
-            <div className="review-correction-items">
-              {correctionItems.map((item, itemIndex) => (
-                <div className="review-correction-item" key={`${item.wordId}-${itemIndex}`}>
-                  <div>
-                    <strong>{item.wordText || "题目信息缺失"}</strong>
-                    <small>{item.lessonText}</small>
-                  </div>
-                  <div className="review-correction-chars" role="group" aria-label={`${item.wordText || "题目信息缺失"}，${item.lessonText}的可订正字`}>
-                    {item.chars.length === 0 ? <span className="unavailable-correction">无法从旧记录确认计分字</span> : item.chars.map(({ canCorrect, char, isUndetailedLegacyWrongWord }, charIndex) => {
-                      const key = charReviewKey(item.wordId, char);
-                      const alreadyWrong = existingWrongKeys.has(key);
-                      const checked = alreadyWrong || selectedKeys.has(key);
-                      return (
-                        <label className={`${alreadyWrong ? "already-recorded" : ""} ${!canCorrect ? "unavailable" : ""}`} key={`${char}-${charIndex}`}>
-                          <input
-                            aria-label={`“${char}”：${alreadyWrong ? "已有错字" : isUndetailedLegacyWrongWord ? "已有整词错误" : !canCorrect ? "无法确认" : "原记正确"}`}
-                            checked={checked}
-                            disabled={alreadyWrong || !canCorrect}
-                            type="checkbox"
-                            onChange={(event) => setSelectedKeys((current) => {
-                              const next = new Set(current);
-                              if (event.target.checked) next.add(key);
-                              else next.delete(key);
-                              return next;
-                            })}
-                          />
-                          <b>{char}</b>
-                          <span>{alreadyWrong ? "已有错字" : isUndetailedLegacyWrongWord ? "已有整词错误" : !canCorrect ? "无法确认" : "原记正确"}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
+      </div>
+
+      <div className="review-correction-guidance">
+        <strong>请对照孩子当时的默写，点选漏标的错字。</strong>
+        <span>橙色“已有错字”不能重复补记；只会修正这次的错字结果，作答次数和其他字不变。</span>
+        {isLegacyRecord ? <span className="legacy-correction-note">旧记录没有保存逐字题目快照，以下题词按当前词库还原；只开放词库目标字。提示字缺少当场计分证据，不能安全补记。请先核对当时的题词。</span> : null}
+      </div>
+
+      <form onSubmit={submitCorrections}>
+        <div className="review-correction-grid">
+          {correctionItems.map((item, itemIndex) => {
+            const isLongText = item.wordText.includes("\n") || Array.from(item.wordText).length > 20;
+            return (
+              <article className={`review-correction-card ${isLongText ? "long-text" : ""}`} key={`${item.wordId}-${itemIndex}`}>
+                <div className="review-correction-card-heading">
+                  <span className="question-number">{String(itemIndex + 1).padStart(2, "0")}</span>
+                  <small>{item.lessonText}</small>
                 </div>
-              ))}
-            </div>
-          </fieldset>
-          <div className="review-correction-actions">
-            <button className="secondary-button" type="button" onClick={closeEditor}><X size={17} />取消</button>
-            <button className="primary-button" disabled={selectedCount === 0} type="submit"><Check size={17} />确认补记 {selectedCount} 处错字</button>
+                <div className="review-correction-prompt">
+                  {item.wordText ? Array.from(item.wordText).map((char, charIndex) => {
+                    const key = charReviewKey(item.wordId, char);
+                    return <span className={existingWrongKeys.has(key) ? "existing" : selectedKeys.has(key) ? "selected" : ""} key={charIndex}>{char}</span>;
+                  }) : "题目信息缺失"}
+                </div>
+                <div className="review-correction-characters" role="group" aria-label={`第 ${itemIndex + 1} 题可补记的字`}>
+                  {item.chars.length === 0 ? <span className="unavailable-correction">无法从旧记录确认计分字</span> : item.chars.map(({ canCorrect, char, isUndetailedLegacyWrongWord }) => {
+                    const key = charReviewKey(item.wordId, char);
+                    const alreadyWrong = existingWrongKeys.has(key);
+                    const selected = selectedKeys.has(key);
+                    const status = alreadyWrong ? "已有错字" : isUndetailedLegacyWrongWord ? "已有整词错误" : !canCorrect ? "无法确认" : selected ? "新补记错字" : "原记正确";
+                    return (
+                      <button
+                        aria-label={`第 ${itemIndex + 1} 题“${char}”：${status}`}
+                        aria-pressed={selected}
+                        className={`review-correction-choice ${alreadyWrong ? "existing" : selected ? "selected" : !canCorrect ? "unavailable" : ""}`}
+                        disabled={alreadyWrong || !canCorrect}
+                        key={char}
+                        type="button"
+                        onClick={() => setSelectedKeys((current) => {
+                          const next = new Set(current);
+                          if (next.has(key)) next.delete(key);
+                          else next.add(key);
+                          return next;
+                        })}
+                      >
+                        <b>{char}</b><span>{status}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+        <div className="review-correction-footer">
+          <div><strong>已选 {selectedKeys.size} 处漏标错字</strong><span>确认后写入原默写记录</span></div>
+          <div className="action-buttons">
+            <button className="secondary-button" type="button" onClick={onBack}>取消</button>
+            <button className="primary-button" disabled={selectedKeys.size === 0} type="submit"><Check size={17} />确认补记 {selectedKeys.size} 处错字</button>
           </div>
-        </form>
-      ) : null}
-    </div>
+        </div>
+      </form>
+    </section>
   );
 }
 
