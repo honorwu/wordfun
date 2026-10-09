@@ -212,8 +212,11 @@ function App() {
   const allKnownWords = useMemo(
     () => {
       const catalogWords = allLessons.flatMap((lesson) => [...lesson.words, ...(lesson.textbookWords ?? [])]);
+      const poetryWords = allLessons
+        .filter((lesson) => lesson.lessonKind === "classical_poetry")
+        .flatMap((lesson) => generatePoetryPractice(lesson).map((item) => item.word));
       const resolvedDictationWords = getEligibleWords(allLessons, state.progress, companionWords);
-      return new Map([...catalogWords, ...resolvedDictationWords].map((word) => [word.id, word]));
+      return new Map([...catalogWords, ...poetryWords, ...resolvedDictationWords].map((word) => [word.id, word]));
     },
     [allLessons, companionWords, state.progress],
   );
@@ -319,7 +322,7 @@ function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const supplementHistoryMistakes = (logId: string, corrections: MissedWrongCharCorrection[]) => {
+  const supplementReviewMistakes = (logId: string, corrections: MissedWrongCharCorrection[]) => {
     const previousLog = state.logs.find((log) => log.id === logId);
     const nextState = addMissedWrongChars(state, logId, corrections, allKnownWords);
     const nextLog = nextState.logs.find((log) => log.id === logId);
@@ -331,13 +334,13 @@ function App() {
         .filter((key) => requestedKeys.has(key) && !previousKeys.has(key)),
     );
     if (appliedKeys.size === 0) {
-      setSavedMessage("这次更正没有写入，请刷新后重试");
+      setSavedMessage("没有可写入的更正，请重新打开记录核对");
       window.setTimeout(() => setSavedMessage(""), 2200);
       return 0;
     }
     setState(nextState);
     setSavedMessage(appliedKeys.size === requestedKeys.size
-      ? `已在原历史记录中补记 ${appliedKeys.size} 处错字`
+      ? `已在原默写记录中补记 ${appliedKeys.size} 处错字`
       : `已补记 ${appliedKeys.size} 处，另有 ${requestedKeys.size - appliedKeys.size} 处未写入，请刷新核对`);
     window.setTimeout(() => setSavedMessage(""), 2200);
     return appliedKeys.size;
@@ -390,7 +393,7 @@ function App() {
       ) : (
         <ParentView
           lessons={allLessons}
-          onSupplementHistoryMistakes={supplementHistoryMistakes}
+          onSupplementReviewMistakes={supplementReviewMistakes}
           selectedLesson={selectedLesson}
           state={state}
           wordById={allKnownWords}
@@ -1159,13 +1162,13 @@ function DictationCard({
 
 function ParentView({
   lessons,
-  onSupplementHistoryMistakes,
+  onSupplementReviewMistakes,
   selectedLesson,
   state,
   wordById,
 }: {
   lessons: Lesson[];
-  onSupplementHistoryMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => number;
+  onSupplementReviewMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => number;
   selectedLesson: Lesson;
   state: AppState;
   wordById: Map<string, DictationWord>;
@@ -1310,13 +1313,18 @@ function ParentView({
                 key={log.id}
                 lessons={lessons}
                 log={log}
-                onSupplementHistoryMistakes={onSupplementHistoryMistakes}
+                onSupplementReviewMistakes={onSupplementReviewMistakes}
                 state={state}
                 wordById={wordById}
               />
             ))}
             {state.logs.length > 6 ? (
-              <button className="show-more-logs" type="button" onClick={() => setShowAllLogs((current) => !current)}>
+              <button
+                aria-expanded={showAllLogs}
+                className="show-more-logs"
+                type="button"
+                onClick={() => setShowAllLogs((current) => !current)}
+              >
                 {showAllLogs ? "收起较早记录" : `查看全部 ${state.logs.length} 条记录`}
               </button>
             ) : null}
@@ -1441,17 +1449,18 @@ function ParentView({
 function RecentReviewItem({
   lessons,
   log,
-  onSupplementHistoryMistakes,
+  onSupplementReviewMistakes,
   state,
   wordById,
 }: {
   lessons: Lesson[];
   log: ReviewLog;
-  onSupplementHistoryMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => number;
+  onSupplementReviewMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => number;
   state: AppState;
   wordById: Map<string, DictationWord>;
 }) {
   const panelId = useId();
+  const toggleButtonRef = useRef<HTMLButtonElement>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const isLegacyRecord = !log.reviewedItems || log.reviewedItems.length === 0;
@@ -1472,7 +1481,6 @@ function RecentReviewItem({
       char,
       canCorrect: !isUndetailedLegacyWrongWord
         && Boolean(snapshot || word?.chars.includes(char) || state.charStats[char]?.lastReviewedAt === log.date),
-      isTarget: Boolean(word?.chars.includes(char)),
       isUndetailedLegacyWrongWord,
     }));
     const sourceLesson = word ? lessons.find((lesson) => lesson.id === word.lessonId) : undefined;
@@ -1505,11 +1513,13 @@ function RecentReviewItem({
           : "",
       ].filter(Boolean).join("；");
   const modeText = log.practiceMode === "lesson" ? "当课复习" : log.practiceMode === "history" ? "历史复习" : "旧记录";
+  const canSupplementMistakes = log.practiceMode === "lesson" || log.practiceMode === "history";
   const selectedCount = selectedKeys.size;
 
   const closeEditor = () => {
     setIsEditing(false);
     setSelectedKeys(new Set());
+    window.requestAnimationFrame(() => toggleButtonRef.current?.focus());
   };
 
   const submitCorrections = (event: React.FormEvent<HTMLFormElement>) => {
@@ -1520,20 +1530,22 @@ function RecentReviewItem({
         : [],
     ));
     if (corrections.length === 0) return;
-    if (onSupplementHistoryMistakes(log.id, corrections) > 0) closeEditor();
+    if (onSupplementReviewMistakes(log.id, corrections) > 0) closeEditor();
   };
 
   return (
     <div className={`recent-item ${isEditing ? "editing" : ""}`}>
-      <div className="recent-item-heading"><span>{formatDate(log.date)}</span><b className={`review-mode ${log.practiceMode ?? "legacy"}`}>{modeText}</b></div>
+      <div className="recent-item-heading"><time dateTime={log.date}>{formatDate(log.date)}</time><b className={`review-mode ${log.practiceMode ?? "legacy"}`}>{modeText}</b></div>
       <strong className="recent-lesson">{lessonText}</strong>
       <small>{log.wordIds.length} 项 · {wrongSummary}</small>
-      {log.practiceMode === "history" ? (
+      {canSupplementMistakes ? (
         <div className="recent-item-actions">
           <button
+            aria-label={`${isEditing ? "关闭" : "打开"}${modeText}错字补记，${formatDate(log.date)}`}
             aria-controls={panelId}
             aria-expanded={isEditing}
             className="supplement-mistakes-button"
+            ref={toggleButtonRef}
             type="button"
             onClick={() => isEditing ? closeEditor() : setIsEditing(true)}
           >
@@ -1542,26 +1554,27 @@ function RecentReviewItem({
         </div>
       ) : null}
       {isEditing ? (
-        <form className="history-correction-panel" id={panelId} onSubmit={submitCorrections}>
+        <form className="review-correction-panel" id={panelId} onSubmit={submitCorrections}>
           <fieldset>
             <legend>选择这次漏标的错字</legend>
-            <p>只把原来误记为正确的字改成错误；本次作答次数和其他字不会变化。</p>
-            {isLegacyRecord ? <p className="legacy-correction-note">这是一条旧记录，题词按当前词库还原：原来判为全对的目标字可直接补记；旧版已整词计错的题不会重复累计。请先核对当时题词。</p> : null}
-            <div className="history-correction-items">
+            <p>“已有错字”会保持锁定；请从“原记正确”中选择漏标项。作答次数和其他字不会变化。</p>
+            {isLegacyRecord ? <p className="legacy-correction-note">这是一条未保存逐字快照的旧记录，题词按当前词库还原；系统只开放能够确认当场计分的字，已有整词错误不会重复累计。请先核对当时题词。</p> : null}
+            <div className="review-correction-items">
               {correctionItems.map((item, itemIndex) => (
-                <div className="history-correction-item" key={`${item.wordId}-${itemIndex}`}>
+                <div className="review-correction-item" key={`${item.wordId}-${itemIndex}`}>
                   <div>
                     <strong>{item.wordText || "题目信息缺失"}</strong>
                     <small>{item.lessonText}</small>
                   </div>
-                  <div className="history-correction-chars">
-                    {item.chars.length === 0 ? <span className="unavailable-correction">无法从旧记录确认计分字</span> : item.chars.map(({ canCorrect, char, isTarget, isUndetailedLegacyWrongWord }, charIndex) => {
+                  <div className="review-correction-chars" role="group" aria-label={`${item.wordText || "题目信息缺失"}，${item.lessonText}的可订正字`}>
+                    {item.chars.length === 0 ? <span className="unavailable-correction">无法从旧记录确认计分字</span> : item.chars.map(({ canCorrect, char, isUndetailedLegacyWrongWord }, charIndex) => {
                       const key = charReviewKey(item.wordId, char);
                       const alreadyWrong = existingWrongKeys.has(key);
                       const checked = alreadyWrong || selectedKeys.has(key);
                       return (
                         <label className={`${alreadyWrong ? "already-recorded" : ""} ${!canCorrect ? "unavailable" : ""}`} key={`${char}-${charIndex}`}>
                           <input
+                            aria-label={`“${char}”：${alreadyWrong ? "已有错字" : isUndetailedLegacyWrongWord ? "已有整词错误" : !canCorrect ? "无法确认" : "原记正确"}`}
                             checked={checked}
                             disabled={alreadyWrong || !canCorrect}
                             type="checkbox"
@@ -1573,7 +1586,7 @@ function RecentReviewItem({
                             })}
                           />
                           <b>{char}</b>
-                          <span>{alreadyWrong ? "已记录" : isUndetailedLegacyWrongWord ? "旧版已整词计错" : !canCorrect ? "无法确认" : isTarget ? "目标字" : "计分字"}</span>
+                          <span>{alreadyWrong ? "已有错字" : isUndetailedLegacyWrongWord ? "已有整词错误" : !canCorrect ? "无法确认" : "原记正确"}</span>
                         </label>
                       );
                     })}
@@ -1582,7 +1595,7 @@ function RecentReviewItem({
               ))}
             </div>
           </fieldset>
-          <div className="history-correction-actions">
+          <div className="review-correction-actions">
             <button className="secondary-button" type="button" onClick={closeEditor}><X size={17} />取消</button>
             <button className="primary-button" disabled={selectedCount === 0} type="submit"><Check size={17} />确认补记 {selectedCount} 处错字</button>
           </div>

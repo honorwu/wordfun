@@ -1564,7 +1564,7 @@ select:focus-visible {
   gap: 10px;
 }
 
-.recent-item-heading > span {
+.recent-item-heading > time {
   color: var(--muted);
   font-size: 11px;
 }
@@ -1604,7 +1604,7 @@ select:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 36px;
+  min-height: 44px;
   padding: 7px 11px;
   border: 1px solid #d7cfea;
   border-radius: 10px;
@@ -1626,7 +1626,7 @@ select:focus-visible {
   margin-top: 5px;
 }
 
-.history-correction-panel {
+.review-correction-panel {
   display: grid;
   gap: 12px;
   margin-top: 8px;
@@ -1636,35 +1636,35 @@ select:focus-visible {
   background: var(--purple-soft);
 }
 
-.history-correction-panel fieldset {
+.review-correction-panel fieldset {
   min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
 }
 
-.history-correction-panel legend {
+.review-correction-panel legend {
   padding: 0;
   color: var(--ink);
   font-size: 13px;
   font-weight: 800;
 }
 
-.history-correction-panel fieldset > p {
+.review-correction-panel fieldset > p {
   margin: 6px 0 0;
   color: var(--muted);
   font-size: 10px;
   line-height: 1.55;
 }
 
-.history-correction-panel .legacy-correction-note {
+.review-correction-panel .legacy-correction-note {
   padding: 8px 10px;
   border-radius: 9px;
   color: #81522f;
   background: #fff4e8;
 }
 
-.history-correction-items {
+.review-correction-items {
   display: grid;
   gap: 8px;
   max-height: 420px;
@@ -1672,7 +1672,7 @@ select:focus-visible {
   overflow: auto;
 }
 
-.history-correction-item {
+.review-correction-item {
   display: grid;
   gap: 8px;
   padding: 10px;
@@ -1681,28 +1681,31 @@ select:focus-visible {
   background: #fff;
 }
 
-.history-correction-item > div:first-child {
+.review-correction-item > div:first-child {
   display: grid;
   gap: 2px;
 }
 
-.history-correction-item > div:first-child > strong {
+.review-correction-item > div:first-child > strong {
   font-size: 15px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
-.history-correction-item > div:first-child > small {
+.review-correction-item > div:first-child > small {
   color: var(--muted);
   font-size: 9px;
   line-height: 1.4;
 }
 
-.history-correction-chars {
+.review-correction-chars {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
 }
 
-.history-correction-chars label {
+.review-correction-chars label {
   position: relative;
   display: grid;
   min-width: 58px;
@@ -1715,47 +1718,47 @@ select:focus-visible {
   cursor: pointer;
 }
 
-.history-correction-chars input {
+.review-correction-chars input {
   position: absolute;
   width: 1px;
   height: 1px;
   opacity: 0;
 }
 
-.history-correction-chars label:has(input:checked) {
+.review-correction-chars label:has(input:checked) {
   border-color: #d36a45;
   color: #ad4828;
   background: #fff0e8;
 }
 
-.history-correction-chars label:has(input:focus-visible) {
+.review-correction-chars label:has(input:focus-visible) {
   outline: 3px solid rgba(112, 80, 190, 0.24);
   outline-offset: 2px;
 }
 
-.history-correction-chars label.already-recorded,
-.history-correction-chars label.unavailable {
+.review-correction-chars label.already-recorded,
+.review-correction-chars label.unavailable {
   cursor: not-allowed;
 }
 
-.history-correction-chars label.already-recorded {
+.review-correction-chars label.already-recorded {
   border-color: #e2c1b3;
   background: #fff5ef;
 }
 
-.history-correction-chars label.unavailable {
+.review-correction-chars label.unavailable {
   color: #99949e;
   background: #f2f0ec;
 }
 
-.history-correction-chars b {
+.review-correction-chars b {
   font-family: "STKaiti", "KaiTi", serif;
   font-size: 24px;
   line-height: 1;
 }
 
-.history-correction-chars span {
-  font-size: 8px;
+.review-correction-chars span {
+  font-size: 10px;
   font-weight: 700;
 }
 
@@ -1764,20 +1767,20 @@ select:focus-visible {
   font-size: 10px;
 }
 
-.history-correction-actions {
+.review-correction-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
 }
 
-.history-correction-actions .primary-button,
-.history-correction-actions .secondary-button {
-  min-height: 38px;
+.review-correction-actions .primary-button,
+.review-correction-actions .secondary-button {
+  min-height: 44px;
   padding: 0 12px;
   font-size: 11px;
 }
 
-.history-correction-actions .primary-button:disabled {
+.review-correction-actions .primary-button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -2282,12 +2285,12 @@ select:focus-visible {
     gap: 4px;
   }
 
-  .history-correction-actions {
+  .review-correction-actions {
     align-items: stretch;
     flex-direction: column-reverse;
   }
 
-  .history-correction-actions button {
+  .review-correction-actions button {
     width: 100%;
   }
 
@@ -2439,7 +2442,7 @@ select:focus-visible {
   .print-report-button,
   .recent-item-actions,
   .show-more-logs,
-  .history-correction-panel {
+  .review-correction-panel {
     display: none !important;
   }
 

@@ -692,7 +692,7 @@ export const addMissedWrongChars = (
   wordById: ReadonlyMap<string, DictationWord>,
 ): AppState => {
   const targetLog = state.logs.find((log) => log.id === logId);
-  if (!targetLog || targetLog.practiceMode !== "history") return state;
+  if (!targetLog || (targetLog.practiceMode !== "lesson" && targetLog.practiceMode !== "history")) return state;
 
   const hasReviewSnapshot = Boolean(targetLog.reviewedItems && targetLog.reviewedItems.length > 0);
   const loggedWordIds = new Set(targetLog.wordIds);
@@ -745,6 +745,7 @@ export const addMissedWrongChars = (
     const wordStat = state.wordStats[correction.wordId];
     const charStat = state.charStats[correction.char];
     if (!wordStat || !charStat) return false;
+    if (previouslyWrongWords.has(correction.wordId) && wordStat.mistakes === 0) return false;
     if (!previouslyWrongWords.has(correction.wordId) && wordStat.mistakes >= wordStat.attempts) return false;
     if (previouslyWrongChars.has(correction.char) && charStat.mistakes === 0) return false;
     if (!previouslyWrongChars.has(correction.char) && charStat.mistakes >= charStat.attempts) return false;
