@@ -31,9 +31,26 @@ export const getEligibleLessons = (lessons: Lesson[], progress: Progress) => {
   return lessons.filter((lesson) => lessonOrder(lesson) <= selectedOrder);
 };
 
+// 旧默写记录使用单字题目的 ID；保留原组词映射以还原这些记录。
+export const getEligibleCharacterWords = (lessons: Lesson[], progress: Progress, companionWords: CompanionDictionary = {}) => {
+  const words = getEligibleLessons(lessons, progress).flatMap((lesson) => lesson.words);
+
+  return withDictationCompanions(words, lessons, companionWords);
+};
+
 export const getEligibleWords = (lessons: Lesson[], progress: Progress, companionWords: CompanionDictionary = {}) => {
-  const lessonIds = new Set(getEligibleLessons(lessons, progress).map((lesson) => lesson.id));
-  const words = lessons.flatMap((lesson) => lesson.words).filter((word) => lessonIds.has(word.lessonId));
+  const words = getEligibleLessons(lessons, progress).flatMap((lesson) => {
+    const textbookWords = (lesson.textbookWords ?? []).map((word) => ({
+      ...word,
+      chars: fullDictationCharsForWord(word),
+    }));
+    const coveredChars = new Set(textbookWords.flatMap((word) => word.chars));
+    const uncoveredWords = lesson.words.flatMap((word) => {
+      const chars = reviewCharsForWord(word).filter((char) => !coveredChars.has(char));
+      return chars.length > 0 ? [{ ...word, chars }] : [];
+    });
+    return [...textbookWords, ...uncoveredWords];
+  });
 
   return withDictationCompanions(words, lessons, companionWords);
 };
@@ -130,12 +147,13 @@ const mergeSameCompanionWords = (words: DictationWord[]) => {
 
 const withDictationCompanions = (words: DictationWord[], lessons: Lesson[], companionWords: CompanionDictionary) => {
   const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+  const textbookWordIds = new Set(lessons.flatMap((lesson) => (lesson.textbookWords ?? []).map((word) => word.id)));
   const eligibleChars = new Set(words.flatMap((word) => word.chars));
   const candidatesByChar = buildCompanionCandidates(words, lessonById);
 
   const companionPrompts = words.map((word) => {
     const chars = hanChars(word.text);
-    if (chars.length !== 1) {
+    if (chars.length !== 1 || textbookWordIds.has(word.id)) {
       return word;
     }
 
@@ -435,15 +453,21 @@ export const generateCurrentLessonPractice = (lessons: Lesson[], state: AppState
   if (!selectedLesson) {
     return [];
   }
+  const textbookWordIds = new Set((selectedLesson.textbookWords ?? []).map((word) => word.id));
 
   return getEligibleWords(lessons, state.progress, companionWords)
     .filter((word) => word.lessonId === selectedLesson.id)
     .map((word, index) => ({
       word,
       score: 1000 - index,
-      reasons: [isDirectDictationLesson(selectedLesson) ? "课文直接默写" : "本课词语"],
+      reasons: [textbookWordIds.has(word.id) ? "词语表" : isDirectDictationLesson(selectedLesson) ? "课文直接默写" : "补充生字"],
     }))
     .sort((left, right) => {
+      const leftTextbook = textbookWordIds.has(left.word.id);
+      const rightTextbook = textbookWordIds.has(right.word.id);
+      if (leftTextbook || rightTextbook) {
+        return Number(rightTextbook) - Number(leftTextbook) || right.score - left.score;
+      }
       const leftCovered = reviewCharsForWord(left.word).every((char) => isMasteredChar(state.charStats[char]));
       const rightCovered = reviewCharsForWord(right.word).every((char) => isMasteredChar(state.charStats[char]));
       return Number(leftCovered) - Number(rightCovered) || right.score - left.score;
@@ -481,16 +505,18 @@ export const generateTermReviewPractice = (lessons: Lesson[], state: AppState): 
     };
   });
 
-export const getScreeningTargetChars = (lessons: Lesson[], progress: Progress) => {
+export const getScreeningTargetChars = (lessons: Lesson[], progress: Progress, companionWords: CompanionDictionary = {}) => {
   const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
   const selectedLesson = lessonById.get(progress.lessonId);
   const selectedOrder = progressOrder(progress, lessons);
   const pastLessonIds = new Set(
-    lessons.filter((lesson) => lessonOrder(lesson) < selectedOrder && lesson.id !== selectedLesson?.id).map((lesson) => lesson.id),
+    lessons.filter((lesson) => lessonOrder(lesson) < selectedOrder && lesson.id !== selectedLesson?.id && lesson.lessonKind !== "classical_poetry").map((lesson) => lesson.id),
   );
 
   return uniqueChars(
-    lessons.flatMap((lesson) => (pastLessonIds.has(lesson.id) ? lesson.words.flatMap((word) => word.chars) : [])).filter(Boolean),
+    getEligibleWords(lessons, progress, companionWords)
+      .filter((word) => pastLessonIds.has(word.lessonId))
+      .flatMap((word) => reviewCharsForWord(word)),
   );
 };
 

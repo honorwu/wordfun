@@ -24,7 +24,9 @@ import {
   fullDictationCharsForWord,
   generateCurrentLessonPractice,
   generateScreeningPractice,
+  getEligibleCharacterWords,
   getEligibleWords,
+  getScreeningTargetChars,
   isHistoryCharCoolingDown,
   isMasteredChar,
   isPendingScreeningMistakeChar,
@@ -214,19 +216,15 @@ function App() {
         .filter((lesson) => lesson.lessonKind === "classical_poetry")
         .flatMap((lesson) => generatePoetryPractice(lesson).map((item) => item.word));
       const resolvedDictationWords = getEligibleWords(allLessons, state.progress, companionWords);
-      return new Map([...catalogWords, ...poetryWords, ...resolvedDictationWords].map((word) => [word.id, word]));
+      const characterDictationWords = getEligibleCharacterWords(allLessons, state.progress, companionWords);
+      return new Map([...catalogWords, ...poetryWords, ...characterDictationWords, ...resolvedDictationWords].map((word) => [word.id, word]));
     },
     [allLessons, companionWords, state.progress],
   );
 
   const stats = useMemo(() => {
     if (!selectedLesson) return { historyTotal: 0, historyReviewed: 0, pendingMistakes: 0, waitingReview: 0, todayCount: 0 };
-    const selectedOrder = lessonOrder(selectedLesson);
-    const historyWords = allLessons
-      .filter((lesson) => lessonOrder(lesson) < selectedOrder && lesson.lessonKind !== "classical_poetry")
-      .flatMap((lesson) => lesson.words);
-    const uniqueHistoryWords = [...new Map(historyWords.map((word) => [word.id, word])).values()];
-    const historyChars = Array.from(new Set(uniqueHistoryWords.flatMap((word) => reviewCharsForWord(word))));
+    const historyChars = getScreeningTargetChars(allLessons, state.progress, companionWords);
     const reviewed = historyChars.filter((char) => {
       return isMasteredChar(state.charStats[char]);
     }).length;
@@ -239,7 +237,7 @@ function App() {
       .filter((log) => new Date(log.date).toDateString() === today)
       .reduce((sum, log) => sum + log.wordIds.length, 0);
     return { historyTotal: historyChars.length, historyReviewed: reviewed, pendingMistakes, waitingReview, todayCount };
-  }, [allLessons, selectedLesson, state.charStats, state.logs]);
+  }, [allLessons, companionWords, selectedLesson, state.progress, state.charStats, state.logs]);
 
   const resetPractice = (nextMode = practiceMode) => {
     setPracticeMode(nextMode);
