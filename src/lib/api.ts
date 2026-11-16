@@ -1,12 +1,11 @@
-import type { AppState, CompanionDictionary, Lesson, Progress } from "../types";
+import type { AppState, DictationWord, LessonSummary, PracticeData, Progress, ReviewActivity, ReviewLog } from "../types";
 import { normalizeState } from "./storage";
 
 export interface AppData {
-  lessons: Lesson[];
-  companionWords: CompanionDictionary;
+  lessons: LessonSummary[];
   state: AppState;
-  builtInLessonCount: number;
-  builtInWordCount: number;
+  activity: ReviewActivity[];
+  practice: PracticeData;
 }
 
 const requestJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
@@ -28,7 +27,7 @@ const requestJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
   return (await response.json()) as T;
 };
 
-const fallbackProgress = (lessons: Lesson[]): Progress => {
+const fallbackProgress = (lessons: LessonSummary[]): Progress => {
   const lesson = lessons.find((item) => item.grade === 3) ?? lessons[0];
   return {
     grade: lesson?.grade ?? 3,
@@ -36,17 +35,29 @@ const fallbackProgress = (lessons: Lesson[]): Progress => {
   };
 };
 
-export const fetchAppData = async (): Promise<AppData> => {
-  const data = await requestJson<Omit<AppData, "state"> & { state: Partial<AppState> }>("/api/app-data");
-  return {
-    ...data,
-    state: normalizeState(data.state, fallbackProgress(data.lessons)),
-  };
+let appDataRequest: Promise<AppData> | undefined;
+
+export const fetchAppData = (): Promise<AppData> => {
+  // 合并开发模式 StrictMode 同时发起的启动请求；完成后不缓存学习状态。
+  appDataRequest ??= requestJson<Omit<AppData, "state"> & { state: Partial<AppState> }>("/api/app-data")
+    .then((data) => ({ ...data, state: normalizeState(data.state, fallbackProgress(data.lessons)) }))
+    .finally(() => { appDataRequest = undefined; });
+  return appDataRequest;
 };
+
+export const fetchPractice = (progress: Progress, charStats: AppState["charStats"], mode: PracticeData["mode"], signal: AbortSignal) =>
+  requestJson<PracticeData>("/api/practice", { method: "POST", body: JSON.stringify({ progress, charStats, mode }), signal });
+
+export const fetchParentData = (state: AppState, signal: AbortSignal) =>
+  requestJson<{ logs: ReviewLog[]; words: DictationWord[] }>("/api/parent-data", {
+    method: "POST",
+    body: JSON.stringify({ progress: state.progress, wordIds: state.logs.flatMap((log) => log.wordIds) }),
+    signal,
+  });
 
 export const saveRemoteState = async (state: AppState) => {
   await requestJson<{ ok: true }>("/api/state", {
     method: "PUT",
-    body: JSON.stringify(state),
+    body: JSON.stringify({ ...state, mergeLogs: true }),
   });
 };

@@ -561,7 +561,7 @@ export const getCompanionWords = (catalogDb) => {
   return companions;
 };
 
-export const getState = (learningDb, catalogDb, studentId = defaultStudentId) => {
+export const getState = (learningDb, catalogDb, studentId = defaultStudentId, { includeLogs = true } = {}) => {
   ensureDefaultStudent(learningDb, catalogDb, studentId);
   const progress = oneRow(learningDb, "SELECT grade, lesson_id FROM progress WHERE student_id = ?", studentId) || defaultProgress(catalogDb);
   const wordStats = {};
@@ -603,7 +603,7 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
       stat.wrongWordTexts.push(row.word_text);
     }
   }
-  const logRows = allRows(learningDb, "SELECT id, date, practice_mode FROM review_logs WHERE student_id = ? ORDER BY date DESC LIMIT 120", studentId);
+  const logRows = includeLogs ? allRows(learningDb, "SELECT id, date, practice_mode FROM review_logs WHERE student_id = ? ORDER BY date DESC LIMIT 120", studentId) : [];
   const wordsByLog = new Map();
   const wrongCharsByLog = new Map();
   const reviewedCharsByLog = new Map();
@@ -642,14 +642,14 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
       lessonsByLog.set(item.log_id, [...(lessonsByLog.get(item.log_id) || []), { id: item.lesson_id, title: item.lesson_title }]);
     }
   }
-  const catalogLessons = allRows(catalogDb, "SELECT id, title FROM lessons ORDER BY LENGTH(id) DESC");
+  const catalogLessons = logRows.length ? allRows(catalogDb, "SELECT id, title FROM lessons ORDER BY LENGTH(id) DESC") : [];
   const poetryLessons = new Map(
-    allRows(
+    (logRows.length ? allRows(
       catalogDb,
       `SELECT 'poem-' || ct.id AS word_id, l.id AS lesson_id, l.title
        FROM classical_texts ct
        JOIN lessons l ON l.id = ct.lesson_id`,
-    ).map((row) => [row.word_id, { id: row.lesson_id, title: row.title }]),
+    ) : []).map((row) => [row.word_id, { id: row.lesson_id, title: row.title }]),
   );
   const inferLessons = (items) => {
     const inferred = new Map();
@@ -700,6 +700,16 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
     })),
   };
 };
+
+// 首页只需要打卡数量，不读取逐题、逐字的历史记录。
+export const getReviewActivity = (learningDb, studentId = defaultStudentId) => allRows(
+  learningDb,
+  `SELECT rl.id, rl.date, COUNT(rw.word_id) AS count
+   FROM (SELECT id, date FROM review_logs WHERE student_id = ? ORDER BY date DESC LIMIT 120) rl
+   LEFT JOIN review_log_words rw ON rw.log_id = rl.id
+   GROUP BY rl.id ORDER BY rl.date DESC`,
+  studentId,
+);
 
 export const saveState = (learningDb, state, studentId = defaultStudentId) => {
   runTransaction(learningDb, () => {

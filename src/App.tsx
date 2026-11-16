@@ -17,18 +17,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WordIssueControls, WordIssuesPanel } from "./components/WordIssues";
 import { gradeNames } from "./data/metadata";
-import { fetchAppData, saveRemoteState } from "./lib/api";
+import { fetchAppData, fetchParentData, fetchPractice, saveRemoteState } from "./lib/api";
 import {
   addMissedWrongChars,
   applyReviewResult,
   charReviewKey,
   fullDictationCharsForWord,
-  generateCurrentLessonPractice,
-  generateScreeningPractice,
-  getEligibleCharacterWords,
-  getEligibleWords,
-  getScreeningTargetChars,
-  isHistoryCharCoolingDown,
   isMasteredChar,
   isPendingScreeningMistakeChar,
   lessonOrder,
@@ -37,9 +31,8 @@ import {
 import type { MissedWrongCharCorrection } from "./lib/scheduler";
 import { createDefaultState } from "./lib/storage";
 import { findWordIssue, toggleWordIssue } from "./lib/wordIssues";
-import type { AppState, ClassicalText, CompanionDictionary, DictationWord, Grade, Lesson, PracticeItem, ReviewLog, WordIssue, WordIssueKind } from "./types";
+import type { AppState, ClassicalText, DictationWord, Grade, LessonSummary, PracticeData, PracticeItem, PracticeLesson, ReviewActivity, ReviewLog, WordIssue, WordIssueKind } from "./types";
 
-const historyBatchSize = 20;
 const secondPlaybackDelaySeconds = 10;
 
 type ViewMode = "student" | "parent";
@@ -54,12 +47,12 @@ const idleSpeechPlayback: SpeechPlayback = { index: null, stage: "idle", countdo
 
 const termLabel = (term: number) => (term === 2 ? "下册" : "上册");
 
-const lessonNumberLabel = (lesson: Lesson, title = lesson.title) => {
+const lessonNumberLabel = (lesson: LessonSummary, title = lesson.title) => {
   if (lesson.title.startsWith("语文园地")) return title;
   return Number.isInteger(lesson.number) ? `第${lesson.number}课·${title}` : title;
 };
 
-const lessonLabel = (lesson: Lesson, title = lesson.title) => `${gradeNames[lesson.grade]}${termLabel(lesson.unit)} · ${lessonNumberLabel(lesson, title)}`;
+const lessonLabel = (lesson: LessonSummary, title = lesson.title) => `${gradeNames[lesson.grade]}${termLabel(lesson.unit)} · ${lessonNumberLabel(lesson, title)}`;
 
 type TitleMaskWord = Pick<DictationWord, "text" | "pinyin">;
 
@@ -126,36 +119,21 @@ const formatDate = (date: string) =>
 const localDateKey = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
-const availableGrades = (lessons: Lesson[]) =>
+const availableGrades = (lessons: LessonSummary[]) =>
   Array.from(new Set(lessons.map((lesson) => lesson.grade))).sort((a, b) => a - b) as Grade[];
-
-const generatePoetryPractice = (lesson: Lesson): PracticeItem[] =>
-  (lesson.classicalTexts ?? []).map((poem, index) => {
-    const bodyText = poem.lines.map((line) => line.text).join("\n");
-    const bodyPinyin = poem.lines.map((line) => line.pinyin).join("\n");
-    const text = [poem.title, poem.dynasty, poem.author, bodyText].filter(Boolean).join("\n");
-    const pinyin = [poem.titlePinyin, bodyPinyin].filter(Boolean).join("\n");
-    const chars = Array.from(new Set(Array.from(text).filter((char) => /\p{Script=Han}/u.test(char))));
-    return {
-      word: {
-        id: `poem-${poem.id}`,
-        text,
-        pinyin,
-        chars,
-        grade: lesson.grade,
-        lessonId: lesson.id,
-        lessonTitle: poem.title,
-        category: "一类",
-      },
-      score: 1000 - index,
-      reasons: ["古诗全文默写"],
-    };
-  });
 
 function App() {
   const [state, setState] = useState<AppState>(() => createDefaultState());
-  const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [companionWords, setCompanionWords] = useState<CompanionDictionary>({});
+  const [lessons, setLessons] = useState<LessonSummary[]>([]);
+  const [practiceData, setPracticeData] = useState<PracticeData | null>(null);
+  const [reviewActivity, setReviewActivity] = useState<ReviewActivity[]>([]);
+  const [isPracticeLoading, setIsPracticeLoading] = useState(false);
+  const [practiceError, setPracticeError] = useState("");
+  const [parentReady, setParentReady] = useState(false);
+  const [parentError, setParentError] = useState("");
+  const [parentWords, setParentWords] = useState<DictationWord[]>([]);
+  const [historicalLogs, setHistoricalLogs] = useState<ReviewLog[]>([]);
+  const [retryCount, setRetryCount] = useState(0);
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("student");
@@ -167,6 +145,10 @@ function App() {
   const [savedMessage, setSavedMessage] = useState("");
   const [lastResult, setLastResult] = useState({ total: 0, wrong: 0 });
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const savedStateRef = useRef<AppState | null>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const practiceSourceRef = useRef<{ progress: AppState["progress"]; charStats: AppState["charStats"]; mode: PracticeMode } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -174,7 +156,10 @@ function App() {
       .then((data) => {
         if (!active) return;
         setLessons(data.lessons);
-        setCompanionWords(data.companionWords);
+        setPracticeData(data.practice);
+        setReviewActivity(data.activity);
+        savedStateRef.current = data.state;
+        practiceSourceRef.current = { progress: data.state.progress, charStats: data.state.charStats, mode: "lesson" };
         setState(data.state);
         setIsReady(true);
       })
@@ -187,11 +172,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!isReady) return;
+    if (!isReady || state === savedStateRef.current) return;
     const timeout = window.setTimeout(() => {
       saveQueueRef.current = saveQueueRef.current
         .catch(() => undefined)
         .then(() => saveRemoteState(state))
+        .then(() => { savedStateRef.current = state; })
         .catch((error: unknown) => {
           setSavedMessage(error instanceof Error ? `保存失败：${error.message}` : "保存失败");
         });
@@ -199,47 +185,71 @@ function App() {
     return () => window.clearTimeout(timeout);
   }, [isReady, state]);
 
-  const allLessons = useMemo(() => [...lessons].sort((a, b) => lessonOrder(a) - lessonOrder(b)), [lessons]);
-  const selectedLesson = allLessons.find((lesson) => lesson.id === state.progress.lessonId) ?? allLessons[0];
-
-  const practiceItems = useMemo(() => {
-    if (!selectedLesson) return [];
-    if (practiceMode === "lesson") {
-      if (selectedLesson.lessonKind === "classical_poetry") return generatePoetryPractice(selectedLesson);
-      return generateCurrentLessonPractice(allLessons, state, companionWords);
+  useEffect(() => {
+    if (!isReady) return;
+    const source = practiceSourceRef.current;
+    if (source?.progress === state.progress && source.charStats === state.charStats && source.mode === practiceMode) {
+      setIsPracticeLoading(false);
+      setPracticeError("");
+      return;
     }
-    return generateScreeningPractice(allLessons, state, historyBatchSize, companionWords, 0);
-  }, [allLessons, companionWords, practiceMode, selectedLesson, state]);
+    const controller = new AbortController();
+    setIsPracticeLoading(true);
+    setPracticeError("");
+    fetchPractice(state.progress, state.charStats, practiceMode, controller.signal)
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        practiceSourceRef.current = { progress: state.progress, charStats: state.charStats, mode: practiceMode };
+        setPracticeData(data);
+        setIsPracticeLoading(false);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setPracticeError(error instanceof Error ? error.message : "题目加载失败");
+        setIsPracticeLoading(false);
+      });
+    return () => controller.abort();
+  }, [isReady, state.progress, state.charStats, practiceMode, retryCount]);
 
-  const allKnownWords = useMemo(
-    () => {
-      const catalogWords = allLessons.flatMap((lesson) => [...lesson.words, ...(lesson.textbookWords ?? [])]);
-      const poetryWords = allLessons
-        .filter((lesson) => lesson.lessonKind === "classical_poetry")
-        .flatMap((lesson) => generatePoetryPractice(lesson).map((item) => item.word));
-      const resolvedDictationWords = getEligibleWords(allLessons, state.progress, companionWords);
-      const characterDictationWords = getEligibleCharacterWords(allLessons, state.progress, companionWords);
-      return new Map([...catalogWords, ...poetryWords, ...characterDictationWords, ...resolvedDictationWords].map((word) => [word.id, word]));
-    },
-    [allLessons, companionWords, state.progress],
-  );
+  useEffect(() => {
+    if (!isReady || viewMode !== "parent" || parentReady) return;
+    const controller = new AbortController();
+    setParentError("");
+    fetchParentData(stateRef.current, controller.signal)
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        setParentWords(data.words);
+        setHistoricalLogs(data.logs);
+        setParentReady(true);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setParentError(error instanceof Error ? error.message : "学习记录加载失败");
+      });
+    return () => controller.abort();
+  }, [isReady, viewMode, parentReady, retryCount]);
 
+  const allLessons = useMemo(() => [...lessons].sort((a, b) => lessonOrder(a) - lessonOrder(b)), [lessons]);
+  const selectedSummary = allLessons.find((lesson) => lesson.id === state.progress.lessonId) ?? allLessons[0];
+  const selectedLesson = practiceData && practiceData.lesson.id === selectedSummary?.id ? practiceData.lesson : selectedSummary;
+  const practiceItems = practiceData?.items ?? [];
+  const practiceLoading = isPracticeLoading || practiceData?.lesson.id !== selectedSummary?.id || practiceData?.mode !== practiceMode;
+  const allKnownWords = useMemo(() => new Map([
+    ...parentWords,
+    ...practiceItems.map((item) => item.word),
+  ].map((word) => [word.id, word])), [parentWords, practiceItems]);
+  const parentState = useMemo(() => {
+    const logs = new Map(historicalLogs.map((log) => [log.id, log]));
+    for (const log of state.logs) logs.set(log.id, log);
+    return { ...state, logs: [...logs.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 120) };
+  }, [state, historicalLogs]);
   const stats = useMemo(() => {
-    if (!selectedLesson) return { historyTotal: 0, historyReviewed: 0, pendingMistakes: 0, waitingReview: 0, todayCount: 0 };
-    const historyChars = getScreeningTargetChars(allLessons, state.progress, companionWords);
-    const reviewed = historyChars.filter((char) => {
-      return isMasteredChar(state.charStats[char]);
-    }).length;
-    const pendingMistakes = historyChars.filter((char) => {
-      return isPendingScreeningMistakeChar(state.charStats[char]);
-    }).length;
-    const waitingReview = historyChars.filter((char) => isHistoryCharCoolingDown(state.charStats[char])).length;
+    const activity = new Map(reviewActivity.map((item) => [item.id, item]));
+    for (const log of state.logs) activity.set(log.id, { id: log.id, date: log.date, count: log.wordIds.length });
     const today = new Date().toDateString();
-    const todayCount = state.logs
-      .filter((log) => new Date(log.date).toDateString() === today)
-      .reduce((sum, log) => sum + log.wordIds.length, 0);
-    return { historyTotal: historyChars.length, historyReviewed: reviewed, pendingMistakes, waitingReview, todayCount };
-  }, [allLessons, companionWords, selectedLesson, state.progress, state.charStats, state.logs]);
+    const todayCount = [...activity.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 120)
+      .filter((item) => new Date(item.date).toDateString() === today).reduce((sum, item) => sum + item.count, 0);
+    return { ...(practiceData?.stats ?? { historyTotal: 0, historyReviewed: 0, pendingMistakes: 0, waitingReview: 0 }), todayCount };
+  }, [practiceData, reviewActivity, state.logs]);
 
   const resetPractice = (nextMode = practiceMode) => {
     setPracticeMode(nextMode);
@@ -250,8 +260,9 @@ function App() {
     setLastResult({ total: 0, wrong: 0 });
   };
 
-  const setProgress = (lesson: Lesson) => {
+  const setProgress = (lesson: LessonSummary) => {
     setState((current) => ({ ...current, progress: { grade: lesson.grade, lessonId: lesson.id } }));
+    setParentReady(false);
     resetPractice();
   };
 
@@ -325,6 +336,7 @@ function App() {
       return wrongChars.length > 0 ? [{ wordId: item.word.id, text: item.word.text, pinyin: item.word.pinyin, wrongChars }] : [];
     });
     setState(nextState);
+    setParentReady(false);
     setCorrectionItems(nextCorrectionItems);
     setLastResult({ total: practiceItems.length, wrong: wrongCount });
     setWrongCharKeys(new Set());
@@ -336,8 +348,8 @@ function App() {
   };
 
   const supplementReviewMistakes = (logId: string, corrections: MissedWrongCharCorrection[]) => {
-    const previousLog = state.logs.find((log) => log.id === logId);
-    const nextState = addMissedWrongChars(state, logId, corrections, allKnownWords);
+    const previousLog = parentState.logs.find((log) => log.id === logId);
+    const nextState = addMissedWrongChars(parentState, logId, corrections, allKnownWords);
     const nextLog = nextState.logs.find((log) => log.id === logId);
     const previousKeys = new Set((previousLog?.wrongChars ?? []).map((item) => charReviewKey(item.wordId, item.char)));
     const requestedKeys = new Set(corrections.map((item) => charReviewKey(item.wordId, item.char)));
@@ -360,7 +372,7 @@ function App() {
   };
 
   if (loadError) return <StatusScreen title="词库加载失败" detail={loadError} />;
-  if (!isReady || !selectedLesson) return <StatusScreen title="正在整理词库" detail="马上就好……" />;
+  if (!isReady || !selectedLesson) return <StatusScreen title="正在加载默写" detail="读取当前课次和学习进度……" />;
 
   return (
     <main className="app-shell">
@@ -381,7 +393,10 @@ function App() {
 
       {viewMode === "student" ? (
         <StudentView
-          items={practiceItems}
+          items={practiceLoading || practiceError ? [] : practiceItems}
+          loading={practiceLoading && !practiceError}
+          loadError={practiceError}
+          onRetry={() => setRetryCount((count) => count + 1)}
           correctionItems={correctionItems}
           hintedWordIds={hintedWordIds}
           lastResult={lastResult}
@@ -405,13 +420,18 @@ function App() {
           wrongCharKeys={wrongCharKeys}
           wordIssues={state.wordIssues}
         />
+      ) : !parentReady ? (
+        <section className="panel wide" role="status">
+          <h2>{parentError ? "学习记录加载失败" : "正在加载学习记录"}</h2>
+          {parentError ? <><p>{parentError}</p><button className="primary-button" type="button" onClick={() => setRetryCount((count) => count + 1)}>重新加载</button></> : null}
+        </section>
       ) : (
         <ParentView
           lessons={allLessons}
           onSupplementReviewMistakes={supplementReviewMistakes}
           onSetIssueResolved={setIssueResolved}
           selectedLesson={selectedLesson}
-          state={state}
+          state={parentState}
           wordById={allKnownWords}
         />
       )}
@@ -422,6 +442,9 @@ function App() {
 }
 
 function StudentView({
+  loading,
+  loadError,
+  onRetry,
   correctionItems,
   hintedWordIds,
   items,
@@ -443,19 +466,22 @@ function StudentView({
   wrongCharKeys,
   wordIssues,
 }: {
+  loading: boolean;
+  loadError: string;
+  onRetry: () => void;
   correctionItems: CorrectionItem[];
   hintedWordIds: ReadonlySet<string>;
   items: PracticeItem[];
   lastResult: { total: number; wrong: number };
-  lesson: Lesson;
-  lessons: Lesson[];
+  lesson: PracticeLesson;
+  lessons: LessonSummary[];
   mode: PracticeMode;
   onFinish: () => void;
   onFinishCorrection: () => void;
   onRevealHint: (wordId: string) => void;
   onRestart: () => void;
   onSave: () => void;
-  onSelectLesson: (lesson: Lesson) => void;
+  onSelectLesson: (lesson: LessonSummary) => void;
   onSelectMode: (mode: PracticeMode) => void;
   onToggleWrong: (wordId: string, char: string) => void;
   onToggleIssue: (word: DictationWord, kind: WordIssueKind) => void;
@@ -781,7 +807,7 @@ function StudentView({
         </button>
       </div>
 
-      {mode === "history" ? (
+      {mode === "history" && !loading && !loadError ? (
         <div className="history-progress">
           <div><span>历史复习进度</span><strong>{stats.historyReviewed} / {stats.historyTotal} 字已掌握</strong></div>
           <div className="progress-track"><i style={{ width: `${reviewPercent}%` }} /></div>
@@ -789,7 +815,12 @@ function StudentView({
         </div>
       ) : null}
 
-      {items.length === 0 ? (
+      {loading || loadError ? (
+        <div className="empty-card" role="status">
+          <h2>{loadError ? "题目加载失败" : "正在加载题目"}</h2>
+          {loadError ? <><p>{loadError}</p><button className="primary-button" type="button" onClick={onRetry}>重新加载</button></> : null}
+        </div>
+      ) : items.length === 0 ? (
         <div className="empty-card">
           <Check size={34} />
           <h2>{mode === "history" ? stats.waitingReview > 0 ? "错字正在间隔复习" : stats.historyTotal > 0 ? "以前的字都写对了" : "前面还没有可复习的课" : isPoetryMode ? "这一课还没有古诗正文" : "这一课还没有可默写的词语"}</h2>
@@ -1206,10 +1237,10 @@ function ParentView({
   state,
   wordById,
 }: {
-  lessons: Lesson[];
+  lessons: LessonSummary[];
   onSetIssueResolved: (id: string, resolved: boolean) => void;
   onSupplementReviewMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => number;
-  selectedLesson: Lesson;
+  selectedLesson: LessonSummary;
   state: AppState;
   wordById: Map<string, DictationWord>;
 }) {
@@ -1514,7 +1545,7 @@ function RecentReviewItem({
   onOpenCorrection,
   wordById,
 }: {
-  lessons: Lesson[];
+  lessons: LessonSummary[];
   log: ReviewLog;
   onOpenCorrection: () => void;
   wordById: Map<string, DictationWord>;
@@ -1573,7 +1604,7 @@ function ReviewCorrectionPage({
   onSupplementReviewMistakes,
   wordById,
 }: {
-  lessons: Lesson[];
+  lessons: LessonSummary[];
   log: ReviewLog;
   onBack: () => void;
   onSupplementReviewMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => number;

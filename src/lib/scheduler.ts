@@ -1,4 +1,4 @@
-import { categoryWeights } from "../data/metadata";
+import { categoryWeights } from "../data/metadata.ts";
 import type { AppState, CharacterStat, CompanionDictionary, DictationWord, Lesson, PracticeItem, Progress, WordStat } from "../types";
 
 const dayMs = 24 * 60 * 60 * 1000;
@@ -473,6 +473,26 @@ export const generateCurrentLessonPractice = (lessons: Lesson[], state: AppState
       return Number(leftCovered) - Number(rightCovered) || right.score - left.score;
     });
 };
+
+export const generatePoetryPractice = (lesson: Lesson): PracticeItem[] =>
+  (lesson.classicalTexts ?? []).map((poem, index) => {
+    const text = [poem.title, poem.dynasty, poem.author, poem.lines.map((line) => line.text).join("\n")].filter(Boolean).join("\n");
+    const pinyin = [poem.titlePinyin, poem.lines.map((line) => line.pinyin).join("\n")].filter(Boolean).join("\n");
+    return {
+      word: {
+        id: `poem-${poem.id}`,
+        text,
+        pinyin,
+        chars: uniqueChars(hanChars(text)),
+        grade: lesson.grade,
+        lessonId: lesson.id,
+        lessonTitle: poem.title,
+        category: "一类",
+      },
+      score: 1000 - index,
+      reasons: ["古诗全文默写"],
+    };
+  });
 
 export const hasMistakeSignalForWord = (word: DictationWord, state: AppState) => {
   const stat = state.wordStats[word.id];

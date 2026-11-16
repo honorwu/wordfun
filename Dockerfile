@@ -17,6 +17,8 @@ ENV NODE_ENV=production \
 
 COPY --from=builder /app/dist ./dist
 COPY server ./server
+COPY src/lib/scheduler.ts ./src/lib/scheduler.ts
+COPY src/data/metadata.ts ./src/data/metadata.ts
 COPY data/ziqu-catalog.sqlite ./data/ziqu-catalog.sqlite
 
 EXPOSE 5174

@@ -42,6 +42,29 @@ export interface Progress {
   lessonId: string;
 }
 
+export type LessonSummary = Omit<Lesson, "words" | "textbookWords" | "textCompanions" | "classicalTexts">;
+export type PracticeLesson = LessonSummary & Pick<Lesson, "classicalTexts">;
+
+export interface PracticeStats {
+  historyTotal: number;
+  historyReviewed: number;
+  pendingMistakes: number;
+  waitingReview: number;
+}
+
+export interface PracticeData {
+  lesson: PracticeLesson;
+  mode: "lesson" | "history";
+  items: PracticeItem[];
+  stats: PracticeStats;
+}
+
+export interface ReviewActivity {
+  id: string;
+  date: string;
+  count: number;
+}
+
 export interface WordStat {
   attempts: number;
   mistakes: number;

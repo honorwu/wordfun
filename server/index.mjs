@@ -1,12 +1,15 @@
 import { createReadStream, existsSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
+import { createCatalogService } from "./catalog.mjs";
 import {
   defaultCatalogDatabasePath,
   defaultLearningDatabasePath,
   defaultStudentId,
-  getCompanionWords,
-  getLessons,
+  getReviewActivity,
   getState,
   openLearningDatabase,
   projectRoot,
@@ -14,61 +17,81 @@ import {
   saveState,
 } from "./db.mjs";
 
-const port = Number(process.env.PORT || 5174);
-const host = process.env.HOST || "127.0.0.1";
-const catalogDb = requireCatalogDatabase();
-const learningDb = openLearningDatabase();
 const distDir = path.join(projectRoot, "dist");
+const compress = promisify(gzip);
 
-const server = createServer(async (request, response) => {
-  try {
-    const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
-    if (url.pathname.startsWith("/api")) {
-      await handleApi(request, response, url);
-      return;
+export const createAppServer = ({ catalogDb = requireCatalogDatabase(), learningDb = openLearningDatabase(), studentId = defaultStudentId } = {}) => {
+  const catalog = createCatalogService(catalogDb);
+  const server = createServer(async (request, response) => {
+    try {
+      const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+      if (url.pathname.startsWith("/api")) {
+        await handleApi(request, response, url);
+        return;
+      }
+      await serveStatic(response, url.pathname);
+    } catch (error) {
+      const status = error && typeof error === "object" && "statusCode" in error ? Number(error.statusCode) : 500;
+      await sendJson(response, status, { error: error instanceof Error ? error.message : "Unknown error" }, request);
     }
-    await serveStatic(response, url.pathname);
-  } catch (error) {
-    const status = error && typeof error === "object" && "statusCode" in error ? Number(error.statusCode) : 500;
-    sendJson(response, status, { error: error instanceof Error ? error.message : "Unknown error" });
-  }
-});
+  });
 
-server.listen(port, host, () => {
-  console.log(`Ziqu API server listening on http://${host}:${port}`);
-});
+  const handleApi = async (request, response, url) => {
+    if (request.method === "GET" && url.pathname === "/api/health") {
+      return sendJson(response, 200, {
+        ok: true,
+        catalogDb: defaultCatalogDatabasePath,
+        learningDb: defaultLearningDatabasePath,
+      });
+    }
 
-const handleApi = async (request, response, url) => {
-  if (request.method === "GET" && url.pathname === "/api/health") {
-    sendJson(response, 200, {
-      ok: true,
-      catalogDb: defaultCatalogDatabasePath,
-      learningDb: defaultLearningDatabasePath,
-    });
-    return;
-  }
+    if (request.method === "GET" && url.pathname === "/api/app-data") {
+      const state = getState(learningDb, catalogDb, studentId, { includeLogs: false });
+      return sendJson(response, 200, {
+        lessons: catalog.summaries(),
+        state,
+        activity: getReviewActivity(learningDb, studentId),
+        practice: catalog.practice(state.progress, state.charStats),
+      }, request);
+    }
 
-  if (request.method === "GET" && url.pathname === "/api/app-data") {
-    const lessons = getLessons(catalogDb);
-    sendJson(response, 200, {
-      lessons,
-      companionWords: getCompanionWords(catalogDb),
-      state: getState(learningDb, catalogDb, defaultStudentId),
-      builtInLessonCount: lessons.length,
-      builtInWordCount: lessons.reduce((sum, lesson) => sum + lesson.words.length, 0),
-    });
-    return;
-  }
+    if (request.method === "POST" && url.pathname === "/api/practice") {
+      const body = await readBody(request);
+      return sendJson(response, 200, catalog.practice(body.progress, body.charStats, body.mode), request);
+    }
 
-  if (request.method === "PUT" && url.pathname === "/api/state") {
-    const body = await readBody(request);
-    saveState(learningDb, body, defaultStudentId);
-    sendJson(response, 200, { ok: true });
-    return;
-  }
+    if (request.method === "POST" && url.pathname === "/api/parent-data") {
+      const body = await readBody(request);
+      const state = getState(learningDb, catalogDb, studentId);
+      return sendJson(response, 200, {
+        logs: state.logs,
+        words: catalog.wordsForLogs(body.progress ?? state.progress, state.logs, body.wordIds ?? []),
+      }, request);
+    }
 
-  sendJson(response, 404, { error: "Not found" });
+    if (request.method === "PUT" && url.pathname === "/api/state") {
+      const body = await readBody(request);
+      if (body.mergeLogs === true) {
+        const previous = getState(learningDb, catalogDb, studentId);
+        const logs = new Map(previous.logs.map((log) => [log.id, log]));
+        for (const log of body.logs ?? []) logs.set(log.id, log);
+        body.logs = [...logs.values()].sort((a, b) => b.date.localeCompare(a.date));
+      }
+      saveState(learningDb, body, studentId);
+      return sendJson(response, 200, { ok: true }, request);
+    }
+
+    return sendJson(response, 404, { error: "Not found" }, request);
+  };
+
+  return server;
 };
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const port = Number(process.env.PORT || 5174);
+  const host = process.env.HOST || "127.0.0.1";
+  createAppServer().listen(port, host, () => console.log(`Ziqu API server listening on http://${host}:${port}`));
+}
 
 const readBody = async (request) => {
   const chunks = [];
@@ -93,22 +116,32 @@ const readBody = async (request) => {
   }
 };
 
-const sendJson = (response, status, payload) => {
-  response.writeHead(status, { "content-type": "application/json;charset=utf-8" });
-  response.end(JSON.stringify(payload));
+const sendJson = async (response, status, payload, request) => {
+  let body = Buffer.from(JSON.stringify(payload));
+  const headers = { "content-type": "application/json;charset=utf-8", "cache-control": "no-store", vary: "Accept-Encoding" };
+  const acceptsGzip = (request?.headers["accept-encoding"] ?? "").split(",").some((entry) => {
+    const [encoding, ...params] = entry.trim().split(";");
+    const quality = params.find((param) => param.trim().startsWith("q="));
+    return encoding === "gzip" && (!quality || Number(quality.trim().slice(2)) > 0);
+  });
+  if (body.length > 1024 && acceptsGzip) {
+    body = await compress(body);
+    headers["content-encoding"] = "gzip";
+  }
+  headers["content-length"] = String(body.length);
+  response.writeHead(status, headers);
+  response.end(body);
 };
 
 const serveStatic = async (response, pathname) => {
   if (!existsSync(distDir)) {
-    sendJson(response, 404, { error: "Frontend build not found. Run npm run build or use npm run dev." });
-    return;
+    return sendJson(response, 404, { error: "Frontend build not found. Run npm run build or use npm run dev." });
   }
 
   const safePath = path.normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, "");
   let filePath = path.join(distDir, safePath === "/" ? "index.html" : safePath);
   if (!filePath.startsWith(distDir)) {
-    sendJson(response, 403, { error: "Forbidden" });
-    return;
+    return sendJson(response, 403, { error: "Forbidden" });
   }
   if (!existsSync(filePath)) {
     filePath = path.join(distDir, "index.html");
