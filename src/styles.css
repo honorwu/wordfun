@@ -1603,6 +1603,135 @@ select:focus-visible {
   display: none;
 }
 
+.word-issue-guide {
+  margin: -4px 0 18px;
+  color: #80602d;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.word-issue-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+}
+
+.word-issue-prompt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #80602d;
+  font-size: 12px;
+}
+
+.word-issue-options,
+.word-issue-filters,
+.word-issue-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.word-issue-options button,
+.word-issue-filters button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid #ded6c6;
+  border-radius: 10px;
+  background: #fffdf8;
+  color: #71644b;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.word-issue-options button:hover,
+.word-issue-options button.selected {
+  border-color: #c5913e;
+  color: #7e5518;
+  background: #fff2d8;
+}
+
+.word-issue-controls > small {
+  flex-basis: 100%;
+  color: #80602d;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.word-issue-filters {
+  margin: 16px 0;
+}
+
+.word-issue-filters button[aria-pressed="true"] {
+  border-color: #b9aae2;
+  color: var(--purple-dark);
+  background: var(--purple-soft);
+}
+
+.word-issue-list {
+  display: grid;
+  gap: 12px;
+}
+
+.word-issue-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.word-issue-detail {
+  display: grid;
+  flex: 1 1 220px;
+  min-width: 0;
+  gap: 7px;
+  overflow-wrap: anywhere;
+}
+
+.word-issue-detail > strong {
+  font-size: 23px;
+  white-space: pre-wrap;
+}
+
+.word-issue-pinyin {
+  color: var(--purple-dark);
+  font-size: 14px;
+  white-space: pre-wrap;
+}
+
+.word-issue-detail > small,
+.word-issue-detail > time {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.word-issue-tags span {
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: #7e5518;
+  background: #fff2d8;
+  font-size: 11px;
+}
+
+.word-issues-panel > .panel-title-row {
+  flex-wrap: wrap;
+}
+
 .overview-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -1,4 +1,5 @@
 import type { AppState, CharacterStat, Progress, ReviewLog, WordStat } from "../types";
+import { normalizeWordIssues } from "./wordIssues";
 
 const fallbackProgress: Progress = {
   grade: 3,
@@ -10,6 +11,7 @@ export const createDefaultState = (progress: Progress = fallbackProgress): AppSt
   wordStats: {},
   charStats: {},
   logs: [],
+  wordIssues: [],
 });
 
 const uniqueStrings = (values: unknown): string[] => (Array.isArray(values) ? Array.from(new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))) : []);
@@ -86,5 +88,6 @@ export const normalizeState = (state: Partial<AppState>, fallback = fallbackProg
     wordStats: normalizeWordStats(state.wordStats),
     charStats: normalizeCharStats(state.charStats),
     logs: normalizeLogs(state.logs),
+    wordIssues: normalizeWordIssues(state.wordIssues),
   };
 };

@@ -15,6 +15,7 @@
     "prompts:audit": "node scripts/audit-dictation-prompts.mjs",
     "sentences:audit": "node --experimental-strip-types --experimental-transform-types scripts/audit-sentence-hints.mjs",
     "sentences:fetch": "node --experimental-strip-types --experimental-transform-types scripts/fetch-sentence-candidates.mjs",
+    "test": "node --test tests/*.test.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "node server/index.mjs"

@@ -75,11 +75,23 @@ export interface ReviewLog {
   }>;
 }
 
+export type WordIssueKind = "wording" | "pronunciation";
+
+export interface WordIssue {
+  id: string;
+  word: DictationWord;
+  lessonLabel: string;
+  kinds: WordIssueKind[];
+  createdAt: string;
+  resolvedAt?: string;
+}
+
 export interface AppState {
   progress: Progress;
   wordStats: Record<string, WordStat>;
   charStats: Record<string, CharacterStat>;
   logs: ReviewLog[];
+  wordIssues: WordIssue[];
 }
 
 export interface PracticeItem {

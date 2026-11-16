@@ -252,6 +252,18 @@ CREATE TABLE IF NOT EXISTS review_log_reviewed_chars (
   PRIMARY KEY (log_id, word_id, char)
 );
 
+CREATE TABLE IF NOT EXISTS word_issues (
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  word_snapshot TEXT NOT NULL,
+  lesson_label TEXT NOT NULL,
+  wording_issue INTEGER NOT NULL CHECK (wording_issue IN (0, 1)),
+  pronunciation_issue INTEGER NOT NULL CHECK (pronunciation_issue IN (0, 1)),
+  created_at TEXT NOT NULL,
+  resolved_at TEXT,
+  PRIMARY KEY (student_id, id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_review_logs_student_date ON review_logs(student_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_review_log_lessons_log ON review_log_lessons(log_id, lesson_order);
 CREATE INDEX IF NOT EXISTS idx_review_log_words_log ON review_log_words(log_id, item_order);
@@ -678,6 +690,14 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId) =>
     wordStats,
     charStats,
     logs,
+    wordIssues: allRows(learningDb, "SELECT * FROM word_issues WHERE student_id = ? ORDER BY created_at DESC, id", studentId).map((row) => ({
+      id: row.id,
+      word: JSON.parse(row.word_snapshot),
+      lessonLabel: row.lesson_label,
+      kinds: [row.wording_issue ? "wording" : null, row.pronunciation_issue ? "pronunciation" : null].filter(Boolean),
+      createdAt: row.created_at,
+      resolvedAt: row.resolved_at || undefined,
+    })),
   };
 };
 
@@ -759,6 +779,24 @@ export const saveState = (learningDb, state, studentId = defaultStudentId) => {
       }
       for (const [index, item] of wrongChars.entries()) {
         insertLogChar.run(log.id, item.wordId, item.char, Math.max(0, (log.wordIds || []).indexOf(item.wordId)), index);
+      }
+    }
+
+    // 旧客户端未带此字段时保留已有标记；空数组表示明确取消全部标记。
+    if (Array.isArray(state.wordIssues)) {
+      learningDb.prepare("DELETE FROM word_issues WHERE student_id = ?").run(studentId);
+      const insertIssue = learningDb.prepare(
+        `INSERT INTO word_issues (student_id, id, word_snapshot, lesson_label, wording_issue, pronunciation_issue, created_at, resolved_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const issue of state.wordIssues) {
+        const kinds = new Set(issue.kinds || []);
+        if (!kinds.has("wording") && !kinds.has("pronunciation")) continue;
+        insertIssue.run(
+          studentId, issue.id, JSON.stringify(issue.word), issue.lessonLabel || "",
+          kinds.has("wording") ? 1 : 0, kinds.has("pronunciation") ? 1 : 0,
+          issue.createdAt, issue.resolvedAt || null,
+        );
       }
     }
 

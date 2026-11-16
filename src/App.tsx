@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { WordIssueControls, WordIssuesPanel } from "./components/WordIssues";
 import { gradeNames } from "./data/metadata";
 import { fetchAppData, saveRemoteState } from "./lib/api";
 import {
@@ -35,7 +36,8 @@ import {
 } from "./lib/scheduler";
 import type { MissedWrongCharCorrection } from "./lib/scheduler";
 import { createDefaultState } from "./lib/storage";
-import type { AppState, ClassicalText, CompanionDictionary, DictationWord, Grade, Lesson, PracticeItem, ReviewLog } from "./types";
+import { findWordIssue, toggleWordIssue } from "./lib/wordIssues";
+import type { AppState, ClassicalText, CompanionDictionary, DictationWord, Grade, Lesson, PracticeItem, ReviewLog, WordIssue, WordIssueKind } from "./types";
 
 const historyBatchSize = 20;
 const secondPlaybackDelaySeconds = 10;
@@ -263,6 +265,21 @@ function App() {
     });
   };
 
+  const toggleIssue = (word: DictationWord, kind: WordIssueKind) => {
+    const sourceLesson = allLessons.find((lesson) => lesson.id === word.lessonId);
+    setState((current) => ({
+      ...current,
+      wordIssues: toggleWordIssue(current.wordIssues, word, sourceLesson ? lessonLabel(sourceLesson) : word.lessonTitle, kind),
+    }));
+  };
+
+  const setIssueResolved = (id: string, resolved: boolean) => {
+    setState((current) => ({
+      ...current,
+      wordIssues: current.wordIssues.map((issue) => issue.id === id ? { ...issue, resolvedAt: resolved ? new Date().toISOString() : undefined } : issue),
+    }));
+  };
+
   const finishDictation = () => {
     setPhase("reviewing");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -382,14 +399,17 @@ function App() {
           onSelectLesson={setProgress}
           onSelectMode={(mode) => resetPractice(mode)}
           onToggleWrong={toggleWrongChar}
+          onToggleIssue={toggleIssue}
           phase={phase}
           stats={stats}
           wrongCharKeys={wrongCharKeys}
+          wordIssues={state.wordIssues}
         />
       ) : (
         <ParentView
           lessons={allLessons}
           onSupplementReviewMistakes={supplementReviewMistakes}
+          onSetIssueResolved={setIssueResolved}
           selectedLesson={selectedLesson}
           state={state}
           wordById={allKnownWords}
@@ -417,9 +437,11 @@ function StudentView({
   onSelectLesson,
   onSelectMode,
   onToggleWrong,
+  onToggleIssue,
   phase,
   stats,
   wrongCharKeys,
+  wordIssues,
 }: {
   correctionItems: CorrectionItem[];
   hintedWordIds: ReadonlySet<string>;
@@ -436,9 +458,11 @@ function StudentView({
   onSelectLesson: (lesson: Lesson) => void;
   onSelectMode: (mode: PracticeMode) => void;
   onToggleWrong: (wordId: string, char: string) => void;
+  onToggleIssue: (word: DictationWord, kind: WordIssueKind) => void;
   phase: PracticePhase;
   stats: { historyTotal: number; historyReviewed: number; pendingMistakes: number; waitingReview: number; todayCount: number };
   wrongCharKeys: Set<string>;
+  wordIssues: WordIssue[];
 }) {
   const [finishArmed, setFinishArmed] = useState(false);
   const [activeItemIndex, setActiveItemIndex] = useState(0);
@@ -793,6 +817,10 @@ function StudentView({
             </div>
           ) : null}
 
+          {phase === "reviewing" && !isPoetryMode ? (
+            <p className="word-issue-guide">发现组词不合适或读音不准？在题卡下方标记，家长之后会统一核对。题目问题与写错的字分别标记。</p>
+          ) : null}
+
           <div className={`dictation-grid ${isPoetryMode ? "poetry-grid" : ""}`}>
             {items.map((item, globalIndex) => {
               const poem = lesson.classicalTexts?.[globalIndex];
@@ -822,6 +850,8 @@ function StudentView({
                   reviewing={phase === "reviewing"}
                   onToggleWrong={onToggleWrong}
                   wrongCharKeys={wrongCharKeys}
+                  issue={findWordIssue(wordIssues, item.word)}
+                  onToggleIssue={(kind) => onToggleIssue(item.word, kind)}
                 />
               );
             })}
@@ -1049,6 +1079,8 @@ function DictationCard({
   protectedChars,
   reviewing,
   wrongCharKeys,
+  issue,
+  onToggleIssue,
 }: {
   active: boolean;
   dictationLessonTitle: string;
@@ -1063,6 +1095,8 @@ function DictationCard({
   protectedChars: ReadonlySet<string>;
   reviewing: boolean;
   wrongCharKeys: Set<string>;
+  issue?: WordIssue;
+  onToggleIssue: (kind: WordIssueKind) => void;
 }) {
   const chars = Array.from(item.word.text).filter((char) => /\p{Script=Han}/u.test(char));
   const syllables = item.word.pinyin
@@ -1159,18 +1193,21 @@ function DictationCard({
           );
         })}
       </div>
+      {reviewing ? <WordIssueControls issue={issue} onToggle={onToggleIssue} /> : null}
     </article>
   );
 }
 
 function ParentView({
   lessons,
+  onSetIssueResolved,
   onSupplementReviewMistakes,
   selectedLesson,
   state,
   wordById,
 }: {
   lessons: Lesson[];
+  onSetIssueResolved: (id: string, resolved: boolean) => void;
   onSupplementReviewMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => number;
   selectedLesson: Lesson;
   state: AppState;
@@ -1308,7 +1345,7 @@ function ParentView({
         <div>
           <p className="eyebrow">家长看板</p>
           <h1>学习情况一览</h1>
-          <p>默写记录、打卡习惯、待巩固错字和历史错词会自动汇总在这里。课次由孩子在默写首页选择。</p>
+          <p>默写记录、打卡习惯、错字和词库问题会自动汇总在这里。课次由孩子在默写首页选择。</p>
         </div>
         <div className="current-course"><span>当前学习进度</span><strong>{lessonLabel(selectedLesson)}</strong></div>
       </div>
@@ -1353,6 +1390,8 @@ function ParentView({
             ) : null}
           </div>
         </section>
+
+        <WordIssuesPanel issues={state.wordIssues} onSetResolved={onSetIssueResolved} />
 
         <section className="panel wide calendar-panel">
           <div className="calendar-heading">
