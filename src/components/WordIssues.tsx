@@ -1,7 +1,7 @@
 import { Check, Download, Flag, RotateCcw } from "lucide-react";
 import { useState } from "react";
-import { exportWordIssues, wordIssueKinds, wordIssueLabels } from "../lib/wordIssues";
-import type { WordIssue, WordIssueKind } from "../types";
+import { exportWordIssues, wordIssueKinds, wordIssueLabels } from "../../shared/domain/wordIssues.ts";
+import type { WordIssue, WordIssueKind } from "../../shared/types.ts";
 
 export function WordIssueControls({ issue, onToggle }: {
   issue?: WordIssue;

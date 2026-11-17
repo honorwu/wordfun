@@ -1,4 +1,4 @@
-import type { CharacterCategory, Grade } from "../types";
+import type { Grade } from "../../shared/types.ts";
 
 export const gradeNames: Record<Grade, string> = {
   1: "一年级",
@@ -8,7 +8,4 @@ export const gradeNames: Record<Grade, string> = {
   5: "五年级",
 };
 
-export const categoryWeights: Record<CharacterCategory, number> = {
-  "一类": 9,
-  "二类": 7,
-};
+export { categoryWeights } from "../../shared/domain/reviewPolicy.ts";

@@ -1,12 +1,8 @@
-import type { AppState, DictationWord, LessonSummary, PracticeData, Progress, ReviewActivity, ReviewLog } from "../types";
-import { normalizeState } from "./storage";
+import type { AppDataResponse, ParentDataRequest, ParentDataResponse, PracticeRequest, PracticeResponse, SaveStateRequest, SaveStateResponse } from "../../shared/contracts.ts";
+import type { AppState, LessonSummary, PracticeMode, Progress } from "../../shared/types.ts";
+import { normalizeState } from "../../shared/domain/state.ts";
 
-export interface AppData {
-  lessons: LessonSummary[];
-  state: AppState;
-  activity: ReviewActivity[];
-  practice: PracticeData;
-}
+export type AppData = Omit<AppDataResponse, "state"> & { state: AppState };
 
 const requestJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(url, {
@@ -39,25 +35,25 @@ let appDataRequest: Promise<AppData> | undefined;
 
 export const fetchAppData = (): Promise<AppData> => {
   // 合并开发模式 StrictMode 同时发起的启动请求；完成后不缓存学习状态。
-  appDataRequest ??= requestJson<Omit<AppData, "state"> & { state: Partial<AppState> }>("/api/app-data")
+  appDataRequest ??= requestJson<AppDataResponse>("/api/app-data")
     .then((data) => ({ ...data, state: normalizeState(data.state, fallbackProgress(data.lessons)) }))
     .finally(() => { appDataRequest = undefined; });
   return appDataRequest;
 };
 
-export const fetchPractice = (progress: Progress, charStats: AppState["charStats"], mode: PracticeData["mode"], signal: AbortSignal) =>
-  requestJson<PracticeData>("/api/practice", { method: "POST", body: JSON.stringify({ progress, charStats, mode }), signal });
+export const fetchPractice = (progress: Progress, charStats: AppState["charStats"], mode: PracticeMode, signal: AbortSignal) =>
+  requestJson<PracticeResponse>("/api/practice", { method: "POST", body: JSON.stringify({ progress, charStats, mode } satisfies PracticeRequest), signal });
 
 export const fetchParentData = (state: AppState, signal: AbortSignal) =>
-  requestJson<{ logs: ReviewLog[]; words: DictationWord[] }>("/api/parent-data", {
+  requestJson<ParentDataResponse>("/api/parent-data", {
     method: "POST",
-    body: JSON.stringify({ progress: state.progress, wordIds: state.logs.flatMap((log) => log.wordIds) }),
+    body: JSON.stringify({ progress: state.progress, wordIds: state.logs.flatMap((log) => log.wordIds) } satisfies ParentDataRequest),
     signal,
   });
 
 export const saveRemoteState = async (state: AppState) => {
-  await requestJson<{ ok: true }>("/api/state", {
+  await requestJson<SaveStateResponse>("/api/state", {
     method: "PUT",
-    body: JSON.stringify({ ...state, mergeLogs: true }),
+    body: JSON.stringify({ ...state, mergeLogs: true } satisfies SaveStateRequest),
   });
 };

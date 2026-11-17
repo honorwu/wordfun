@@ -6,6 +6,7 @@ RUN npm ci
 
 COPY index.html tsconfig.json vite.config.ts ./
 COPY src ./src
+COPY shared ./shared
 RUN npm run build
 
 FROM node:24-bookworm-slim AS runtime
@@ -17,8 +18,7 @@ ENV NODE_ENV=production \
 
 COPY --from=builder /app/dist ./dist
 COPY server ./server
-COPY src/lib/scheduler.ts ./src/lib/scheduler.ts
-COPY src/data/metadata.ts ./src/data/metadata.ts
+COPY shared ./shared
 COPY data/ziqu-catalog.sqlite ./data/ziqu-catalog.sqlite
 
 EXPOSE 5174
