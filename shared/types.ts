@@ -20,6 +20,14 @@ export interface DictationWord {
   lessonId: string;
   lessonTitle: string;
   category: CharacterCategory;
+  textbookHint?: string;
+}
+
+export interface BookCharacterIndex {
+  grade: Grade;
+  term: number;
+  characters: Record<string, string[]>;
+  firstLessonOrders: Record<string, number>;
 }
 
 export interface Lesson {
@@ -34,6 +42,8 @@ export interface Lesson {
   words: DictationWord[];
   textbookWords?: DictationWord[];
   textCompanions?: CompanionDictionary;
+  historyCompanions?: CompanionDictionary;
+  reviewedPrompts?: CompanionDictionary;
   classicalTexts?: ClassicalText[];
 }
 
@@ -42,12 +52,13 @@ export interface Progress {
   lessonId: string;
 }
 
-export type LessonSummary = Omit<Lesson, "words" | "textbookWords" | "textCompanions" | "classicalTexts">;
+export type LessonSummary = Omit<Lesson, "words" | "textbookWords" | "textCompanions" | "historyCompanions" | "reviewedPrompts" | "classicalTexts">;
 export type PracticeLesson = LessonSummary & Pick<Lesson, "classicalTexts">;
 
 export interface PracticeStats {
   historyTotal: number;
   historyReviewed: number;
+  historyUnreviewed: number;
   pendingMistakes: number;
   waitingReview: number;
 }
@@ -129,6 +140,7 @@ export interface DictationCompanion {
   text: string;
   pinyin: string;
   chars: string[];
+  textbookHint?: string;
 }
 
 export type CompanionDictionary = Record<string, DictationCompanion[]>;

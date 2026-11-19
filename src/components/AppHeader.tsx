@@ -5,15 +5,15 @@ export function AppHeader({ viewMode, onSelectView }: { viewMode: ViewMode; onSe
   return (
     <header className="app-header">
       <button className="brand" type="button" onClick={() => onSelectView("student")} aria-label="回到学生默写">
-        <span className="brand-mark">字</span>
-        <span><strong>字趣</strong><small>每天认真写好一点</small></span>
+        <span className="brand-mark" aria-hidden="true">字</span>
+        <strong>字趣</strong>
       </button>
       <nav className="view-tabs" aria-label="页面切换">
-        <button className={viewMode === "student" ? "active" : ""} type="button" onClick={() => onSelectView("student")}>
-          <Home size={18} />开始默写
+        <button aria-current={viewMode === "student" ? "page" : undefined} type="button" onClick={() => onSelectView("student")}>
+          <Home size={17} aria-hidden="true" />开始默写
         </button>
-        <button className={viewMode === "parent" ? "active" : ""} type="button" onClick={() => onSelectView("parent")}>
-          <BarChart3 size={18} />家长看板
+        <button aria-current={viewMode === "parent" ? "page" : undefined} type="button" onClick={() => onSelectView("parent")}>
+          <BarChart3 size={17} aria-hidden="true" />家长看板
         </button>
       </nav>
     </header>

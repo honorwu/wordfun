@@ -30,7 +30,7 @@ test("服务端出题保持所有课次原有的题词、拼音、目标字及�
       const progress = { grade: lesson.grade, lessonId: lesson.id };
       const chars = getScreeningTargetChars(lessons, progress, companions);
       const charStats = Object.fromEntries(chars.map((char, index) => [char, {
-        attempts: index % 4 ? 1 : 0, mistakes: index % 3 ? 0 : 1, streak: 0,
+        attempts: index % 4 ? 1 : 0, mistakes: index % 4 && index % 3 === 0 ? 1 : 0, streak: 0,
         lastReviewedAt: index % 2 ? new Date().toISOString() : "2020-01-01T00:00:00.000Z",
       }]));
       const state = { progress, charStats, wordStats: {}, logs: [], wordIssues: [] };
@@ -39,6 +39,7 @@ test("服务端出题保持所有课次原有的题词、拼音、目标字及�
       assert.deepEqual(actual.stats, {
         historyTotal: chars.length,
         historyReviewed: chars.filter((char) => isMasteredChar(charStats[char])).length,
+        historyUnreviewed: chars.filter((char) => !charStats[char].attempts).length,
         pendingMistakes: chars.filter((char) => isPendingScreeningMistakeChar(charStats[char])).length,
         waitingReview: chars.filter((char) => isHistoryCharCoolingDown(charStats[char])).length,
       });
@@ -90,7 +91,7 @@ test("启动仅返回目录与当前题；历史记录延迟读取，合并保�
     const startup = JSON.parse(raw);
     assert.ok(Buffer.byteLength(raw) < 100_000);
     assert.equal(startup.lessons.length, getLessons(catalogDb).length);
-    assert.ok(startup.lessons.every((lesson) => !('words' in lesson) && !('textbookWords' in lesson) && !('textCompanions' in lesson)));
+    assert.ok(startup.lessons.every((lesson) => !('words' in lesson) && !('textbookWords' in lesson) && !('textCompanions' in lesson) && !('historyCompanions' in lesson)));
     assert.ok(!('companionWords' in startup));
     assert.deepEqual(startup.state.logs, []);
     assert.equal(startup.activity.length, 2);

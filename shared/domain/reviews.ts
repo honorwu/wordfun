@@ -1,5 +1,5 @@
 import type { AppState, DictationWord, PracticeItem } from "../types.ts";
-import { hanChars, uniqueChars, reviewCharsForWord, charReviewKey } from "./characters.ts";
+import { fullDictationCharsForWord, hanChars, uniqueChars, reviewCharsForWord, charReviewKey } from "./characters.ts";
 import { uniqueTexts } from "./reviewPolicy.ts";
 
 export const applyReviewResult = (
@@ -11,8 +11,11 @@ export const applyReviewResult = (
 ): AppState => {
   const now = new Date().toISOString();
   const practiceItems = items;
-  const reviewedCharsForItem = (item: PracticeItem) =>
-    uniqueChars([...(reviewedCharsByWord?.get(item.word.id) ?? reviewCharsForWord(item.word))]).filter((char) => hanChars(item.word.text).includes(char));
+  const reviewedCharsForItem = ({ word }: PracticeItem) => {
+    if (context?.practiceMode === "history") return fullDictationCharsForWord(word);
+    const targets = reviewCharsForWord(word);
+    return uniqueChars([...(reviewedCharsByWord?.get(word.id) ?? targets)]).filter((char) => hanChars(word.text).includes(char));
+  };
   const wrongWordIds = practiceItems
     .filter((item) => reviewedCharsForItem(item).some((char) => wrongCharKeys.has(charReviewKey(item.word.id, char))))
     .map((item) => item.word.id);

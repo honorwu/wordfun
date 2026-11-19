@@ -1,7 +1,7 @@
 import type { AppState, CharacterStat, CompanionDictionary, DictationWord, Lesson, PracticeItem, Progress, WordStat } from "../types.ts";
-import { hanChars, uniqueChars, reviewCharsForWord } from "./characters.ts";
-import { lessonOrder, progressOrder, getEligibleWords, isDirectDictationLesson } from "./catalog.ts";
-import { categoryWeights, masteryNetCorrect, charNetCorrectCount, hasWordTextEvidence, charWrongWordCount, daysSince, isMasteredChar, isHistoryCharDue, isPendingScreeningMistakeChar } from "./reviewPolicy.ts";
+import { fullDictationCharsForWord, hanChars, uniqueChars, reviewCharsForWord } from "./characters.ts";
+import { getDictationWords, lessonOrder, progressOrder, getEligibleWords, isDirectDictationLesson, isVocabularyLesson } from "./catalog.ts";
+import { categoryWeights, masteryNetCorrect, charNetCorrectCount, hasWordTextEvidence, charWrongWordCount, daysSince, historyMistakeWordLimit, historyRoundWordLimit, isMasteredChar, isHistoryCharCoolingDown, isPendingScreeningMistakeChar, isReviewedScreeningChar } from "./reviewPolicy.ts";
 
 const wordCoverageNeed = (word: DictationWord, charStats: Record<string, CharacterStat>) => {
   return word.chars.reduce((score, char) => {
@@ -308,64 +308,91 @@ export const generateTermReviewPractice = (lessons: Lesson[], state: AppState): 
     };
   });
 
-export const getScreeningTargetChars = (lessons: Lesson[], progress: Progress, companionWords: CompanionDictionary = {}) => {
-  const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
-  const selectedLesson = lessonById.get(progress.lessonId);
+const getScreeningLessons = (lessons: Lesson[], progress: Progress) => {
   const selectedOrder = progressOrder(progress, lessons);
-  const pastLessonIds = new Set(
-    lessons.filter((lesson) => lessonOrder(lesson) < selectedOrder && lesson.id !== selectedLesson?.id && lesson.lessonKind !== "classical_poetry").map((lesson) => lesson.id),
-  );
-
-  return uniqueChars(
-    getEligibleWords(lessons, progress, companionWords)
-      .filter((word) => pastLessonIds.has(word.lessonId))
-      .flatMap((word) => reviewCharsForWord(word)),
-  );
+  return lessons.filter((lesson) => lessonOrder(lesson) < selectedOrder && isVocabularyLesson(lesson));
 };
+
+export const getScreeningTargetChars = (lessons: Lesson[], progress: Progress, companionWords: CompanionDictionary = {}) =>
+  uniqueChars(getDictationWords(getScreeningLessons(lessons, progress), companionWords, { keepCompanionsInScope: true }).flatMap(reviewCharsForWord));
 
 export const generateScreeningPractice = (
   lessons: Lesson[],
   state: AppState,
-  targetCount = 20,
+  targetCount = historyRoundWordLimit,
   companionWords: CompanionDictionary = {},
   rotationSeed = 0,
 ): PracticeItem[] => {
-  const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
-  const selectedOrder = progressOrder(state.progress, lessons);
+  const pastLessons = getScreeningLessons(lessons, state.progress);
+  const lessonById = new Map(pastLessons.map((lesson) => [lesson.id, lesson]));
+  const officialIds = new Set(pastLessons.flatMap((lesson) => (lesson.textbookWords ?? []).map((word) => word.id)));
   const orderForWord = (word: DictationWord) => {
     const lesson = lessonById.get(word.lessonId);
     return lesson ? lessonOrder(lesson) : word.grade * 1000;
   };
-  const candidates = getEligibleWords(lessons, state.progress, companionWords)
-    .map((word, sourceIndex) => ({ word, sourceIndex, order: orderForWord(word) }))
-    .filter(({ word, order }) => order < selectedOrder && lessonById.get(word.lessonId)?.lessonKind !== "classical_poetry")
+  const screeningWords = getDictationWords(pastLessons, companionWords, { keepCompanionsInScope: true });
+  const learnedChars = new Set(screeningWords.flatMap(reviewCharsForWord));
+  const coolingDown = (char: string) => isHistoryCharCoolingDown(state.charStats[char]);
+  const hasMistake = (char: string) => isPendingScreeningMistakeChar(state.charStats[char]);
+  const candidates = screeningWords
+    .map((original, sourceIndex) => {
+      const [target] = original.chars;
+      const isOfficial = officialIds.has(original.id);
+      const lesson = lessonById.get(original.lessonId);
+      const companion = !isOfficial && original.chars.length === 1
+        ? lesson?.reviewedPrompts?.[target]?.[0] ?? lesson?.historyCompanions?.[target]?.find((entry) =>
+          entry.text.includes(target) && hanChars(entry.text).every((char) => learnedChars.has(char) && !coolingDown(char)))
+        : undefined;
+      const { textbookHint: _originalHint, ...originalFields } = original;
+      const word = companion
+        ? { ...originalFields, text: companion.text, pinyin: companion.pinyin, ...(companion.textbookHint ? { textbookHint: companion.textbookHint } : {}) }
+        : original;
+      const chars = fullDictationCharsForWord(word);
+      const targets = chars.filter((char) => learnedChars.has(char));
+      const rank = (isOfficial ? 4 : hanChars(word.text).length > 1 ? 2 : 0) + Number(Boolean(word.textbookHint));
+      const source = isOfficial ? "词语表" : companion ? "课文取词" : undefined;
+      return { word, sourceIndex, order: orderForWord(word), rank, chars, targets, source, hasKnownMistake: targets.some(hasMistake) };
+    })
+    .filter((candidate) => !candidate.chars.some(coolingDown))
     .sort((left, right) => right.order - left.order || left.sourceIndex - right.sourceIndex);
 
-  // 历史复习按字收敛：写对的字不再重复出现，错字优先；同一优先级内仍按课次倒序。
-  const uniqueCandidates = [...new Map(candidates.map((candidate) => [`${candidate.word.lessonId}\u0000${candidate.word.chars.join("")}`, candidate])).values()];
-  const seenTargetChars = new Set<string>();
-  const pending = uniqueCandidates.flatMap((candidate) => {
-    const pendingChars = reviewCharsForWord(candidate.word).filter(
-      (char) => isHistoryCharDue(state.charStats[char]) && !seenTargetChars.has(char),
-    );
-    if (pendingChars.length === 0) {
-      return [];
+  const collect = (hasKnownMistake: boolean, isTarget: (char: string) => boolean) => {
+    const eligible = candidates.filter((candidate) => candidate.hasKnownMistake === hasKnownMistake);
+    const bestByChar = new Map<string, (typeof candidates)[number]>();
+    for (const candidate of eligible) {
+      for (const char of candidate.targets) {
+        if (!isTarget(char)) continue;
+        const previous = bestByChar.get(char);
+        if (!previous || candidate.rank > previous.rank) bestByChar.set(char, candidate);
+      }
     }
-    pendingChars.forEach((char) => seenTargetChars.add(char));
-    const hasKnownMistake = pendingChars.some((char) => isPendingScreeningMistakeChar(state.charStats[char]));
-    return [{
-      ...candidate,
-      word: { ...candidate.word, chars: pendingChars },
-      hasKnownMistake,
-    }];
-  }).sort((left, right) => Number(right.hasKnownMistake) - Number(left.hasKnownMistake));
-  const offset = rotationSeed * targetCount;
-  const page = pending.slice(offset, offset + targetCount);
 
-  return page.map(({ word, hasKnownMistake }, index) => ({
+    const selected = new Map<string, { word: DictationWord; hasKnownMistake: boolean; source?: string }>();
+    for (const candidate of eligible) {
+      const chars = candidate.targets.filter((char) => bestByChar.get(char) === candidate);
+      if (!chars.length) continue;
+      const key = `${candidate.word.text}\u0000${candidate.word.pinyin}`;
+      const existing = selected.get(key);
+      if (existing) existing.word.chars = uniqueChars([...existing.word.chars, ...chars]);
+      else selected.set(key, { word: { ...candidate.word, chars }, hasKnownMistake, source: candidate.source });
+    }
+    return [...selected.values()];
+  };
+
+  const mistakeLimit = Math.min(targetCount, historyMistakeWordLimit);
+  const mistakeOffset = rotationSeed * mistakeLimit;
+  const mistakes = collect(true, hasMistake).slice(mistakeOffset, mistakeOffset + mistakeLimit);
+  const alreadyCovered = new Set(mistakes.flatMap(({ word }) => fullDictationCharsForWord(word)));
+  const unreviewedLimit = targetCount - mistakes.length;
+  const unreviewedOffset = rotationSeed * unreviewedLimit;
+  const unreviewed = collect(false, (char) => !alreadyCovered.has(char) && !isReviewedScreeningChar(state.charStats[char]))
+    .slice(unreviewedOffset, unreviewedOffset + unreviewedLimit);
+  const page = [...mistakes, ...unreviewed];
+
+  return page.map(({ word, hasKnownMistake, source }, index) => ({
     word,
     score: targetCount - index,
-    reasons: [hasKnownMistake ? "错字再练" : "历史新字"],
+    reasons: [hasKnownMistake ? "错字再练" : "历史新字", ...(source ? [source] : [])],
   }));
 };
 

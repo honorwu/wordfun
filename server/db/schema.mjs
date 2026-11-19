@@ -79,6 +79,40 @@ CREATE TABLE IF NOT EXISTS lesson_words (
   UNIQUE (lesson_id, word_id, source_column, target_char)
 );
 
+CREATE TABLE IF NOT EXISTS textbook_word_contexts (
+  lesson_word_id TEXT PRIMARY KEY REFERENCES lesson_words(id) ON DELETE CASCADE,
+  entry_id TEXT NOT NULL UNIQUE,
+  context_type TEXT NOT NULL,
+  context_text TEXT,
+  original_context_text TEXT,
+  hint_text TEXT,
+  context_pdf_pages TEXT,
+  wordlist_pdf_page INTEGER NOT NULL,
+  note TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lesson_history_companions (
+  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+  char TEXT NOT NULL,
+  word TEXT NOT NULL,
+  pinyin TEXT NOT NULL,
+  hint_text TEXT,
+  source_row INTEGER NOT NULL,
+  PRIMARY KEY (lesson_id, char)
+);
+
+CREATE TABLE IF NOT EXISTS lesson_reviewed_prompts (
+  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+  char TEXT NOT NULL REFERENCES characters(char),
+  word TEXT NOT NULL CHECK (instr(word, char) > 0),
+  pinyin TEXT NOT NULL,
+  hint_text TEXT CHECK (word <> char OR (hint_text IS NOT NULL AND instr(hint_text, '〔　〕') > 0)),
+  context_kind TEXT NOT NULL,
+  source_text TEXT NOT NULL,
+  source_rows TEXT NOT NULL,
+  PRIMARY KEY (lesson_id, char)
+);
+
 CREATE TABLE IF NOT EXISTS lesson_uncovered_characters (
   lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
   char TEXT NOT NULL,

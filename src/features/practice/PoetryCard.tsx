@@ -47,7 +47,7 @@ export function PoetryCard({
         {reviewing ? (
           <>
             <h3>{renderReviewText(poem.title, "title")}</h3>
-            {poem.author ? <span className="poetry-byline">{renderReviewText(`${poem.dynasty ? `〔${poem.dynasty}〕` : ""}${poem.author}`, "byline")}</span> : null}
+            {poem.dynasty || poem.author ? <span className="poetry-byline">{renderReviewText(`${poem.dynasty ? `〔${poem.dynasty}〕` : ""}${poem.author ?? ""}`, "byline")}</span> : null}
             {poem.titlePinyin ? <small>{poem.titlePinyin}</small> : null}
           </>
         ) : (

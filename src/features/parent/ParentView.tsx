@@ -1,15 +1,18 @@
 import { BarChart3, CalendarDays, Check, ChevronLeft, ChevronRight, ClipboardCheck, History, Printer } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AppState, DictationWord, LessonSummary } from "../../../shared/types.ts";
+import type { AppState, BookCharacterIndex, DictationWord, LessonSummary } from "../../../shared/types.ts";
 import { isMasteredChar, isPendingScreeningMistakeChar } from "../../../shared/domain/index.ts";
+import { learnedTextbookChars, textbookCharacterSet } from "../../../shared/domain/characterMastery.ts";
 import type { MissedWrongCharCorrection } from "../../../shared/domain/reviews.ts";
 import { WordIssuesPanel } from "../../components/WordIssues";
 import { lessonLabel } from "../../lib/lessonPresentation";
 import { localDateKey } from "../../lib/dates";
 import { RecentReviewItem } from "./RecentReviewItem";
 import { ReviewCorrectionPage } from "./ReviewCorrectionPage";
+import { CharacterMasteryPanel } from "./CharacterMasteryPanel";
 
 export interface ParentViewProps {
+  characterBooks: BookCharacterIndex[];
   lessons: LessonSummary[];
   onSetIssueResolved: (id: string, resolved: boolean) => void;
   onSupplementReviewMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => number;
@@ -19,6 +22,7 @@ export interface ParentViewProps {
 }
 
 export function ParentView({
+  characterBooks,
   lessons,
   onSetIssueResolved,
   onSupplementReviewMistakes,
@@ -65,8 +69,11 @@ export function ParentView({
     );
   }
 
-  const pendingWrongChars = Object.entries(state.charStats)
-    .filter(([, stat]) => stat.mistakes > 0 && !isMasteredChar(stat))
+  const textbookChars = textbookCharacterSet(characterBooks);
+  const learnedChars = learnedTextbookChars(characterBooks, selectedLesson);
+  const textbookStats = Object.entries(state.charStats).filter(([char]) => textbookChars.has(char));
+  const pendingWrongChars = textbookStats
+    .filter(([char, stat]) => learnedChars.has(char) && stat.mistakes > 0 && !isMasteredChar(stat))
     .sort((left, right) => right[1].mistakes - left[1].mistakes);
   const wrongWordsByText = new Map<string, { chars: Set<string>; lastMistakeAt: string }>();
   const charsWithWordEvidence = new Set<string>();
@@ -100,7 +107,7 @@ export function ParentView({
   const missingWordEvidenceCount = wrongWords.filter((item) => item.missingWordEvidence).length;
   const historicalWrongWordsByText = new Map<string, { chars: Set<string>; pendingChars: Set<string> }>();
   const historicalWrongCharsWithoutWordEvidence: string[] = [];
-  for (const [char, stat] of Object.entries(state.charStats)) {
+  for (const [char, stat] of textbookStats) {
     if (stat.mistakes <= 0) continue;
     const wordTexts = Array.from(new Set((stat.wrongWordTexts ?? []).map((wordText) => wordText.trim()).filter(Boolean)));
     if (wordTexts.length === 0) historicalWrongCharsWithoutWordEvidence.push(char);
@@ -132,8 +139,8 @@ export function ParentView({
       })
       .map((log) => localDateKey(new Date(log.date))),
   ).size;
-  const totalCharacterAttempts = Object.values(state.charStats).reduce((total, stat) => total + stat.attempts, 0);
-  const totalCharacterMistakes = Object.values(state.charStats).reduce((total, stat) => total + stat.mistakes, 0);
+  const totalCharacterAttempts = textbookStats.reduce((total, [, stat]) => total + stat.attempts, 0);
+  const totalCharacterMistakes = textbookStats.reduce((total, [, stat]) => total + stat.mistakes, 0);
   const accuracy = totalCharacterAttempts > 0
     ? Math.max(0, Math.round(((totalCharacterAttempts - totalCharacterMistakes) / totalCharacterAttempts) * 100))
     : null;
@@ -155,22 +162,20 @@ export function ParentView({
   return (
     <section className="parent-main">
       <div className="parent-title">
-        <div>
-          <p className="eyebrow">家长看板</p>
-          <h1>学习情况一览</h1>
-          <p>默写记录、打卡习惯、错字和词库问题会自动汇总在这里。课次由孩子在默写首页选择。</p>
-        </div>
+        <h1>学习进度</h1>
         <div className="current-course"><span>当前学习进度</span><strong>{lessonLabel(selectedLesson)}</strong></div>
       </div>
 
       <div className="parent-grid">
+        <CharacterMasteryPanel books={characterBooks} progress={selectedLesson} charStats={state.charStats} />
+
         <section className="panel overview-panel">
           <div className="panel-heading"><BarChart3 size={20} /><h2>学习概览</h2></div>
           <div className="overview-stats">
             <div className="overview-stat"><strong>{totalPracticeCount}</strong><span>累计默写（项）</span></div>
             <div className="overview-stat"><strong>{totalCheckinDays}</strong><span>累计打卡（天）</span></div>
             <div className="overview-stat"><strong>{recentCheckinDays}</strong><span>近 7 天打卡</span></div>
-            <div className="overview-stat"><strong>{accuracy === null ? "—" : `${accuracy}%`}</strong><span>累计字准确率</span></div>
+            <div className="overview-stat"><strong>{accuracy === null ? "—" : `${accuracy}%`}</strong><span>字准确率（含初始状态）</span></div>
             <div className="overview-stat attention"><strong>{pendingWrongChars.length}</strong><span>待巩固错字</span></div>
             <div className="overview-stat history-total"><strong>{historicalWrongWords.length}</strong><span>历史错词</span></div>
           </div>
@@ -247,7 +252,7 @@ export function ParentView({
             <>
               <p className="panel-note">
                 共 {pendingWrongChars.length} 个待巩固错字，完整列出 {wrongWordsByText.size} 个相关词语；同一个字可能出现在多个词中。
-                {missingWordEvidenceCount > 0 ? `另有 ${missingWordEvidenceCount} 个旧记录未保留原词，已单独列出。` : ""}
+                {missingWordEvidenceCount > 0 ? `另有 ${missingWordEvidenceCount} 个字仅有逐字状态，已单独列出。` : ""}
               </p>
               <div className="wrong-word-list">{wrongWords.map(({ chars, key, missingWordEvidence, wordText }) => {
                 const isLongText = Array.from(wordText).filter((char) => /\p{Script=Han}/u.test(char)).length > 10;
@@ -259,7 +264,7 @@ export function ParentView({
                         <span className={chars.has(char) ? "wrong-character" : ""} key={`${char}-${index}`}>{char}</span>
                       ))}
                     </strong>
-                    <small>{missingWordEvidence ? "旧记录未保留原词 · " : "错字："}{[...chars].map((char) => <b key={char}>{char}</b>)}</small>
+                    <small>{missingWordEvidence ? "仅有逐字状态 · " : "错字："}{[...chars].map((char) => <b key={char}>{char}</b>)}</small>
                   </div>
                 );
               })}</div>

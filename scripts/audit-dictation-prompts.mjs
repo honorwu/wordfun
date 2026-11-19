@@ -1,27 +1,12 @@
 import assert from "node:assert/strict";
-import { createServer } from "vite";
 import { getCompanionWords, getLessons, requireCatalogDatabase } from "../server/db.mjs";
-
-const vite = await createServer({
-  appType: "custom",
-  logLevel: "error",
-  optimizeDeps: { noDiscovery: true },
-  server: { middlewareMode: true },
-});
+import {
+  applyReviewResult, charReviewKey, generateCurrentLessonPractice, generateScreeningPractice,
+  getScreeningTargetChars, fullDictationCharsForWord, lessonOrder,
+} from "../shared/domain/index.ts";
 const catalogDb = requireCatalogDatabase();
 
 try {
-  const {
-    addMissedWrongChars,
-    applyReviewResult,
-    charReviewKey,
-    generateCurrentLessonPractice,
-    generateScreeningPractice,
-    getEligibleCharacterWords,
-    getScreeningTargetChars,
-    fullDictationCharsForWord,
-    lessonOrder,
-  } = await vite.ssrLoadModule("/src/lib/scheduler.ts");
   const lessons = getLessons(catalogDb);
   const companionWords = getCompanionWords(catalogDb);
   const regularLessons = lessons.filter((lesson) => lesson.lessonKind !== "classical_poetry");
@@ -88,14 +73,14 @@ try {
   assert.equal(cricketLesson?.title, "蟋蟀的住宅");
   const state = { progress: { grade: 4, lessonId: cricketLesson.id }, wordStats: {}, charStats: {}, logs: [] };
   const items = generateCurrentLessonPractice(lessons, state, companionWords);
-  assert.equal(items.length, 23);
+  assert.equal(items.length, 24);
   assert.deepEqual(items.slice(0, 10).map((item) => item.word.text), ["住宅", "选择", "住址", "大厅", "柔弱", "平坦", "光滑", "修理", "重要", "增长"]);
   const masteredState = {
     ...state,
     charStats: Object.fromEntries(items.flatMap((item) => item.word.chars).map((char) => [char, { attempts: 1, mistakes: 0, streak: 1 }])),
   };
   assert.deepEqual(generateCurrentLessonPractice(lessons, masteredState, companionWords).slice(0, 10).map((item) => item.word.text), items.slice(0, 10).map((item) => item.word.text));
-  assert.equal(generateCurrentLessonPractice(lessons, masteredState, companionWords).length, 23);
+  assert.equal(generateCurrentLessonPractice(lessons, masteredState, companionWords).length, items.length);
 
   const flatItem = items.find((item) => item.word.text === "平坦");
   assert.deepEqual(flatItem.word.chars, ["平", "坦"]);
@@ -119,19 +104,6 @@ try {
   recentMistakeState.charStats.坦.lastReviewedAt = new Date(Date.now() - 8 * 86400000).toISOString();
   assert.equal(generateScreeningPractice(lessons, recentMistakeState, 20, companionWords)[0]?.word.text, "平坦");
   assert.ok(generateScreeningPractice(lessons, historyState, 20, companionWords).every((item) => lessonOrder(lessons.find((lesson) => lesson.id === item.word.lessonId)) < lessonOrder(nextLesson)));
-
-  const legacyWord = getEligibleCharacterWords(lessons, state.progress, companionWords).find((word) => word.id === `${cricketLesson.id}-char-宅`);
-  assert.equal(legacyWord.text, "住宅");
-  assert.deepEqual(legacyWord.chars, ["宅"]);
-  const legacyState = {
-    ...state,
-    wordStats: { [legacyWord.id]: { attempts: 1, mistakes: 0, streak: 1 } },
-    charStats: { 宅: { attempts: 1, mistakes: 0, streak: 1 }, 住: { attempts: 1, mistakes: 0, streak: 1 } },
-    logs: [{ id: "legacy-review", date: new Date().toISOString(), practiceMode: "lesson", wordIds: [legacyWord.id], wrongWordIds: [] }],
-  };
-  const wordById = new Map([legacyWord, ...items.map((item) => item.word)].map((word) => [word.id, word]));
-  assert.equal(addMissedWrongChars(legacyState, "legacy-review", [{ wordId: legacyWord.id, char: "住" }], wordById), legacyState);
-  assert.equal(addMissedWrongChars(legacyState, "legacy-review", [{ wordId: legacyWord.id, char: "宅" }], wordById).charStats.宅.mistakes, 1);
 
   const singleTextbookWord = { id: "single-textbook", text: "光", pinyin: "guāng", chars: ["光"], grade: 4, lessonId: "single-lesson", lessonTitle: "单字词", category: "一类" };
   const singleLesson = {
@@ -160,5 +132,4 @@ try {
   );
 } finally {
   catalogDb.close();
-  await vite.close();
 }

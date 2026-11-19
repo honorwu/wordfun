@@ -1,8 +1,9 @@
-import { allRows } from "./query.mjs";
+import { allRows, hasTable } from "./query.mjs";
 
 export const normalizeCategory = (category) => (category === "一类" ? "一类" : "二类");
 
 export const getLessons = (catalogDb) => {
+  const hasContexts = hasTable(catalogDb, "textbook_word_contexts");
   const lessons = allRows(
     catalogDb,
     `SELECT id, grade, term AS unit, lesson_number AS number, sort_order, title, lesson_kind, direct_dictation
@@ -16,6 +17,9 @@ export const getLessons = (catalogDb) => {
           SELECT 1
           FROM classical_texts ct
           WHERE ct.lesson_id = lessons.id
+        )
+        OR EXISTS (
+          SELECT 1 FROM lesson_words lw WHERE lw.lesson_id = lessons.id AND lw.source_column = '词语表'
         )
      ORDER BY grade, term, sort_order`,
   );
@@ -42,6 +46,12 @@ export const getLessons = (catalogDb) => {
     catalogDb,
     "SELECT lesson_id, char, word, pinyin FROM char_companion_words ORDER BY lesson_id, char, companion_rank",
   );
+  const historyCompanionRows = hasTable(catalogDb, "lesson_history_companions")
+    ? allRows(catalogDb, "SELECT lesson_id, char, word, pinyin, hint_text FROM lesson_history_companions")
+    : [];
+  const reviewedPromptRows = hasTable(catalogDb, "lesson_reviewed_prompts")
+    ? allRows(catalogDb, "SELECT lesson_id, char, word, pinyin, hint_text FROM lesson_reviewed_prompts")
+    : [];
   const textbookRows = allRows(
     catalogDb,
     `SELECT
@@ -50,6 +60,7 @@ export const getLessons = (catalogDb) => {
        w.text,
        w.pinyin,
        lw.word_order,
+       ${hasContexts ? "context.hint_text" : "NULL"} AS hint_text,
        l.grade,
        l.title AS lesson_title,
        CASE
@@ -67,6 +78,7 @@ export const getLessons = (catalogDb) => {
      FROM lesson_words lw
      JOIN words w ON w.id = lw.word_id
      JOIN lessons l ON l.id = lw.lesson_id
+     ${hasContexts ? "LEFT JOIN textbook_word_contexts context ON context.lesson_word_id = lw.id" : ""}
      WHERE lw.source_column = '词语表'
     ORDER BY lw.lesson_id, lw.word_order`,
   );
@@ -104,6 +116,7 @@ export const getLessons = (catalogDb) => {
       text: row.text,
       pinyin: row.pinyin,
       chars: Array.from(row.text).filter((char) => /\p{Script=Han}/u.test(char)),
+      ...(row.hint_text ? { textbookHint: row.hint_text } : {}),
       grade: row.grade,
       lessonId: row.lesson_id,
       lessonTitle: row.lesson_title,
@@ -111,15 +124,21 @@ export const getLessons = (catalogDb) => {
     };
     textbookWordsByLesson.set(row.lesson_id, [...(textbookWordsByLesson.get(row.lesson_id) || []), word]);
   }
-  const companionsByLesson = new Map();
-  for (const row of companionRows) {
-    const lessonCompanions = companionsByLesson.get(row.lesson_id) || {};
-    lessonCompanions[row.char] = [
-      ...(lessonCompanions[row.char] || []),
-      { text: row.word, pinyin: row.pinyin, chars: Array.from(row.word).filter((char) => /\p{Script=Han}/u.test(char)) },
-    ];
-    companionsByLesson.set(row.lesson_id, lessonCompanions);
-  }
+  const indexCompanions = (rows) => {
+    const byLesson = new Map();
+    for (const row of rows) {
+      const entry = byLesson.get(row.lesson_id) ?? {};
+      (entry[row.char] ??= []).push({
+        text: row.word, pinyin: row.pinyin, chars: Array.from(row.word).filter((char) => /\p{Script=Han}/u.test(char)),
+        ...(row.hint_text ? { textbookHint: row.hint_text } : {}),
+      });
+      byLesson.set(row.lesson_id, entry);
+    }
+    return byLesson;
+  };
+  const companionsByLesson = indexCompanions(companionRows);
+  const historyCompanionsByLesson = indexCompanions(historyCompanionRows);
+  const reviewedPromptsByLesson = indexCompanions(reviewedPromptRows);
   const classicalLinesByText = new Map();
   for (const row of classicalLineRows) {
     classicalLinesByText.set(row.text_id, [
@@ -151,6 +170,8 @@ export const getLessons = (catalogDb) => {
     words: wordsByLesson.get(lesson.id) || [],
     textbookWords: textbookWordsByLesson.get(lesson.id) || [],
     textCompanions: companionsByLesson.get(lesson.id) || {},
+    historyCompanions: historyCompanionsByLesson.get(lesson.id) || {},
+    reviewedPrompts: reviewedPromptsByLesson.get(lesson.id) || {},
     classicalTexts: classicalTextsByLesson.get(lesson.id) || [],
   }));
 };

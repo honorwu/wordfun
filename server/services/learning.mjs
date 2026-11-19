@@ -26,6 +26,7 @@ export const createLearningService = ({ catalogDb, learningDb, studentId }) => {
       return {
         logs: state.logs,
         words: catalog.wordsForLogs(body.progress ?? state.progress, state.logs, body.wordIds ?? []),
+        characterBooks: catalog.characterBooks(),
       };
     },
     /** @param {import("../../shared/contracts.ts").SaveStateRequest} body */

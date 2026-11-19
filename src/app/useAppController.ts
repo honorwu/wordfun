@@ -23,7 +23,7 @@ export function useAppController() {
 
   const {
     state, setState, allLessons, selectedLesson, practiceItems, practiceLoading, practiceError,
-    allKnownWords, parentState, stats, parentReady, parentError, isReady, loadError,
+    allKnownWords, parentState, characterBooks, stats, parentReady, parentError, isReady, loadError,
     invalidateParentData, retryLoad,
   } = useLearningData({ viewMode, practiceMode, onSaveError: setSavedMessage });
 
@@ -75,6 +75,7 @@ export function useAppController() {
   const saveReview = () => {
     const reviewedCharsByWord = new Map(
       practiceItems.map((item) => {
+        if (practiceMode === "history") return [item.word.id, fullDictationCharsForWord(item.word)] as const;
         const baseReviewChars = hintedWordIds.has(item.word.id)
           ? reviewCharsForWord(item.word)
           : fullDictationCharsForWord(item.word);
@@ -104,7 +105,7 @@ export function useAppController() {
       lessons: reviewedLessons,
     });
     const nextCorrectionItems = practiceItems.flatMap((item) => {
-      const wrongChars = fullDictationCharsForWord(item.word).flatMap((char) => {
+      const wrongChars = (reviewedCharsByWord.get(item.word.id) ?? []).flatMap((char) => {
         if (!wrongCharKeys.has(charReviewKey(item.word.id, char))) return [];
         const mistakeCount = nextState.charStats[char]?.mistakes ?? 1;
         return [{ char, mistakeCount, repetitions: Math.max(2, mistakeCount + 1) }];
@@ -174,6 +175,7 @@ export function useAppController() {
       wordIssues: state.wordIssues,
     } satisfies StudentViewProps,
     parentProps: {
+      characterBooks,
       lessons: allLessons,
       onSupplementReviewMistakes: supplementReviewMistakes,
       onSetIssueResolved: setIssueResolved,

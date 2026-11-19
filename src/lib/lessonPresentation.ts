@@ -10,5 +10,8 @@ export const lessonNumberLabel = (lesson: LessonSummary, title = lesson.title) =
 
 export const lessonLabel = (lesson: LessonSummary, title = lesson.title) => `${gradeNames[lesson.grade]}${termLabel(lesson.unit)} · ${lessonNumberLabel(lesson, title)}`;
 
+export const shortBookLabel = ({ grade, unit }: Pick<LessonSummary, "grade" | "unit">) =>
+  `${gradeNames[grade].replace("年级", "")}${unit === 2 ? "下" : "上"}`;
+
 export const availableGrades = (lessons: LessonSummary[]) =>
   Array.from(new Set(lessons.map((lesson) => lesson.grade))).sort((a, b) => a - b) as Grade[];

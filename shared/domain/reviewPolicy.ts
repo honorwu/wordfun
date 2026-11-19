@@ -2,7 +2,9 @@ import type { CharacterCategory, CharacterStat } from "../types.ts";
 
 const dayMs = 24 * 60 * 60 * 1000;
 export const masteryNetCorrect = 1;
-export const historyMistakeCooldownDays = 7;
+export const historyMistakeCooldownDays = 5;
+export const historyMistakeWordLimit = 5;
+export const historyRoundWordLimit = 20;
 
 export const categoryWeights: Record<CharacterCategory, number> = { "一类": 9, "二类": 7 };
 
@@ -42,7 +44,8 @@ export const isCorrectedScreeningChar = (stat?: CharacterStat) => isMasteredChar
 
 export const isPendingScreeningMistakeChar = (stat?: CharacterStat) => Boolean(stat && stat.mistakes > 0 && !isMasteredChar(stat));
 
-export const isHistoryCharCoolingDown = (stat?: CharacterStat) =>
-  Boolean(isPendingScreeningMistakeChar(stat) && daysSince(stat?.lastReviewedAt || stat?.lastMistakeAt) < historyMistakeCooldownDays);
-
-export const isHistoryCharDue = (stat?: CharacterStat) => !isMasteredChar(stat) && !isHistoryCharCoolingDown(stat);
+export const isHistoryCharCoolingDown = (stat?: CharacterStat) => {
+  if (!isPendingScreeningMistakeChar(stat)) return false;
+  const dates = [stat?.lastReviewedAt, stat?.lastMistakeAt].map((date) => Date.parse(date ?? "")).filter(Number.isFinite);
+  return dates.length > 0 && Date.now() - Math.max(...dates) < historyMistakeCooldownDays * dayMs;
+};

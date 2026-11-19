@@ -1,11 +1,12 @@
 import { getCompanionWords, getLessons } from "../db/catalog.mjs";
+import { buildBookCharacterIndex } from "../../shared/domain/characterMastery.ts";
 import {
   generateCurrentLessonPractice, generatePoetryPractice, generateScreeningPractice,
   getEligibleCharacterWords, getEligibleWords, getScreeningTargetChars,
-  isHistoryCharCoolingDown, isMasteredChar, isPendingScreeningMistakeChar,
+  historyRoundWordLimit, isHistoryCharCoolingDown, isMasteredChar, isPendingScreeningMistakeChar, isReviewedScreeningChar,
 } from "../../shared/domain/index.ts";
 
-const summarizeLesson = ({ words, textbookWords, textCompanions, classicalTexts, ...summary }) => summary;
+const summarizeLesson = ({ words, textbookWords, textCompanions, historyCompanions, reviewedPrompts, classicalTexts, ...summary }) => summary;
 
 // 词库在服务端复用；另一连接更新词库时丢弃缓存，学习状态始终使用本次请求的数据。
 export const createCatalogService = (db) => {
@@ -22,6 +23,10 @@ export const createCatalogService = (db) => {
   };
   return {
     summaries: () => catalog().summaries,
+    characterBooks: () => {
+      const data = catalog();
+      return data.characterBooks ??= buildBookCharacterIndex(data.lessons);
+    },
     practice: (progress, charStats, mode = "lesson") => {
       const { lessons, companions, historyChars } = catalog();
       const lesson = lessons.find((item) => item.id === progress?.lessonId);
@@ -31,22 +36,23 @@ export const createCatalogService = (db) => {
       if (!historyChars.has(lesson.id)) historyChars.set(lesson.id, getScreeningTargetChars(lessons, state.progress, companions));
       const chars = historyChars.get(lesson.id);
       return {
-        lesson: { ...summarizeLesson(lesson), ...(lesson.classicalTexts?.length ? { classicalTexts: lesson.classicalTexts } : {}) },
+        lesson: { ...summarizeLesson(lesson), ...(mode === "lesson" && lesson.classicalTexts?.length ? { classicalTexts: lesson.classicalTexts } : {}) },
         mode,
-        items: mode === "history" ? generateScreeningPractice(lessons, state, 20, companions)
+        items: mode === "history" ? generateScreeningPractice(lessons, state, historyRoundWordLimit, companions)
           : lesson.lessonKind === "classical_poetry" ? generatePoetryPractice(lesson) : generateCurrentLessonPractice(lessons, state, companions),
         stats: {
           historyTotal: chars.length,
           historyReviewed: chars.filter((char) => isMasteredChar(state.charStats[char])).length,
+          historyUnreviewed: chars.filter((char) => !isReviewedScreeningChar(state.charStats[char])).length,
           pendingMistakes: chars.filter((char) => isPendingScreeningMistakeChar(state.charStats[char])).length,
           waitingReview: chars.filter((char) => isHistoryCharCoolingDown(state.charStats[char])).length,
         },
       };
     },
     wordsForLogs: (progress, logs, extraWordIds = []) => {
-      const { lessons, companions } = catalog();
       const ids = new Set([...logs.flatMap((log) => log.wordIds), ...extraWordIds]);
       if (!ids.size) return [];
+      const { lessons, companions } = catalog();
       // 与旧版索引相同的覆盖顺序，保留单字题 ID、组词及古诗的还原能力。
       const words = new Map([
         ...lessons.flatMap((lesson) => [...lesson.words, ...(lesson.textbookWords ?? [])]),

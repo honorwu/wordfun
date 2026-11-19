@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AppState, DictationWord, LessonSummary, PracticeData, PracticeMode, ReviewActivity, ReviewLog } from "../../shared/types.ts";
+import type { AppState, BookCharacterIndex, DictationWord, LessonSummary, PracticeData, PracticeMode, ReviewActivity, ReviewLog } from "../../shared/types.ts";
 import { lessonOrder } from "../../shared/domain/catalog.ts";
 import { createDefaultState } from "../../shared/domain/state.ts";
 import { fetchAppData, fetchParentData, fetchPractice, saveRemoteState } from "../lib/api";
@@ -20,6 +20,7 @@ export function useLearningData({ viewMode, practiceMode, onSaveError }: {
   const [parentReady, setParentReady] = useState(false);
   const [parentError, setParentError] = useState("");
   const [parentWords, setParentWords] = useState<DictationWord[]>([]);
+  const [characterBooks, setCharacterBooks] = useState<BookCharacterIndex[]>([]);
   const [historicalLogs, setHistoricalLogs] = useState<ReviewLog[]>([]);
   const [retryCount, setRetryCount] = useState(0);
   const [isReady, setIsReady] = useState(false);
@@ -100,6 +101,7 @@ export function useLearningData({ viewMode, practiceMode, onSaveError }: {
       .then((data) => {
         if (controller.signal.aborted) return;
         setParentWords(data.words);
+        setCharacterBooks(data.characterBooks);
         setHistoricalLogs(data.logs);
         setParentReady(true);
       })
@@ -129,12 +131,12 @@ export function useLearningData({ viewMode, practiceMode, onSaveError }: {
     const today = new Date().toDateString();
     const todayCount = [...activity.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 120)
       .filter((item) => new Date(item.date).toDateString() === today).reduce((sum, item) => sum + item.count, 0);
-    return { ...(practiceData?.stats ?? { historyTotal: 0, historyReviewed: 0, pendingMistakes: 0, waitingReview: 0 }), todayCount };
+    return { ...(practiceData?.stats ?? { historyTotal: 0, historyReviewed: 0, historyUnreviewed: 0, pendingMistakes: 0, waitingReview: 0 }), todayCount };
   }, [practiceData, reviewActivity, state.logs]);
 
   return {
     state, setState, allLessons, selectedLesson, practiceItems, practiceLoading, practiceError,
-    allKnownWords, parentState, stats, parentReady, parentError, isReady, loadError,
+    allKnownWords, parentState, characterBooks, stats, parentReady, parentError, isReady, loadError,
     invalidateParentData: () => setParentReady(false),
     retryLoad: () => setRetryCount((count) => count + 1),
   };

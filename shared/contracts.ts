@@ -1,4 +1,4 @@
-import type { AppState, DictationWord, LessonSummary, PracticeData, PracticeMode, Progress, ReviewActivity, ReviewLog } from "./types.ts";
+import type { AppState, BookCharacterIndex, DictationWord, LessonSummary, PracticeData, PracticeMode, Progress, ReviewActivity, ReviewLog } from "./types.ts";
 
 // HTTP 数据契约。完整词库只留在后端，浏览器按页面请求所需的数据。
 export interface AppDataResponse {
@@ -24,6 +24,7 @@ export interface ParentDataRequest {
 export interface ParentDataResponse {
   logs: ReviewLog[];
   words: DictationWord[];
+  characterBooks: BookCharacterIndex[];
 }
 
 export type SaveStateRequest = AppState & { mergeLogs?: boolean };
