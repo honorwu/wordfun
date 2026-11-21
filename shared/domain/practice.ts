@@ -1,6 +1,6 @@
-import type { AppState, CharacterStat, CompanionDictionary, DictationWord, Lesson, PracticeItem, Progress, WordStat } from "../types.ts";
+import type { AppState, CharacterStat, DictationWord, Lesson, PracticeItem, Progress, WordStat } from "../types.ts";
 import { fullDictationCharsForWord, hanChars, uniqueChars, reviewCharsForWord } from "./characters.ts";
-import { getDictationWords, lessonOrder, progressOrder, getEligibleWords, isDirectDictationLesson, isVocabularyLesson } from "./catalog.ts";
+import { getDictationWords, lessonOrder, progressOrder, getEligibleWords, isVocabularyLesson } from "./catalog.ts";
 import { categoryWeights, masteryNetCorrect, charNetCorrectCount, hasWordTextEvidence, charWrongWordCount, daysSince, historyMistakeWordLimit, historyRoundWordLimit, isMasteredChar, isHistoryCharCoolingDown, isPendingScreeningMistakeChar, isReviewedScreeningChar } from "./reviewPolicy.ts";
 
 const wordCoverageNeed = (word: DictationWord, charStats: Record<string, CharacterStat>) => {
@@ -131,8 +131,8 @@ const currentTeachingUnitFloor = (lessons: Lesson[], selectedLesson?: Lesson) =>
   return previousGarden?.number ?? Number.NEGATIVE_INFINITY;
 };
 
-export const generatePractice = (lessons: Lesson[], state: AppState, targetCount = 20, companionWords: CompanionDictionary = {}): PracticeItem[] => {
-  const eligibleWords = getEligibleWords(lessons, state.progress, companionWords);
+export const generatePractice = (lessons: Lesson[], state: AppState, targetCount = 20): PracticeItem[] => {
+  const eligibleWords = getEligibleWords(lessons, state.progress);
   const wordPosition = new Map(eligibleWords.map((word, index) => [word.id, index]));
   const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
   const selectedLesson = lessonById.get(state.progress.lessonId);
@@ -231,19 +231,18 @@ export const generatePractice = (lessons: Lesson[], state: AppState, targetCount
   });
 };
 
-export const generateCurrentLessonPractice = (lessons: Lesson[], state: AppState, companionWords: CompanionDictionary = {}): PracticeItem[] => {
+export const generateCurrentLessonPractice = (lessons: Lesson[], state: AppState): PracticeItem[] => {
   const selectedLesson = lessons.find((lesson) => lesson.id === state.progress.lessonId);
   if (!selectedLesson) {
     return [];
   }
   const textbookWordIds = new Set((selectedLesson.textbookWords ?? []).map((word) => word.id));
 
-  return getEligibleWords(lessons, state.progress, companionWords)
-    .filter((word) => word.lessonId === selectedLesson.id)
+  return (selectedLesson.dictationWords ?? [])
     .map((word, index) => ({
       word,
       score: 1000 - index,
-      reasons: [textbookWordIds.has(word.id) ? "词语表" : isDirectDictationLesson(selectedLesson) ? "课文直接默写" : "补充生字"],
+      reasons: [textbookWordIds.has(word.id) ? "词语表" : "课文取词"],
     }))
     .sort((left, right) => {
       const leftTextbook = textbookWordIds.has(left.word.id);
@@ -258,24 +257,11 @@ export const generateCurrentLessonPractice = (lessons: Lesson[], state: AppState
 };
 
 export const generatePoetryPractice = (lesson: Lesson): PracticeItem[] =>
-  (lesson.classicalTexts ?? []).map((poem, index) => {
-    const text = [poem.title, poem.dynasty, poem.author, poem.lines.map((line) => line.text).join("\n")].filter(Boolean).join("\n");
-    const pinyin = [poem.titlePinyin, poem.lines.map((line) => line.pinyin).join("\n")].filter(Boolean).join("\n");
-    return {
-      word: {
-        id: `poem-${poem.id}`,
-        text,
-        pinyin,
-        chars: uniqueChars(hanChars(text)),
-        grade: lesson.grade,
-        lessonId: lesson.id,
-        lessonTitle: poem.title,
-        category: "一类",
-      },
-      score: 1000 - index,
-      reasons: ["古诗全文默写"],
-    };
-  });
+  (lesson.dictationWords ?? []).map((word, index) => ({
+    word,
+    score: 1000 - index,
+    reasons: ["古诗全文默写"],
+  }));
 
 export const hasMistakeSignalForWord = (word: DictationWord, state: AppState) => {
   const stat = state.wordStats[word.id];
@@ -313,14 +299,13 @@ const getScreeningLessons = (lessons: Lesson[], progress: Progress) => {
   return lessons.filter((lesson) => lessonOrder(lesson) < selectedOrder && isVocabularyLesson(lesson));
 };
 
-export const getScreeningTargetChars = (lessons: Lesson[], progress: Progress, companionWords: CompanionDictionary = {}) =>
-  uniqueChars(getDictationWords(getScreeningLessons(lessons, progress), companionWords, { keepCompanionsInScope: true }).flatMap(reviewCharsForWord));
+export const getScreeningTargetChars = (lessons: Lesson[], progress: Progress) =>
+  uniqueChars(getDictationWords(getScreeningLessons(lessons, progress)).flatMap(reviewCharsForWord));
 
 export const generateScreeningPractice = (
   lessons: Lesson[],
   state: AppState,
   targetCount = historyRoundWordLimit,
-  companionWords: CompanionDictionary = {},
   rotationSeed = 0,
 ): PracticeItem[] => {
   const pastLessons = getScreeningLessons(lessons, state.progress);
@@ -330,27 +315,17 @@ export const generateScreeningPractice = (
     const lesson = lessonById.get(word.lessonId);
     return lesson ? lessonOrder(lesson) : word.grade * 1000;
   };
-  const screeningWords = getDictationWords(pastLessons, companionWords, { keepCompanionsInScope: true });
+  const screeningWords = getDictationWords(pastLessons);
   const learnedChars = new Set(screeningWords.flatMap(reviewCharsForWord));
   const coolingDown = (char: string) => isHistoryCharCoolingDown(state.charStats[char]);
   const hasMistake = (char: string) => isPendingScreeningMistakeChar(state.charStats[char]);
   const candidates = screeningWords
-    .map((original, sourceIndex) => {
-      const [target] = original.chars;
-      const isOfficial = officialIds.has(original.id);
-      const lesson = lessonById.get(original.lessonId);
-      const companion = !isOfficial && original.chars.length === 1
-        ? lesson?.reviewedPrompts?.[target]?.[0] ?? lesson?.historyCompanions?.[target]?.find((entry) =>
-          entry.text.includes(target) && hanChars(entry.text).every((char) => learnedChars.has(char) && !coolingDown(char)))
-        : undefined;
-      const { textbookHint: _originalHint, ...originalFields } = original;
-      const word = companion
-        ? { ...originalFields, text: companion.text, pinyin: companion.pinyin, ...(companion.textbookHint ? { textbookHint: companion.textbookHint } : {}) }
-        : original;
+    .map((word, sourceIndex) => {
+      const isOfficial = officialIds.has(word.id);
       const chars = fullDictationCharsForWord(word);
       const targets = chars.filter((char) => learnedChars.has(char));
       const rank = (isOfficial ? 4 : hanChars(word.text).length > 1 ? 2 : 0) + Number(Boolean(word.textbookHint));
-      const source = isOfficial ? "词语表" : companion ? "课文取词" : undefined;
+      const source = isOfficial ? "词语表" : "课文取词";
       return { word, sourceIndex, order: orderForWord(word), rank, chars, targets, source, hasKnownMistake: targets.some(hasMistake) };
     })
     .filter((candidate) => !candidate.chars.some(coolingDown))
@@ -367,14 +342,11 @@ export const generateScreeningPractice = (
       }
     }
 
-    const selected = new Map<string, { word: DictationWord; hasKnownMistake: boolean; source?: string }>();
+    const selected = new Map<string, (typeof candidates)[number]>();
     for (const candidate of eligible) {
-      const chars = candidate.targets.filter((char) => bestByChar.get(char) === candidate);
-      if (!chars.length) continue;
+      if (!candidate.targets.some((char) => bestByChar.get(char) === candidate)) continue;
       const key = `${candidate.word.text}\u0000${candidate.word.pinyin}`;
-      const existing = selected.get(key);
-      if (existing) existing.word.chars = uniqueChars([...existing.word.chars, ...chars]);
-      else selected.set(key, { word: { ...candidate.word, chars }, hasKnownMistake, source: candidate.source });
+      if (!selected.has(key)) selected.set(key, candidate);
     }
     return [...selected.values()];
   };
@@ -392,7 +364,7 @@ export const generateScreeningPractice = (
   return page.map(({ word, hasKnownMistake, source }, index) => ({
     word,
     score: targetCount - index,
-    reasons: [hasKnownMistake ? "错字再练" : "历史新字", ...(source ? [source] : [])],
+    reasons: [hasKnownMistake ? "错字再练" : "历史新字", source],
   }));
 };
 

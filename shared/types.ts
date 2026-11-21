@@ -41,9 +41,8 @@ export interface Lesson {
   directDictation?: boolean;
   words: DictationWord[];
   textbookWords?: DictationWord[];
+  dictationWords?: DictationWord[];
   textCompanions?: CompanionDictionary;
-  historyCompanions?: CompanionDictionary;
-  reviewedPrompts?: CompanionDictionary;
   classicalTexts?: ClassicalText[];
 }
 
@@ -52,7 +51,7 @@ export interface Progress {
   lessonId: string;
 }
 
-export type LessonSummary = Omit<Lesson, "words" | "textbookWords" | "textCompanions" | "historyCompanions" | "reviewedPrompts" | "classicalTexts">;
+export type LessonSummary = Omit<Lesson, "words" | "textbookWords" | "dictationWords" | "textCompanions" | "classicalTexts">;
 export type PracticeLesson = LessonSummary & Pick<Lesson, "classicalTexts">;
 
 export interface PracticeStats {

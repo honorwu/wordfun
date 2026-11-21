@@ -1,6 +1,7 @@
+import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { defaultCatalogDatabasePath } from "../server/config.mjs";
-import { getCompanionWords, getLessons } from "../server/db/catalog.mjs";
+import { getLessons } from "../server/db/catalog.mjs";
 import { isVocabularyLesson, lessonOrder } from "../shared/domain/catalog.ts";
 import { hanLength } from "../shared/domain/characters.ts";
 import { generateCurrentLessonPractice, generateScreeningPractice } from "../shared/domain/practice.ts";
@@ -10,12 +11,19 @@ const catalog = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true })
 try {
   const lessons = getLessons(catalog).sort((left, right) => lessonOrder(left) - lessonOrder(right));
   const lessonsById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
-  const companions = getCompanionWords(catalog);
   const last = lessons.at(-1);
   if (!last) throw new Error("词库没有可审计的课次");
   const boundary = { ...last, id: "coverage-end", sortOrder: (last.sortOrder ?? last.number) + 1, words: [], textbookWords: [] };
   const simulation = (lesson) => createDefaultState({ grade: lesson.grade, lessonId: lesson.id });
-  const history = generateScreeningPractice([...lessons, boundary], simulation(boundary), Number.MAX_SAFE_INTEGER, companions);
+  const current = lessons.filter(isVocabularyLesson).flatMap((lesson) =>
+    generateCurrentLessonPractice(lessons, simulation(lesson)).map(({ word }) => word));
+  const currentById = new Map(current.map((word) => [word.id, word]));
+  const historyFor = (lesson, scope = lessons) => {
+    const words = generateScreeningPractice(scope, simulation(lesson), Number.MAX_SAFE_INTEGER).map(({ word }) => word);
+    for (const word of words) assert.strictEqual(word, currentById.get(word.id), `历史题与当课题不一致：${word.lessonTitle} · ${word.text}`);
+    return words;
+  };
+  const isBareSingle = (word) => hanLength(word.text) === 1 && !word.textbookHint;
 
   const audit = (words) => {
     const single = words.filter((word) => hanLength(word.text) === 1);
@@ -24,6 +32,7 @@ try {
       stats: {
         total: words.length,
         single: single.length,
+        singleWithoutHint: single.filter(isBareSingle).length,
         distinctSingle: new Set(single.map((word) => word.text)).size,
         withoutSentence: withoutSentence.length,
         multiCharWithoutSentence: withoutSentence.filter((word) => hanLength(word.text) > 1).length,
@@ -39,11 +48,17 @@ try {
       })),
     };
   };
+  const historyProgress = lessons.map((lesson) => ({
+    grade: lesson.grade, term: lesson.unit, lesson: lesson.title, singleWithoutHint: historyFor(lesson).filter(isBareSingle).length,
+  }));
   console.log(JSON.stringify({
     textbookWords: audit(lessons.flatMap((lesson) => lesson.textbookWords ?? [])),
-    lessonPractice: audit(lessons.filter(isVocabularyLesson).flatMap((lesson) =>
-      generateCurrentLessonPractice(lessons, simulation(lesson), companions).map((item) => item.word))),
-    historyPractice: audit(history.map((item) => item.word)),
+    lessonPractice: audit(current),
+    historyPractice: audit(historyFor(boundary, [...lessons, boundary])),
+    historyProgress: {
+      checkedLessons: historyProgress.length,
+      withSingleWithoutHint: historyProgress.filter((row) => row.singleWithoutHint > 0),
+    },
   }, null, 2));
 } finally {
   catalog.close();

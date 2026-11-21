@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS words (
   id TEXT PRIMARY KEY,
   text TEXT NOT NULL,
   pinyin TEXT NOT NULL,
-  word_kind TEXT NOT NULL CHECK (word_kind IN ('textbook', 'supplement', 'classical_title', 'classical_line')),
+  word_kind TEXT NOT NULL CHECK (word_kind IN ('textbook', 'supplement', 'classical_title', 'classical_line', 'classical_full')),
   source_file TEXT NOT NULL REFERENCES source_files(path) ON DELETE RESTRICT,
   source_row INTEGER NOT NULL
 );
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS lesson_words (
   lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
   word_id TEXT NOT NULL REFERENCES words(id) ON DELETE CASCADE,
   word_order INTEGER NOT NULL,
-  source_column TEXT NOT NULL CHECK (source_column IN ('词语表', '未覆盖生字组词', '古诗词标题', '古诗词正文')),
+  source_column TEXT NOT NULL CHECK (source_column IN ('词语表', '未覆盖生字组词', '古诗词标题', '古诗词正文', '古诗词整篇')),
   target_char TEXT,
   UNIQUE (lesson_id, word_id, source_column, target_char)
 );
@@ -91,26 +91,20 @@ CREATE TABLE IF NOT EXISTS textbook_word_contexts (
   note TEXT
 );
 
-CREATE TABLE IF NOT EXISTS lesson_history_companions (
-  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
-  char TEXT NOT NULL,
-  word TEXT NOT NULL,
-  pinyin TEXT NOT NULL,
-  hint_text TEXT,
-  source_row INTEGER NOT NULL,
-  PRIMARY KEY (lesson_id, char)
+CREATE TABLE IF NOT EXISTS lesson_word_targets (
+  lesson_word_id TEXT NOT NULL REFERENCES lesson_words(id) ON DELETE CASCADE,
+  char TEXT NOT NULL REFERENCES characters(char),
+  target_order INTEGER NOT NULL,
+  PRIMARY KEY (lesson_word_id, char),
+  UNIQUE (lesson_word_id, target_order)
 );
 
-CREATE TABLE IF NOT EXISTS lesson_reviewed_prompts (
-  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
-  char TEXT NOT NULL REFERENCES characters(char),
-  word TEXT NOT NULL CHECK (instr(word, char) > 0),
-  pinyin TEXT NOT NULL,
-  hint_text TEXT CHECK (word <> char OR (hint_text IS NOT NULL AND instr(hint_text, '〔　〕') > 0)),
+CREATE TABLE IF NOT EXISTS lesson_supplement_contexts (
+  lesson_word_id TEXT PRIMARY KEY REFERENCES lesson_words(id) ON DELETE CASCADE,
+  hint_text TEXT,
   context_kind TEXT NOT NULL,
   source_text TEXT NOT NULL,
-  source_rows TEXT NOT NULL,
-  PRIMARY KEY (lesson_id, char)
+  source_rows TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS lesson_uncovered_characters (

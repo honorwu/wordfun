@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { defaultCatalogDatabasePath, defaultStudentId, getCompanionWords, getLessons, getState, openLearningDatabase, saveState } from "../server/db.mjs";
+import { defaultCatalogDatabasePath, defaultStudentId, getLessons, getState, openLearningDatabase, saveState } from "../server/db.mjs";
 import { createCatalogService } from "../server/services/catalog.mjs";
 import { buildBookCharacterIndex, characterMastery, groupCharacterMastery, learnedTextbookChars } from "../shared/domain/characterMastery.ts";
 import { getScreeningTargetChars } from "../shared/domain/practice.ts";
@@ -23,16 +23,23 @@ test("新词库仅包含五册材料，课次、册末词和可用提示完整�
     const context = db.prepare("SELECT COUNT(*) AS total, COUNT(hint_text) AS ready FROM textbook_word_contexts").get();
     assert.equal(context.total, 1289);
     assert.equal(context.ready, 1249);
-    const fortress = db.prepare(`SELECT word, pinyin, hint_text FROM lesson_history_companions
-      JOIN lessons ON lessons.id = lesson_history_companions.lesson_id WHERE title = '长城' AND char = '垒'`).get();
+    const supplement = db.prepare(`SELECT w.text AS word, w.pinyin, c.hint_text
+      FROM lesson_words lw JOIN lessons l ON l.id = lw.lesson_id JOIN words w ON w.id = lw.word_id
+      JOIN lesson_word_targets t ON t.lesson_word_id = lw.id
+      JOIN lesson_supplement_contexts c ON c.lesson_word_id = lw.id
+      WHERE l.title = ? AND t.char = ?`);
+    const fortress = supplement.get("长城", "垒");
     assert.equal(fortress.word, "堡垒");
     assert.equal(fortress.pinyin, "bǎo lěi");
     assert.match(fortress.hint_text, /是屯兵的〔　〕/u);
-    const screen = db.prepare(`SELECT word, pinyin, hint_text FROM lesson_history_companions
-      JOIN lessons ON lessons.id = lesson_history_companions.lesson_id WHERE title = '夜间飞行的秘密' AND char = '屏'`).get();
+    const screen = supplement.get("夜间飞行的秘密", "屏");
     assert.equal(screen.word, "荧光屏");
     assert.equal(screen.pinyin, "yíng guāng píng");
-    assert.match(screen.hint_text, /雷达接收到后显示在〔　〕上/u);
+    assert.match(screen.hint_text, /雷达.*〔　〕上/u);
+    const mix = supplement.get("肥皂泡", "和");
+    assert.equal(mix.word, "和弄");
+    assert.equal(mix.pinyin, "huò nòng");
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM lesson_word_targets").get().n, 1617);
     assert.equal(db.prepare("SELECT unit_index FROM lessons WHERE title = ?").get("一匹出色的马").unit_index, 2);
     assert.ok(db.prepare("SELECT 1 FROM lessons WHERE title = ?").get("曹冲称象"));
     assert.equal(db.prepare("PRAGMA foreign_key_check").get(), undefined);
@@ -63,10 +70,6 @@ test("教材句子保留本题空位，其他目标字用带声调拼音；多�
 test("当课和历史复习读取已审阅的补充题，保留教材提示并遵守错字间隔", () => {
   const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
   try {
-    const approved = db.prepare("SELECT char, word, hint_text FROM lesson_reviewed_prompts").all();
-    assert.equal(approved.length, 282);
-    assert.equal(approved.filter((entry) => entry.char !== entry.word).length, 186);
-    assert.ok(approved.filter((entry) => entry.char === entry.word).every((entry) => entry.hint_text.includes("〔　〕")));
     const catalog = createCatalogService(db);
     const lessons = catalog.summaries();
     const lesson = lessons.find((entry) => entry.title === "朱德的扁担");
@@ -81,13 +84,14 @@ test("当课和历史复习读取已审阅的补充题，保留教材提示并�
 
     const next = lessons[lessons.indexOf(lesson) + 1];
     const progress = { grade: next.grade, lessonId: next.id };
-    const learned = getScreeningTargetChars(getLessons(db), progress, getCompanionWords(db));
+    const learned = getScreeningTargetChars(getLessons(db), progress);
     const mastered = Object.fromEntries(learned.map((char) => [char, { attempts: 1, mistakes: 0, streak: 1 }]));
     const recentlyMissed = { attempts: 1, mistakes: 1, streak: 0, lastReviewedAt: new Date().toISOString() };
     assert.equal(catalog.practice(progress, { ...mastered, 德: recentlyMissed }, "history").items.length, 0);
     const due = { ...recentlyMissed, lastReviewedAt: new Date(Date.now() - 6 * 86400000).toISOString() };
     const history = catalog.practice(progress, { ...mastered, 德: due }, "history");
     assert.deepEqual(history.items.map(({ word }) => word.text), ["朱德"]);
+    assert.deepEqual(history.items[0].word, names[0].word);
     assert.match(history.items[0].word.textbookHint, /〔　〕同志/u);
   } finally { db.close(); }
 });
@@ -99,6 +103,33 @@ test("根据原有计分证据区分四类字，不把零次作答算成掌握",
   assert.equal(outcome(1, 0), "mastered");
   assert.equal(outcome(2, 1), "pending");
   assert.equal(outcome(3, 1), "corrected");
+});
+
+test("四上语文园地六优先考词语表，再用拉萨、哈尼等教材原词", () => {
+  const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
+  try {
+    const catalog = createCatalogService(db);
+    const lessons = catalog.summaries();
+    const garden = lessons.find((item) => item.grade === 4 && item.unit === 1 && item.title === "语文园地六");
+    const progress = { grade: garden.grade, lessonId: garden.id };
+    const current = catalog.practice(progress, {});
+    assert.deepEqual(current.items.slice(0, 3).map(({ word }) => word.text), ["陵寝", "景观", "丝绸"]);
+    const byText = new Map(current.items.map(({ word }) => [word.text, word]));
+    assert.deepEqual(new Set(byText.keys()), new Set(["陵寝", "景观", "丝绸", "拉萨", "大昭寺", "都江堰", "哈尼", "长廊"]));
+    assert.equal(byText.get("拉萨").pinyin, "lā sà");
+    assert.match(byText.get("拉萨").textbookHint, /〔　〕布达拉宫/u);
+    assert.match(byText.get("长廊").textbookHint, /这条〔　〕有七百多米长/u);
+    assert.ok(current.items.slice(3).every(({ word }) => word.textbookHint?.includes("〔　〕")));
+
+    const next = lessons[lessons.indexOf(garden) + 1];
+    const historyProgress = { grade: next.grade, lessonId: next.id };
+    const learned = getScreeningTargetChars(getLessons(db), historyProgress);
+    const mastered = Object.fromEntries(learned.filter((char) => char !== "萨").map((char) => [char, { attempts: 1, mistakes: 0, streak: 1 }]));
+    const { items } = catalog.practice(historyProgress, mastered, "history");
+    assert.deepEqual(items.map(({ word }) => word.text), ["拉萨"]);
+    assert.deepEqual(items[0].word, byText.get("拉萨"));
+    assert.match(items[0].word.textbookHint, /〔　〕布达拉宫/u);
+  } finally { db.close(); }
 });
 
 test("家长看板跨册去重，按字首次出现的课次区分已学未测和后续生字", () => {
@@ -126,12 +157,11 @@ test("教材库里的已学字等于当课和历史可考的字词目标之并�
   try {
     const catalog = createCatalogService(db);
     const lessons = getLessons(db);
-    const companions = getCompanionWords(db);
     const books = catalog.characterBooks();
     for (const lesson of [lessons[0], lessons.find((row) => row.title === "颐和园"), lessons.find((row) => row.lessonKind === "classical_poetry")]) {
       const progress = { grade: lesson.grade, lessonId: lesson.id };
       const currentChars = lesson.lessonKind === "classical_poetry" ? [] : catalog.practice(progress, {}).items.flatMap((item) => item.word.chars);
-      const historyChars = getScreeningTargetChars(lessons, progress, companions);
+      const historyChars = getScreeningTargetChars(lessons, progress);
       assert.deepEqual(learnedTextbookChars(books, lesson), new Set([...historyChars, ...currentChars]), lesson.title);
     }
   } finally { db.close(); }

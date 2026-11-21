@@ -7,9 +7,10 @@ import { hasTable, runTransaction } from "../server/db/query.mjs";
 import { catalogSchemaSql } from "../server/db/schema.mjs";
 import { hanChars, readMaterials, stableId } from "./textbook/materials.mjs";
 import { resolveReviewedPrompts } from "./textbook/reviewed-prompts.mjs";
+import { compileSupplementWords } from "./textbook/dictation-words.mjs";
 
 const writeCatalog = (db, { lessons, sources, wordSource }) => {
-  const reviewedPrompts = resolveReviewedPrompts(lessons, sources);
+  const reviewedPrompts = Map.groupBy(resolveReviewedPrompts(lessons, sources), (entry) => entry.lessonId);
   db.exec(catalogSchemaSql);
   const insert = (table, columns, prefix = "INSERT") =>
     db.prepare(`${prefix} INTO ${table} (${columns}) VALUES (${columns.split(", ").map(() => "?").join(", ")})`);
@@ -21,12 +22,12 @@ const writeCatalog = (db, { lessons, sources, wordSource }) => {
   const insertWordChar = insert("word_characters", "word_id, char, char_order");
   const insertLessonWord = insert("lesson_words", "id, lesson_id, word_id, word_order, source_column");
   const insertContext = insert("textbook_word_contexts", "lesson_word_id, entry_id, context_type, context_text, original_context_text, hint_text, context_pdf_pages, wordlist_pdf_page, note");
-  const insertHistoryCompanion = insert("lesson_history_companions", "lesson_id, char, word, pinyin, hint_text, source_row");
-  const insertReviewedPrompt = insert("lesson_reviewed_prompts", "lesson_id, char, word, pinyin, hint_text, context_kind, source_text, source_rows");
+  const insertTarget = insert("lesson_word_targets", "lesson_word_id, char, target_order");
+  const insertSupplementContext = insert("lesson_supplement_contexts", "lesson_word_id, hint_text, context_kind, source_text, source_rows");
   const insertPoem = insert("classical_texts", "id, lesson_id, grade, term, unit_index, title, title_pinyin, author, dynasty, source_file, text_order");
   const insertLine = insert("classical_lines", "text_id, line_order, text, pinyin");
   runTransaction(db, () => {
-    insert("catalog_meta", "key, value").run("source_format", "dictation-textbook-v2");
+    insert("catalog_meta", "key, value").run("source_format", "dictation-textbook-v3");
     for (const [source, { kind, grade, term, content }] of sources) {
       insertSource.run(source, kind, grade, term, createHash("sha256").update(content).digest("hex"));
     }
@@ -57,13 +58,25 @@ const writeCatalog = (db, { lessons, sources, wordSource }) => {
         const poemId = stableId("textbook-classical", id, poem.title);
         insertPoem.run(poemId, id, grade, term, unitIndex, poem.title, poem.titlePinyin, poem.author, poem.dynasty, source, order);
         poem.lines.forEach((line, index) => insertLine.run(poemId, index, line.text, line.pinyin));
+        const wordId = `${poemId}-full`;
+        const text = [poem.title, poem.dynasty, poem.author, poem.lines.map((line) => line.text).join("\n")].filter(Boolean).join("\n");
+        const pinyin = [poem.titlePinyin, poem.lines.map((line) => line.pinyin).join("\n")].filter(Boolean).join("\n");
+        insertWord.run(wordId, text, pinyin, "classical_full", source, 1);
+        hanChars(text).forEach((char, index) => insertWordChar.run(wordId, char, index));
+        insertLessonWord.run(`poem-${poemId}`, id, wordId, order, "古诗词整篇");
       }
-      for (const { char, word, pinyin, hint, sourceRow } of lesson.historyCompanions ?? []) {
-        insertHistoryCompanion.run(id, char, word, pinyin, hint, sourceRow);
+      if (classical) continue;
+      const supplements = compileSupplementWords(lesson, reviewedPrompts.get(id) ?? []);
+      for (const [index, { prompt, targets }] of supplements.entries()) {
+        const { word, pinyin, hint, kind, source: excerpt, rows } = prompt;
+        const wordId = stableId("supplement-word", id, word, pinyin);
+        const lessonWordId = `${id}-char-${targets[0]}`;
+        insertWord.run(wordId, word, pinyin, "supplement", source, rows[0]);
+        hanChars(word).forEach((char, order) => insertWordChar.run(wordId, char, order));
+        insertLessonWord.run(lessonWordId, id, wordId, words.length + index, "未覆盖生字组词");
+        targets.forEach((char, order) => insertTarget.run(lessonWordId, char, order));
+        insertSupplementContext.run(lessonWordId, hint, kind, excerpt, rows.join("、"));
       }
-    }
-    for (const { lessonId, char, word, pinyin, hint, kind, source, rows } of reviewedPrompts) {
-      insertReviewedPrompt.run(lessonId, char, word, pinyin, hint, kind, source, rows.join("、"));
     }
   });
 };
@@ -94,8 +107,9 @@ try {
       lessons: db.prepare("SELECT COUNT(*) AS count FROM lessons").get().count,
       textbookWords: db.prepare("SELECT COUNT(*) AS count FROM textbook_words").get().count,
       textbookHints: db.prepare("SELECT COUNT(hint_text) AS count FROM textbook_word_contexts").get().count,
-      historyCompanions: db.prepare("SELECT COUNT(*) AS count FROM lesson_history_companions").get().count,
-      reviewedPrompts: db.prepare("SELECT COUNT(*) AS count FROM lesson_reviewed_prompts").get().count,
+      supplementWords: db.prepare("SELECT COUNT(*) AS count FROM lesson_words WHERE source_column = '未覆盖生字组词'").get().count,
+      supplementTargets: db.prepare("SELECT COUNT(*) AS count FROM lesson_word_targets").get().count,
+      poemPrompts: db.prepare("SELECT COUNT(*) AS count FROM lesson_words WHERE source_column = '古诗词整篇'").get().count,
     }, null, 2));
   } finally { db.close(); }
   renameSync(filename, defaultCatalogDatabasePath);

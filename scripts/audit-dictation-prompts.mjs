@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { getCompanionWords, getLessons, requireCatalogDatabase } from "../server/db.mjs";
+import { getLessons, requireCatalogDatabase } from "../server/db.mjs";
+import { hanLength } from "../shared/domain/characters.ts";
 import {
   applyReviewResult, charReviewKey, generateCurrentLessonPractice, generateScreeningPractice,
   getScreeningTargetChars, fullDictationCharsForWord, lessonOrder,
@@ -8,7 +9,6 @@ const catalogDb = requireCatalogDatabase();
 
 try {
   const lessons = getLessons(catalogDb);
-  const companionWords = getCompanionWords(catalogDb);
   const regularLessons = lessons.filter((lesson) => lesson.lessonKind !== "classical_poetry");
   const duplicatePrompts = [];
   const coverageErrors = [];
@@ -24,7 +24,7 @@ try {
       charStats: {},
       logs: [],
     };
-    const items = generateCurrentLessonPractice(lessons, state, companionWords);
+    const items = generateCurrentLessonPractice(lessons, state);
     const textbookWords = lesson.textbookWords ?? [];
     const textbookPrompts = new Set(textbookWords.map(promptKey));
     const textbookChars = new Set(textbookWords.flatMap(fullDictationCharsForWord));
@@ -34,6 +34,9 @@ try {
 
     const seenPrompts = new Set();
     for (const item of items) {
+      if (hanLength(item.word.text) === 1 && !item.word.textbookHint) {
+        coverageErrors.push(`${lesson.title}：单字 ${item.word.text} 缺少教材提示`);
+      }
       const key = promptKey(item.word);
       if (seenPrompts.has(key)) {
         duplicatePrompts.push(`${lesson.title}：${item.word.text}`);
@@ -72,15 +75,16 @@ try {
   const cricketLesson = lessons.find((lesson) => lesson.grade === 4 && lesson.unit === 1 && lesson.number === 10);
   assert.equal(cricketLesson?.title, "蟋蟀的住宅");
   const state = { progress: { grade: 4, lessonId: cricketLesson.id }, wordStats: {}, charStats: {}, logs: [] };
-  const items = generateCurrentLessonPractice(lessons, state, companionWords);
-  assert.equal(items.length, 24);
+  const items = generateCurrentLessonPractice(lessons, state);
+  assert.equal(items.length, 23);
+  assert.deepEqual(new Set(items.find(({ word }) => word.text === "蟋蟀").word.chars), new Set(["蟋", "蟀"]));
   assert.deepEqual(items.slice(0, 10).map((item) => item.word.text), ["住宅", "选择", "住址", "大厅", "柔弱", "平坦", "光滑", "修理", "重要", "增长"]);
   const masteredState = {
     ...state,
     charStats: Object.fromEntries(items.flatMap((item) => item.word.chars).map((char) => [char, { attempts: 1, mistakes: 0, streak: 1 }])),
   };
-  assert.deepEqual(generateCurrentLessonPractice(lessons, masteredState, companionWords).slice(0, 10).map((item) => item.word.text), items.slice(0, 10).map((item) => item.word.text));
-  assert.equal(generateCurrentLessonPractice(lessons, masteredState, companionWords).length, items.length);
+  assert.deepEqual(generateCurrentLessonPractice(lessons, masteredState).slice(0, 10).map((item) => item.word.text), items.slice(0, 10).map((item) => item.word.text));
+  assert.equal(generateCurrentLessonPractice(lessons, masteredState).length, items.length);
 
   const flatItem = items.find((item) => item.word.text === "平坦");
   assert.deepEqual(flatItem.word.chars, ["平", "坦"]);
@@ -91,25 +95,26 @@ try {
   const nextLesson = lessons.find((lesson) => lesson.grade === 4 && lesson.unit === 1 && lesson.number === 11);
   assert.ok(nextLesson);
   const historyState = { ...state, progress: { grade: 4, lessonId: nextLesson.id } };
-  const historyChars = getScreeningTargetChars(lessons, historyState.progress, companionWords);
+  const historyChars = getScreeningTargetChars(lessons, historyState.progress);
   for (const char of ["柔", "弱", "平", "坦", "光", "滑"]) assert.ok(historyChars.includes(char));
   const selectiveHistoryState = {
     ...historyState,
     charStats: Object.fromEntries(historyChars.filter((char) => char !== "坦").map((char) => [char, { attempts: 1, mistakes: 0, streak: 1 }])),
   };
-  const selectiveHistory = generateScreeningPractice(lessons, selectiveHistoryState, 20, companionWords);
-  assert.deepEqual(selectiveHistory.map((item) => [item.word.text, item.word.chars]), [["平坦", ["坦"]]]);
+  const selectiveHistory = generateScreeningPractice(lessons, selectiveHistoryState, 20);
+  assert.deepEqual(selectiveHistory.map((item) => [item.word.text, item.word.chars]), [["平坦", ["平", "坦"]]]);
   const recentMistakeState = { ...selectiveHistoryState, charStats: { ...selectiveHistoryState.charStats, 坦: { attempts: 1, mistakes: 1, streak: 0, lastReviewedAt: new Date().toISOString() } } };
-  assert.equal(generateScreeningPractice(lessons, recentMistakeState, 20, companionWords).length, 0);
+  assert.equal(generateScreeningPractice(lessons, recentMistakeState, 20).length, 0);
   recentMistakeState.charStats.坦.lastReviewedAt = new Date(Date.now() - 8 * 86400000).toISOString();
-  assert.equal(generateScreeningPractice(lessons, recentMistakeState, 20, companionWords)[0]?.word.text, "平坦");
-  assert.ok(generateScreeningPractice(lessons, historyState, 20, companionWords).every((item) => lessonOrder(lessons.find((lesson) => lesson.id === item.word.lessonId)) < lessonOrder(nextLesson)));
+  assert.equal(generateScreeningPractice(lessons, recentMistakeState, 20)[0]?.word.text, "平坦");
+  assert.ok(generateScreeningPractice(lessons, historyState, 20).every((item) => lessonOrder(lessons.find((lesson) => lesson.id === item.word.lessonId)) < lessonOrder(nextLesson)));
 
   const singleTextbookWord = { id: "single-textbook", text: "光", pinyin: "guāng", chars: ["光"], grade: 4, lessonId: "single-lesson", lessonTitle: "单字词", category: "一类" };
   const singleLesson = {
     id: "single-lesson", grade: 4, unit: 1, number: 1, title: "单字词",
     words: [{ ...singleTextbookWord, id: "single-character" }],
     textbookWords: [singleTextbookWord],
+    dictationWords: [singleTextbookWord],
     textCompanions: { 光: [{ text: "光滑", pinyin: "guāng huá", chars: ["光", "滑"] }] },
   };
   assert.deepEqual(generateCurrentLessonPractice([singleLesson], { ...state, progress: { grade: 4, lessonId: singleLesson.id } }).map((item) => item.word.text), ["光"]);

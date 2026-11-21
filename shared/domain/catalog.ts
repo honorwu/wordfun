@@ -1,5 +1,5 @@
 import type { CompanionDictionary, DictationWord, Lesson, Progress } from "../types.ts";
-import { hanChars, uniqueChars, hanLength, reviewCharsForWord, fullDictationCharsForWord } from "./characters.ts";
+import { hanChars, uniqueChars, hanLength } from "./characters.ts";
 
 export const lessonOrder = (lesson: Pick<Lesson, "grade" | "unit" | "number" | "sortOrder">) =>
   lesson.grade * 10000 + lesson.unit * 1000 + (lesson.sortOrder ?? lesson.number);
@@ -24,25 +24,10 @@ export const getEligibleCharacterWords = (lessons: Lesson[], progress: Progress,
   return withDictationCompanions(words, lessons, companionWords);
 };
 
-export const getDictationWords = (lessons: Lesson[], companionWords: CompanionDictionary = {}, { keepCompanionsInScope = false } = {}) => {
-  const words = lessons.flatMap((lesson) => {
-    const textbookWords = (lesson.textbookWords ?? []).map((word) => ({
-      ...word,
-      chars: fullDictationCharsForWord(word),
-    }));
-    const coveredChars = new Set(textbookWords.flatMap((word) => word.chars));
-    const uncoveredWords = lesson.words.flatMap((word) => {
-      const chars = reviewCharsForWord(word).filter((char) => !coveredChars.has(char));
-      return chars.length > 0 ? [{ ...word, chars }] : [];
-    });
-    return [...textbookWords, ...uncoveredWords];
-  });
+export const getDictationWords = (lessons: Lesson[]) => lessons.flatMap((lesson) => lesson.dictationWords ?? []);
 
-  return withDictationCompanions(words, lessons, companionWords, { keepCompanionsInScope, useReviewedPrompts: !keepCompanionsInScope });
-};
-
-export const getEligibleWords = (lessons: Lesson[], progress: Progress, companionWords: CompanionDictionary = {}) =>
-  getDictationWords(getEligibleLessons(lessons, progress), companionWords);
+export const getEligibleWords = (lessons: Lesson[], progress: Progress) =>
+  getDictationWords(getEligibleLessons(lessons, progress).filter(isVocabularyLesson));
 
 const directDictationLessonTitles = new Set([
   "对韵歌",
@@ -128,6 +113,7 @@ const mergeSameCompanionWords = (words: DictationWord[]) => {
     mergedByPrompt.set(key, {
       ...existing,
       chars: uniqueChars([...existing.chars, ...word.chars]),
+      ...(word.textbookHint && !existing.textbookHint ? { textbookHint: word.textbookHint } : {}),
       category: existing.category === "一类" || word.category === "一类" ? "一类" : "二类",
     });
   }
@@ -138,7 +124,6 @@ const withDictationCompanions = (
   words: DictationWord[],
   lessons: Lesson[],
   companionWords: CompanionDictionary,
-  { keepCompanionsInScope = false, useReviewedPrompts = false } = {},
 ) => {
   const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
   const textbookWordIds = new Set(lessons.flatMap((lesson) => (lesson.textbookWords ?? []).map((word) => word.id)));
@@ -153,18 +138,12 @@ const withDictationCompanions = (
 
     const targetChar = chars[0];
     const lesson = lessonById.get(word.lessonId);
-    const reviewed = useReviewedPrompts ? lesson?.reviewedPrompts?.[targetChar]?.[0] : undefined;
-    if (reviewed) return companionWord(word, reviewed);
-
-    const inScope = (candidate: { text: string }) => !keepCompanionsInScope
-      || (candidate.text.includes(targetChar) && hanChars(candidate.text).every((char) => eligibleChars.has(char)));
-    const fixedCompanion = [...(lesson?.textCompanions?.[targetChar] ?? []), ...(companionWords[targetChar] ?? [])].find(inScope);
+    const fixedCompanion = lesson?.textCompanions?.[targetChar]?.[0] ?? companionWords[targetChar]?.[0];
     if (fixedCompanion) {
       return companionWord(word, fixedCompanion);
     }
 
     const existingCompanion = (candidatesByChar.get(targetChar) ?? [])
-      .filter(inScope)
       .map((candidate) => ({ candidate, score: companionScore(word, candidate, targetChar, eligibleChars) }))
       .sort((a, b) => b.score - a.score || hanLength(a.candidate.text) - hanLength(b.candidate.text))[0]?.candidate;
 

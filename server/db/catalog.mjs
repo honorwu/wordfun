@@ -4,6 +4,8 @@ export const normalizeCategory = (category) => (category === "一类" ? "一类"
 
 export const getLessons = (catalogDb) => {
   const hasContexts = hasTable(catalogDb, "textbook_word_contexts");
+  const storedQuestions = hasTable(catalogDb, "catalog_meta")
+    && catalogDb.prepare("SELECT value FROM catalog_meta WHERE key = 'source_format'").get()?.value === "dictation-textbook-v3";
   const lessons = allRows(
     catalogDb,
     `SELECT id, grade, term AS unit, lesson_number AS number, sort_order, title, lesson_kind, direct_dictation
@@ -46,13 +48,10 @@ export const getLessons = (catalogDb) => {
     catalogDb,
     "SELECT lesson_id, char, word, pinyin FROM char_companion_words ORDER BY lesson_id, char, companion_rank",
   );
-  const historyCompanionRows = hasTable(catalogDb, "lesson_history_companions")
-    ? allRows(catalogDb, "SELECT lesson_id, char, word, pinyin, hint_text FROM lesson_history_companions")
+  const targetRows = storedQuestions
+    ? allRows(catalogDb, "SELECT lesson_word_id, char FROM lesson_word_targets ORDER BY lesson_word_id, target_order")
     : [];
-  const reviewedPromptRows = hasTable(catalogDb, "lesson_reviewed_prompts")
-    ? allRows(catalogDb, "SELECT lesson_id, char, word, pinyin, hint_text FROM lesson_reviewed_prompts")
-    : [];
-  const textbookRows = allRows(
+  const wordRows = allRows(
     catalogDb,
     `SELECT
        lw.id,
@@ -60,7 +59,8 @@ export const getLessons = (catalogDb) => {
        w.text,
        w.pinyin,
        lw.word_order,
-       ${hasContexts ? "context.hint_text" : "NULL"} AS hint_text,
+       lw.source_column,
+       COALESCE(${hasContexts ? "context.hint_text" : "NULL"}, ${storedQuestions ? "supplement.hint_text" : "NULL"}) AS hint_text,
        l.grade,
        l.title AS lesson_title,
        CASE
@@ -79,7 +79,8 @@ export const getLessons = (catalogDb) => {
      JOIN words w ON w.id = lw.word_id
      JOIN lessons l ON l.id = lw.lesson_id
      ${hasContexts ? "LEFT JOIN textbook_word_contexts context ON context.lesson_word_id = lw.id" : ""}
-     WHERE lw.source_column = '词语表'
+     ${storedQuestions ? "LEFT JOIN lesson_supplement_contexts supplement ON supplement.lesson_word_id = lw.id" : ""}
+     WHERE lw.source_column IN (${storedQuestions ? "'词语表', '未覆盖生字组词', '古诗词整篇'" : "'词语表'"})
     ORDER BY lw.lesson_id, lw.word_order`,
   );
   const classicalTextRows = allRows(
@@ -96,6 +97,7 @@ export const getLessons = (catalogDb) => {
      ORDER BY text_id, line_order`,
   );
   const wordsByLesson = new Map();
+  const writingCharsByLesson = new Map();
   for (const row of words) {
     const word = {
       id: `${row.lesson_id}-char-${row.char}`,
@@ -108,21 +110,36 @@ export const getLessons = (catalogDb) => {
       category: normalizeCategory(row.category),
     };
     wordsByLesson.set(row.lesson_id, [...(wordsByLesson.get(row.lesson_id) || []), word]);
+    if (word.category === "一类") {
+      const writingChars = writingCharsByLesson.get(row.lesson_id) ?? new Set();
+      writingChars.add(row.char);
+      writingCharsByLesson.set(row.lesson_id, writingChars);
+    }
   }
   const textbookWordsByLesson = new Map();
-  for (const row of textbookRows) {
+  const storedWordsByLesson = new Map();
+  const targetsByWord = Map.groupBy(targetRows, (row) => row.lesson_word_id);
+  for (const row of wordRows) {
+    const isPoem = row.source_column === "古诗词整篇";
+    const targets = targetsByWord.get(row.id);
+    const category = targets
+      ? (targets.some(({ char }) => writingCharsByLesson.get(row.lesson_id)?.has(char)) ? "一类" : "二类")
+      : isPoem ? "一类" : normalizeCategory(row.category);
     const word = {
       id: row.id,
       text: row.text,
       pinyin: row.pinyin,
-      chars: Array.from(row.text).filter((char) => /\p{Script=Han}/u.test(char)),
+      chars: targets?.map(({ char }) => char) ?? [...new Set(Array.from(row.text).filter((char) => /\p{Script=Han}/u.test(char)))],
       ...(row.hint_text ? { textbookHint: row.hint_text } : {}),
       grade: row.grade,
       lessonId: row.lesson_id,
-      lessonTitle: row.lesson_title,
-      category: normalizeCategory(row.category),
+      lessonTitle: isPoem ? row.text.split("\n", 1)[0] : row.lesson_title,
+      category,
     };
-    textbookWordsByLesson.set(row.lesson_id, [...(textbookWordsByLesson.get(row.lesson_id) || []), word]);
+    storedWordsByLesson.set(row.lesson_id, [...(storedWordsByLesson.get(row.lesson_id) ?? []), word]);
+    if (row.source_column === "词语表") {
+      textbookWordsByLesson.set(row.lesson_id, [...(textbookWordsByLesson.get(row.lesson_id) ?? []), word]);
+    }
   }
   const indexCompanions = (rows) => {
     const byLesson = new Map();
@@ -130,15 +147,12 @@ export const getLessons = (catalogDb) => {
       const entry = byLesson.get(row.lesson_id) ?? {};
       (entry[row.char] ??= []).push({
         text: row.word, pinyin: row.pinyin, chars: Array.from(row.word).filter((char) => /\p{Script=Han}/u.test(char)),
-        ...(row.hint_text ? { textbookHint: row.hint_text } : {}),
       });
       byLesson.set(row.lesson_id, entry);
     }
     return byLesson;
   };
   const companionsByLesson = indexCompanions(companionRows);
-  const historyCompanionsByLesson = indexCompanions(historyCompanionRows);
-  const reviewedPromptsByLesson = indexCompanions(reviewedPromptRows);
   const classicalLinesByText = new Map();
   for (const row of classicalLineRows) {
     classicalLinesByText.set(row.text_id, [
@@ -169,9 +183,8 @@ export const getLessons = (catalogDb) => {
     directDictation: Boolean(lesson.direct_dictation),
     words: wordsByLesson.get(lesson.id) || [],
     textbookWords: textbookWordsByLesson.get(lesson.id) || [],
+    ...(storedQuestions ? { dictationWords: storedWordsByLesson.get(lesson.id) ?? [] } : {}),
     textCompanions: companionsByLesson.get(lesson.id) || {},
-    historyCompanions: historyCompanionsByLesson.get(lesson.id) || {},
-    reviewedPrompts: reviewedPromptsByLesson.get(lesson.id) || {},
     classicalTexts: classicalTextsByLesson.get(lesson.id) || [],
   }));
 };

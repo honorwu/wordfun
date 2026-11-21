@@ -10,7 +10,7 @@ import { createAppServer } from "../server/index.mjs";
 import { defaultCatalogDatabasePath, getCompanionWords, getLessons, getState, openLearningDatabase, saveState } from "../server/db.mjs";
 import {
   applyReviewResult, charReviewKey, generateCurrentLessonPractice, generatePoetryPractice,
-  generateScreeningPractice, getEligibleCharacterWords, getEligibleWords, getScreeningTargetChars,
+  generateScreeningPractice, getEligibleCharacterWords, getScreeningTargetChars,
   isHistoryCharCoolingDown, isMasteredChar, isPendingScreeningMistakeChar,
 } from "../src/lib/scheduler.ts";
 
@@ -18,24 +18,23 @@ test("服务端出题保持所有课次原有的题词、拼音、目标字及�
   const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
   try {
     const lessons = getLessons(db);
-    const companions = getCompanionWords(db);
     const catalog = createCatalogService(db);
     for (const lesson of lessons) {
       const progress = { grade: lesson.grade, lessonId: lesson.id };
       const state = { progress, charStats: {}, wordStats: {}, logs: [], wordIssues: [] };
-      const expected = lesson.lessonKind === "classical_poetry" ? generatePoetryPractice(lesson) : generateCurrentLessonPractice(lessons, state, companions);
+      const expected = lesson.lessonKind === "classical_poetry" ? generatePoetryPractice(lesson) : generateCurrentLessonPractice(lessons, state);
       assert.deepEqual(catalog.practice(progress, {}).items, expected, lesson.id);
     }
     for (const lesson of [lessons[0], lessons[Math.floor(lessons.length / 2)], lessons.at(-1)]) {
       const progress = { grade: lesson.grade, lessonId: lesson.id };
-      const chars = getScreeningTargetChars(lessons, progress, companions);
+      const chars = getScreeningTargetChars(lessons, progress);
       const charStats = Object.fromEntries(chars.map((char, index) => [char, {
         attempts: index % 4 ? 1 : 0, mistakes: index % 4 && index % 3 === 0 ? 1 : 0, streak: 0,
         lastReviewedAt: index % 2 ? new Date().toISOString() : "2020-01-01T00:00:00.000Z",
       }]));
       const state = { progress, charStats, wordStats: {}, logs: [], wordIssues: [] };
       const actual = catalog.practice(progress, charStats, "history");
-      assert.deepEqual(actual.items, generateScreeningPractice(lessons, state, 20, companions));
+      assert.deepEqual(actual.items, generateScreeningPractice(lessons, state, 20));
       assert.deepEqual(actual.stats, {
         historyTotal: chars.length,
         historyReviewed: chars.filter((char) => isMasteredChar(charStats[char])).length,
@@ -91,7 +90,9 @@ test("启动仅返回目录与当前题；历史记录延迟读取，合并保�
     const startup = JSON.parse(raw);
     assert.ok(Buffer.byteLength(raw) < 100_000);
     assert.equal(startup.lessons.length, getLessons(catalogDb).length);
-    assert.ok(startup.lessons.every((lesson) => !('words' in lesson) && !('textbookWords' in lesson) && !('textCompanions' in lesson) && !('historyCompanions' in lesson)));
+    assert.ok(startup.lessons.every((lesson) => [
+      "words", "textbookWords", "textCompanions", "dictationWords",
+    ].every((key) => !(key in lesson))));
     assert.ok(!('companionWords' in startup));
     assert.deepEqual(startup.state.logs, []);
     assert.equal(startup.activity.length, 2);
@@ -125,10 +126,9 @@ test("启动仅返回目录与当前题；历史记录延迟读取，合并保�
     const lessons = getLessons(catalogDb);
     const companions = getCompanionWords(catalogDb);
     const oldIndex = new Map([
-      ...lessons.flatMap((lesson) => [...lesson.words, ...(lesson.textbookWords ?? [])]),
-      ...lessons.filter((lesson) => lesson.lessonKind === "classical_poetry").flatMap((lesson) => generatePoetryPractice(lesson).map((item) => item.word)),
+      ...lessons.flatMap((lesson) => lesson.words),
       ...getEligibleCharacterWords(lessons, state.progress, companions),
-      ...getEligibleWords(lessons, state.progress, companions),
+      ...lessons.flatMap((lesson) => lesson.dictationWords),
     ].map((word) => [word.id, word]));
     const logIds = new Set(parent.logs.flatMap((log) => log.wordIds));
     for (const word of parent.words) { assert.ok(logIds.has(word.id)); assert.deepEqual(word, oldIndex.get(word.id)); }

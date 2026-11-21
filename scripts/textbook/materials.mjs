@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { pinyin } from "pinyin-pro";
-import { buildHistoryCompanions } from "./history-companions.mjs";
+import { buildSupplementPrompts } from "./supplement-prompts.mjs";
 
 export const hanChars = (text) => Array.from(text).filter((char) => /\p{Script=Han}/u.test(char));
 export const stableId = (prefix, ...parts) => `${prefix}-${createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 24)}`;
@@ -133,7 +133,7 @@ export const readMaterials = (root) => {
       lessons.push({ id, grade, term, unit, unitIndex, title, source, chars, words,
         number: lessonNumber, sortOrder: Number(sequence), kind: grouped ? "classical_poetry" : garden ? "garden" : "regular",
         section: metadata.get("篇目类型"), poems: grouped ? poems : [],
-        historyCompanions: grouped ? [] : buildHistoryCompanions({ book, title, content, chars, words }) });
+        supplementPrompts: grouped ? [] : buildSupplementPrompts({ book, title, rawTitle, content, chars, words, poems }) });
       if (!grouped) {
         for (const [index, poem] of poems.entries()) {
           lessons.push({ id: stableId("textbook-poem", id, poem.title), grade, term, unit, unitIndex, title: poem.title, source,

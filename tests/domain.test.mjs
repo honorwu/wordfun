@@ -8,6 +8,9 @@ import { createDefaultState } from "../shared/domain/state.ts";
 
 const progress = { grade: 3, lessonId: "current" };
 const word = (id, text, chars) => ({ id, text, chars, pinyin: "", grade: 3, lessonId: "previous", lessonTitle: "前课", category: "一类" });
+const withStoredQuestions = (lessons) => lessons.map((lesson) => ({
+  ...lesson, dictationWords: lesson.dictationWords ?? [...(lesson.textbookWords ?? []), ...lesson.words],
+}));
 const items = [word("mountains", "山河", ["山"]), word("green", "青山", ["山"])].map((word) => ({ word, score: 1, reasons: [] }));
 const context = { practiceMode: "lesson", lessons: [{ id: "previous", title: "前课" }] };
 
@@ -71,17 +74,17 @@ test("历史错字满五天后才再练，已掌握字退出历史题目", (t) =
   const fiveDays = 5 * 24 * 60 * 60 * 1000;
   const firstMistake = new Date(2026, 10, 10, 23).getTime();
   t.mock.timers.enable({ apis: ["Date"], now: firstMistake + fiveDays - 1 });
-  const lessons = [
+  const lessons = withStoredQuestions([
     { id: "previous", grade: 3, unit: 1, number: 1, title: "前课", directDictation: true, words: [word("mountains", "山河", ["山", "河"])] },
     { id: "current", grade: 3, unit: 1, number: 2, title: "本课", words: [] },
-  ];
+  ]);
   const state = createDefaultState(progress);
   state.charStats["山"] = { attempts: 1, mistakes: 1, streak: 0, lastMistakeAt: new Date(firstMistake).toISOString() };
   state.charStats["河"] = { attempts: 1, mistakes: 0, streak: 1 };
   assert.deepEqual(generateScreeningPractice(lessons, state), []);
   t.mock.timers.setTime(firstMistake + fiveDays);
   const first = generateScreeningPractice(lessons, state);
-  assert.deepEqual(first.map((item) => item.word.chars), [["山"]]);
+  assert.deepEqual(first.map((item) => item.word), lessons[0].dictationWords);
   const afterFirst = applyReviewResult(state, first, new Set(), undefined, { ...context, practiceMode: "history" });
   assert.equal(isMasteredChar(afterFirst.charStats.山), false);
   assert.deepEqual(generateScreeningPractice(lessons, afterFirst), []);
@@ -89,7 +92,7 @@ test("历史错字满五天后才再练，已掌握字退出历史题目", (t) =
   assert.deepEqual(generateScreeningPractice(lessons, afterFirst), []);
   t.mock.timers.setTime(firstMistake + 2 * fiveDays);
   const second = generateScreeningPractice(lessons, afterFirst);
-  assert.deepEqual(second.map((item) => item.word.chars), [["山"]]);
+  assert.deepEqual(second.map((item) => item.word), lessons[0].dictationWords);
   const mastered = applyReviewResult(afterFirst, second, new Set(), undefined, { ...context, practiceMode: "history" });
   t.mock.timers.setTime(firstMistake + 3 * fiveDays);
   assert.equal(isMasteredChar(mastered.charStats.山), true);
@@ -101,14 +104,14 @@ test("一轮最多五道错词，新题不足不拿错词凑数，混合词也�
   t.mock.timers.enable({ apis: ["Date"], now });
   const oldChars = Array.from("甲乙丙丁戊己庚");
   const newChars = Array.from("子丑寅卯辰巳午未申酉戌亥清河田禾木玉水火");
-  const lessons = [
+  const lessons = withStoredQuestions([
     { id: "previous", grade: 3, unit: 1, number: 1, title: "前课",
       words: [
         ...[...oldChars, ...newChars].map((char) => word(char, char, [char])),
         word("cooling-mixed", "迟花", ["迟", "花"]), word("due-mixed", "庚果", ["庚", "果"]),
       ] },
     { id: "current", grade: 3, unit: 1, number: 2, title: "本课", words: [] },
-  ];
+  ]);
   const state = createDefaultState(progress);
   for (const char of oldChars) state.charStats[char] = { attempts: 1, mistakes: 1, streak: 0, lastReviewedAt: "2026-11-01T00:00:00.000Z" };
   state.charStats.迟 = { attempts: 1, mistakes: 1, streak: 0, lastReviewedAt: new Date(now).toISOString() };
@@ -126,16 +129,17 @@ test("古诗题保留题目、朝代、作者和正文，不提供历史复习�
   const poetry = {
     id: "poetry", grade: 3, unit: 1, number: 2, title: "登山", lessonKind: "classical_poetry",
     words: [{ ...word("poetry-word", "青峰", ["青", "峰"]), lessonId: "poetry", pinyin: "qīng fēng" }],
+    dictationWords: [{ ...word("poem-poem", "登山\n唐\n诗人\n青峰。", ["登", "山", "唐", "诗", "人", "青", "峰"]), lessonId: "poetry", pinyin: "dēng shān\nqīng fēng" }],
     classicalTexts: [{
       id: "poem", title: "登山", dynasty: "唐", author: "诗人", titlePinyin: "dēng shān",
       lines: [{ text: "青峰。", pinyin: "qīng fēng" }],
     }],
   };
-  const lessons = [
+  const lessons = withStoredQuestions([
     { id: "previous", grade: 3, unit: 1, number: 1, title: "前课", words: [word("green", "青", ["青"])] },
     poetry,
     { id: "current", grade: 3, unit: 1, number: 3, title: "本课", words: [] },
-  ];
+  ]);
   const poemItems = generatePoetryPractice(poetry);
   assert.deepEqual(poemItems.map(({ word }) => word.text), ["登山\n唐\n诗人\n青峰。"]);
   const state = createDefaultState(progress);
@@ -152,10 +156,10 @@ test("历史错字优先用已学词语表的整词，再用课文原词，不�
   const recent = {
     id: "recent", grade: 3, unit: 1, number: 2, title: "近课",
     words: [word("level", "平", ["平"]), word("base", "垒", ["垒"])].map((item) => ({ ...item, lessonId: "recent" })),
-    historyCompanions: {
-      平: [{ text: "平地", pinyin: "píng dì", chars: ["平", "地"] }],
-      垒: [{ text: "堡垒", pinyin: "bǎo lěi", chars: ["堡", "垒"], textbookHint: "这个〔　〕很坚固。" }],
-    },
+    dictationWords: [
+      { ...word("level", "平地", ["平"]), lessonId: "recent", pinyin: "píng dì" },
+      { ...word("base", "堡垒", ["垒"]), lessonId: "recent", pinyin: "bǎo lěi", textbookHint: "这个〔　〕很坚固。" },
+    ],
   };
   const current = {
     id: "current", grade: 3, unit: 1, number: 3, title: "本课", words: [],
@@ -166,9 +170,9 @@ test("历史错字优先用已学词语表的整词，再用课文原词，不�
     平: { attempts: 1, mistakes: 1, streak: 0 }, 垒: { attempts: 1, mistakes: 1, streak: 0 },
     水: { attempts: 1, mistakes: 0, streak: 1 }, 堡: { attempts: 1, mistakes: 0, streak: 1 },
   };
-  const items = generateScreeningPractice([previous, recent, current], state);
+  const items = generateScreeningPractice(withStoredQuestions([previous, recent, current]), state);
   assert.deepEqual(items.map(({ word, reasons }) => [word.text, word.chars, reasons[1]]), [
-    ["堡垒", ["垒"], "课文取词"], ["水平", ["平"], "词语表"],
+    ["堡垒", ["垒"], "课文取词"], ["水平", ["水", "平"], "词语表"],
   ]);
   assert.equal(items[0].word.textbookHint, "这个〔　〕很坚固。");
   assert.equal(items[0].word.lessonId, "recent");
@@ -176,11 +180,11 @@ test("历史错字优先用已学词语表的整词，再用课文原词，不�
 
 test("历史整词不借组词引入教材范围外的字", () => {
   const outsideCompanion = { text: "砌成", pinyin: "qì chéng", chars: ["砌", "成"] };
-  const lessons = [
+  const lessons = withStoredQuestions([
     { id: "previous", grade: 3, unit: 1, number: 1, title: "前课", words: [word("grow", "成", ["成"])],
-      textCompanions: { 成: [outsideCompanion] }, historyCompanions: { 成: [outsideCompanion] } },
+      textCompanions: { 成: [outsideCompanion] } },
     { id: "current", grade: 3, unit: 1, number: 2, title: "本课", words: [] },
-  ];
+  ]);
   const state = createDefaultState(progress);
   state.charStats = { 砌: { attempts: 1, mistakes: 1, streak: 0 }, 成: { attempts: 1, mistakes: 1, streak: 0 } };
   const practice = generateScreeningPractice(lessons, state);
@@ -191,7 +195,7 @@ test("历史整词不借组词引入教材范围外的字", () => {
 test("历史复习先练到期错字，等待期间继续筛查，再复测新旧错字直至全部掌握", (t) => {
   const startDay = new Date(2026, 10, 3, 12).getTime();
   t.mock.timers.enable({ apis: ["Date"], now: startDay });
-  const lessons = [
+  const lessons = withStoredQuestions([
     { id: "previous", grade: 3, unit: 1, number: 1, title: "前课", words: [
       word("mountain", "山", ["山"]), word("river", "河", ["河"]), word("green", "青", ["青"]),
     ] },
@@ -199,7 +203,7 @@ test("历史复习先练到期错字，等待期间继续筛查，再复测新�
       { ...word("new", "新", ["新"]), lessonId: "recent" },
     ] },
     { id: "current", grade: 3, unit: 1, number: 3, title: "本课", words: [] },
-  ];
+  ]);
   let state = createDefaultState(progress);
   state.charStats.山 = { attempts: 1, mistakes: 1, streak: 0 };
   state.charStats.河 = { attempts: 1, mistakes: 0, streak: 1 };
