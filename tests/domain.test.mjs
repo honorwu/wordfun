@@ -129,7 +129,28 @@ test("补记窗口包含完成后的第 72 小时，之后保持原记录", () =
   assert.equal(addMissedWrongChars(state, log.id, corrections, words, deadline + 1), state);
 });
 
-test("历史错题满五天后才再练，已掌握题退出历史复习", (t) => {
+test("补记旧场次保留后来整题正确的掌握状态，补记最近场次则取消掌握", (t) => {
+  const firstTime = Date.UTC(2026, 10, 10, 12);
+  t.mock.timers.enable({ apis: ["Date"], now: firstTime });
+  const question = items[0];
+  const first = applyReviewResult(createDefaultState(progress), [question], new Set(), context);
+  t.mock.timers.setTime(firstTime + 60 * 60 * 1000);
+  const second = applyReviewResult(first, [question], new Set(), context);
+  const [latest, earlier] = second.logs;
+  const corrections = [{ wordId: question.word.id, char: "山" }];
+  const words = new Map([[question.word.id, question.word]]);
+
+  const earlierCorrected = addMissedWrongChars(second, earlier.id, corrections, words);
+  assert.equal(earlierCorrected.wordStats.mountains.mistakes, 1);
+  assert.equal(isMasteredQuestion(earlierCorrected.wordStats.mountains), true);
+
+  const latestCorrected = addMissedWrongChars(second, latest.id, corrections, words);
+  assert.equal(latestCorrected.wordStats.mountains.attempts, 2);
+  assert.equal(latestCorrected.wordStats.mountains.mistakes, 1);
+  assert.equal(isMasteredQuestion(latestCorrected.wordStats.mountains), false);
+});
+
+test("历史错题满五天后才再练，多次写错后一次整题正确即掌握", (t) => {
   const fiveDays = 5 * 24 * 60 * 60 * 1000;
   const firstMistake = new Date(2026, 10, 10, 23).getTime();
   t.mock.timers.enable({ apis: ["Date"], now: firstMistake + fiveDays - 1 });
@@ -138,29 +159,35 @@ test("历史错题满五天后才再练，已掌握题退出历史复习", (t) =
     { id: "current", grade: 3, unit: 1, number: 2, title: "本课", words: [] },
   ]);
   const state = createDefaultState(progress);
-  state.wordStats.mountains = { attempts: 1, mistakes: 1, streak: 0, lastMistakeAt: new Date(firstMistake).toISOString() };
+  state.wordStats.mountains = { attempts: 3, mistakes: 3, streak: 0, lastMistakeAt: new Date(firstMistake).toISOString() };
   assert.deepEqual(generateScreeningPractice(lessons, state), []);
   t.mock.timers.setTime(firstMistake + fiveDays);
   const first = generateScreeningPractice(lessons, state);
-  assert.deepEqual(first.map((item) => item.word), lessons[0].dictationWords);
-  const afterFirst = applyReviewResult(state, first, new Set(), { ...context, practiceMode: "history" });
-  assert.equal(isMasteredQuestion(afterFirst.wordStats.mountains), false);
-  assert.deepEqual(generateScreeningPractice(lessons, afterFirst), []);
-  t.mock.timers.setTime(firstMistake + 2 * fiveDays - 1);
-  assert.deepEqual(generateScreeningPractice(lessons, afterFirst), []);
-  t.mock.timers.setTime(firstMistake + 2 * fiveDays);
-  const second = generateScreeningPractice(lessons, afterFirst);
-  assert.deepEqual(second.map((item) => item.word), lessons[0].dictationWords);
-  const mastered = applyReviewResult(afterFirst, second, new Set(), { ...context, practiceMode: "history" });
-  t.mock.timers.setTime(firstMistake + 3 * fiveDays);
+  assert.deepEqual(first.map(({ word, historyGroup }) => [word, historyGroup]), [[lessons[0].dictationWords[0], "mistake"]]);
+  const mastered = applyReviewResult(state, first, new Set(), { ...context, practiceMode: "history" });
+  assert.equal(mastered.wordStats.mountains.attempts, 4);
+  assert.equal(mastered.wordStats.mountains.mistakes, 3);
   assert.equal(isMasteredQuestion(mastered.wordStats.mountains), true);
   assert.deepEqual(generateScreeningPractice(lessons, mastered), []);
+  t.mock.timers.setTime(firstMistake + 2 * fiveDays);
+  assert.deepEqual(generateScreeningPractice(lessons, mastered), []);
+
+  const formerlyCorrect = { ...state, wordStats: { mountains: { attempts: 5, mistakes: 0, streak: 0 } } };
+  assert.equal(isMasteredQuestion(formerlyCorrect.wordStats.mountains), true);
+  const missedAgain = applyReviewResult(formerlyCorrect, first, new Set([charReviewKey("mountains", "山")]), context);
+  assert.equal(missedAgain.wordStats.mountains.mistakes, 1);
+  assert.equal(isMasteredQuestion(missedAgain.wordStats.mountains), false);
+  assert.deepEqual(generateScreeningPractice(lessons, missedAgain), []);
+  t.mock.timers.setTime(firstMistake + 3 * fiveDays - 1);
+  assert.deepEqual(generateScreeningPractice(lessons, missedAgain), []);
+  t.mock.timers.setTime(firstMistake + 3 * fiveDays);
+  assert.deepEqual(generateScreeningPractice(lessons, missedAgain).map(({ word, historyGroup }) => [word.id, historyGroup]), [["mountains", "mistake"]]);
 });
 
 test("旧错字按新题到期复练，承接和题级错题共用配额", (t) => {
   const available = new Date(2026, 10, 19, 12).getTime();
   t.mock.timers.enable({ apis: ["Date"], now: available - 1 });
-  const dueIds = Array.from("甲乙丙丁");
+  const dueIds = Array.from("甲乙丙");
   const lessons = withStoredQuestions([
     { id: "previous", grade: 3, unit: 1, number: 1, title: "前课",
       words: [word("mountains", "山河", ["山"]), ...dueIds.map((char) => word(char, char, [char])), word("older", "荻花", ["荻"]), word("fresh", "新题", ["新"])] },
@@ -174,27 +201,28 @@ test("旧错字按新题到期复练，承接和题级错题共用配额", (t) =
     甲: { baselineAttempts: 1, availableAt: null },
     "current-question": { baselineAttempts: 0, availableAt: null },
   };
-  const getItems = (current) => generateScreeningPractice(lessons, current, 20, 0, { carryover });
+  const getItems = (current) => generateScreeningPractice(lessons, current, 20, { carryover });
   assert.deepEqual(getItems(state).map(({ word }) => word.id), [...dueIds, "older", "fresh"]);
   t.mock.timers.setTime(available);
   const atDue = getItems(state);
-  assert.deepEqual(atDue.map(({ word }) => word.id), ["mountains", ...dueIds, "fresh"]);
-  assert.equal(atDue.filter(({ reasons }) => reasons.includes("错题再练")).length, 5);
-  assert.deepEqual(atDue.map(({ mistakeReview }) => mistakeReview), ["character", "word", "word", "word", "word", undefined]);
+  assert.deepEqual(atDue.map(({ word }) => word.id), [...dueIds, "older", "mountains", "fresh"]);
+  assert.equal(atDue.filter(({ historyGroup }) => historyGroup === "mistake").length, 5);
+  assert.deepEqual(atDue.map(({ mistakeReview }) => mistakeReview), ["word", "word", "word", "character", "character", undefined]);
 
   const historyContext = { ...context, practiceMode: "history" };
-  const finished = applyReviewResult(state, [atDue[0]], new Set(), historyContext);
+  const carried = atDue.find(({ word }) => word.id === "mountains");
+  const finished = applyReviewResult(state, [carried], new Set(), historyContext);
   assert.equal(finished.wordStats.mountains.attempts, 1);
   assert.ok(!getItems(finished).some(({ word }) => word.id === "mountains"));
-  assert.ok(!generateScreeningPractice(lessons, finished, 20, 0, {
+  assert.ok(!generateScreeningPractice(lessons, finished, 20, {
     carryover: { ...carryover, mountains: { ...carryover.mountains, baselineAttempts: 1 } },
   }).some(({ word }) => word.id === "mountains"));
 
-  const missed = applyReviewResult(state, [atDue[0]], new Set([charReviewKey("mountains", "河")]), historyContext);
+  const missed = applyReviewResult(state, [carried], new Set([charReviewKey("mountains", "河")]), historyContext);
   assert.equal(missed.wordStats.mountains.mistakes, 1);
   assert.ok(!getItems(missed).some(({ word }) => word.id === "mountains"));
   t.mock.timers.setTime(available + 120 * 60 * 60 * 1000);
-  assert.equal(getItems(missed)[0].word.id, "mountains");
+  assert.equal(getItems(missed).find(({ word }) => word.id === "mountains").mistakeReview, "word");
 });
 
 test("一轮最多五道错词，新题不足不拿错词凑数，混合词也遵守间隔与配额", (t) => {
@@ -216,11 +244,13 @@ test("一轮最多五道错词，新题不足不拿错词凑数，混合词也�
   const items = generateScreeningPractice(lessons, state);
   assert.deepEqual(items.slice(0, 5).map(({ word }) => word.text), oldChars.slice(0, 5));
   assert.equal(items.length, 20);
-  assert.ok(items.slice(5).every(({ word, reasons }) => reasons.includes("待完成整题")
+  assert.ok(items.slice(5).every(({ word, historyGroup }) => (historyGroup === "recent" || historyGroup === "basic")
     && Array.from(word.text).every((char) => !oldChars.includes(char) && char !== "迟")));
 
   for (const id of newChars.slice(2)) state.wordStats[id] = { attempts: 1, mistakes: 0, streak: 1 };
-  assert.deepEqual(generateScreeningPractice(lessons, state).map(({ word }) => word.text), [...oldChars.slice(0, 5), ...newChars.slice(0, 2)]);
+  const after = generateScreeningPractice(lessons, state);
+  assert.deepEqual(after.filter(({ historyGroup }) => historyGroup === "mistake").map(({ word }) => word.text), oldChars.slice(0, 5));
+  assert.deepEqual(after.filter(({ historyGroup }) => historyGroup !== "mistake").map(({ word }) => word.text), newChars.slice(0, 2));
 });
 
 test("古诗题保留题目、朝代、作者和正文，不提供历史复习字或组词", () => {
@@ -271,15 +301,19 @@ test("历史复习按原题保留语境，同字或同词的另一课题目独�
   };
   const lessons = withStoredQuestions([previous, recent, current]);
   const items = generateScreeningPractice(lessons, state);
-  assert.deepEqual(items.map(({ word, reasons }) => [word.text, word.chars, reasons[1]]), [
-    ["堡垒", ["垒"], "课文取词"], ["水平", ["水", "平"], "词语表"],
+  const mistakes = items.filter(({ historyGroup }) => historyGroup === "mistake");
+  assert.deepEqual(mistakes.map(({ word, reasons }) => [word.text, word.chars, reasons[1]]), [
+    ["水平", ["水", "平"], "词语表"], ["堡垒", ["垒"], "课文取词"],
   ]);
-  assert.equal(items[0].word.textbookHint, "这个〔　〕很坚固。");
-  assert.equal(items[0].word.lessonId, "recent");
+  assert.equal(mistakes[1].word.textbookHint, "这个〔　〕很坚固。");
+  assert.equal(mistakes[1].word.lessonId, "recent");
+  assert.ok(!items.some(({ word }) => word.id === "textbook-later"));
   delete state.wordStats["textbook-later"];
-  assert.deepEqual(generateScreeningPractice(lessons, state).map(({ word, mistakeReview }) => [word.id, mistakeReview]), [
-    ["base", "word"], ["textbook", "word"], ["textbook-later", undefined],
+  const next = generateScreeningPractice(lessons, state);
+  assert.deepEqual(next.filter(({ mistakeReview }) => mistakeReview).map(({ word }) => word.id), [
+    "textbook", "base",
   ]);
+  assert.ok(next.some(({ word, mistakeReview }) => word.id === "textbook-later" && !mistakeReview));
 });
 
 test("历史整词不借组词引入教材范围外的字", () => {
@@ -324,10 +358,159 @@ test("历史复习先练到期错题，等待期间继续练新题，再复测�
   assert.deepEqual(nextItems(), []);
   t.mock.timers.setTime(new Date(2026, 10, 8, 12).getTime());
   practice("新");
-  practice("山");
-  assert.deepEqual(nextItems(), []);
-  t.mock.timers.setTime(new Date(2026, 10, 13, 12).getTime());
-  practice("新");
   assert.ok(Object.values(state.wordStats).every(isMasteredQuestion));
   assert.deepEqual(nextItems(), []);
+});
+
+test("历史复习有足够候选时按 5、10、5 出题，完成后推进未练题", (t) => {
+  const now = Date.UTC(2026, 10, 20, 12);
+  t.mock.timers.enable({ apis: ["Date"], now });
+  const makeWords = (lessonId, characters) => Array.from(characters, (char) => ({
+    ...word(`${lessonId}-${char}`, char, [char]), lessonId,
+  }));
+  const oldest = makeWords("oldest", "木林本末田由电生米禾尘尖").map((item) => ({ ...item, grade: 2 }));
+  const middle = makeWords("middle", "日月水火土金石竹泉雨云风");
+  const recent = makeWords("recent", "春夏秋冬东西南北山海");
+  const due = makeWords("middle", "甲乙丙丁戊己庚辛壬癸");
+  const [cooling, mastered] = makeWords("recent", "冰雪");
+  const current = makeWords("current", "高低");
+  const future = makeWords("future", "远近");
+  const lessons = withStoredQuestions([
+    { id: "recent", grade: 3, unit: 1, number: 3, title: "近课", words: [cooling, mastered, ...recent] },
+    { id: "current", grade: 3, unit: 1, number: 4, title: "本课", words: current },
+    { id: "oldest", grade: 2, unit: 1, number: 1, title: "最早课", words: oldest },
+    { id: "future", grade: 3, unit: 1, number: 5, title: "后续课", words: future },
+    { id: "middle", grade: 3, unit: 1, number: 2, title: "前课", words: [...middle, ...due] },
+  ]);
+  const ids = (words) => words.map(({ id }) => id);
+  const dueIds = new Set(ids(due));
+  const middleIds = new Set(ids(middle));
+  const excludedIds = new Set(ids([cooling, mastered, ...current, ...future]));
+  let state = createDefaultState(progress);
+  const pastMistake = new Date(now - 6 * 24 * 60 * 60 * 1000).toISOString();
+  for (const { id } of due) state.wordStats[id] = { attempts: 1, mistakes: 1, streak: 0, lastReviewedAt: pastMistake };
+  state.wordStats[cooling.id] = { attempts: 1, mistakes: 1, streak: 0, lastReviewedAt: new Date(now).toISOString() };
+  state.wordStats[mastered.id] = { attempts: 1, mistakes: 0, streak: 1 };
+
+  const fewerDue = { ...state, wordStats: { ...state.wordStats } };
+  for (const { id } of due.slice(3)) fewerDue.wordStats[id] = state.wordStats[cooling.id];
+  const filled = generateScreeningPractice(lessons, fewerDue);
+  assert.deepEqual(["mistake", "recent", "basic"].map((group) => filled.filter(({ historyGroup }) => historyGroup === group).length), [3, 12, 5]);
+
+  const round = () => {
+    const items = generateScreeningPractice(lessons, state);
+    const questionIds = items.map(({ word }) => word.id);
+    const idsInGroup = (group) => items.filter(({ historyGroup }) => historyGroup === group).map(({ word }) => word.id);
+    const mistakes = idsInGroup("mistake");
+    const recent = idsInGroup("recent");
+    const basic = idsInGroup("basic");
+    assert.equal(new Set(questionIds).size, items.length);
+    assert.ok(questionIds.every((id) => !excludedIds.has(id)));
+    assert.ok(mistakes.every((id) => dueIds.has(id)));
+    return { items, mistakes, recent, basic };
+  };
+
+  const first = round();
+  assert.equal(first.items.length, 20);
+  assert.equal(first.mistakes.length, 5);
+  assert.deepEqual(new Set(first.recent), new Set(ids(recent)));
+  assert.deepEqual(first.basic, ids(oldest).slice(0, 5));
+  state = applyReviewResult(state, first.items, new Set());
+
+  const second = round();
+  assert.equal(second.items.length, 20);
+  assert.equal(second.mistakes.length, 5);
+  assert.equal(second.recent.length, 10);
+  assert.ok(second.recent.every((id) => middleIds.has(id)));
+  assert.deepEqual(second.basic, ids(oldest).slice(5, 10));
+  state = applyReviewResult(state, second.items, new Set());
+
+  const practiced = new Set([...first.items, ...second.items].map(({ word }) => word.id));
+  assert.equal(practiced.size, first.items.length + second.items.length);
+  const remaining = ids([...oldest, ...middle, ...recent]).filter((id) => !practiced.has(id));
+  const third = round();
+  assert.equal(third.items.length, 4);
+  assert.deepEqual(new Set([...third.recent, ...third.basic]), new Set(remaining));
+  state = applyReviewResult(state, third.items, new Set());
+  assert.deepEqual(round().items, []);
+});
+
+test("部分计分且尚无整题成绩的旧题可以安排完整默写", () => {
+  const recent = [
+    { ...word("partial", "花", ["花"]), lessonId: "recent" },
+    { ...word("fresh", "草", ["草"]), lessonId: "recent" },
+  ];
+  const lessons = withStoredQuestions([
+    { id: "previous", grade: 3, unit: 1, number: 1, title: "前课", words: Array.from("甲乙丙丁戊", (char) => word(char, char, [char])) },
+    { id: "recent", grade: 3, unit: 1, number: 2, title: "近课", words: recent },
+    { id: "current", grade: 3, unit: 1, number: 3, title: "本课", words: [] },
+  ]);
+  const state = createDefaultState(progress);
+  state.wordStats.partial = { attempts: 0, mistakes: 0, streak: 0, lastReviewedAt: "2026-11-10T12:00:00.000Z" };
+  assert.equal(isMasteredQuestion(state.wordStats.partial), false);
+  const round = generateScreeningPractice(lessons, state);
+  assert.deepEqual(round.filter(({ historyGroup }) => historyGroup === "recent").map(({ word }) => word.id), ["partial", "fresh"]);
+  const first = generateScreeningPractice(lessons, state, 1);
+  assert.deepEqual(first.map(({ word, historyGroup }) => [word.id, historyGroup]), [["partial", "recent"]]);
+  const graded = applyReviewResult(state, first, new Set());
+  assert.equal(isMasteredQuestion(graded.wordStats.partial), true);
+  assert.ok(!generateScreeningPractice(lessons, graded).some(({ word }) => word.id === "partial"));
+});
+
+test("到期错题先按到期时间，再按教材课次和题序选入五个席位", () => {
+  const now = Date.UTC(2026, 10, 20, 12);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const date = (days) => new Date(now + days * dayMs).toISOString();
+  const createQuestions = (lessonId, entries) => entries.map(([id, char]) => ({ ...word(id, char, [char]), lessonId }));
+  const lessons = withStoredQuestions([
+    { id: "recent", grade: 3, unit: 1, number: 2, title: "近课", words: createQuestions("recent", [
+      ["near-tie", "水"], ["earliest-due", "火"], ["cooling", "土"],
+    ]) },
+    { id: "previous", grade: 3, unit: 1, number: 1, title: "前课", words: createQuestions("previous", [
+      ["later-review", "山"], ["later-mistake", "云"], ["z-first-in-lesson", "风"],
+      ["a-second-in-lesson", "雨"], ["undated", "雪"],
+    ]) },
+    { id: "current", grade: 3, unit: 1, number: 3, title: "本课", words: [] },
+  ]);
+  const state = createDefaultState(progress);
+  const wrong = { attempts: 1, mistakes: 1, streak: 0 };
+  state.wordStats = {
+    "later-review": { ...wrong, lastReviewedAt: date(-6), lastMistakeAt: date(-16) },
+    "later-mistake": { ...wrong, lastReviewedAt: date(-17), lastMistakeAt: date(-6) },
+    "z-first-in-lesson": { ...wrong, lastMistakeAt: date(-8) },
+    undated: wrong,
+    "near-tie": { ...wrong, lastMistakeAt: date(-8) },
+    "earliest-due": { ...wrong, lastReviewedAt: date(-13) },
+    cooling: { ...wrong, lastReviewedAt: date(-4) },
+  };
+  const carryover = { "a-second-in-lesson": { baselineAttempts: 0, availableAt: date(-3) } };
+  const expected = ["undated", "earliest-due", "z-first-in-lesson", "a-second-in-lesson", "near-tie"];
+  assert.deepEqual(generateScreeningPractice(lessons, state, 20, { now, carryover }).map(({ word, historyGroup }) => [word.id, historyGroup]),
+    expected.map((id) => [id, "mistake"]));
+  assert.deepEqual(generateScreeningPractice(lessons, state, 1, { now, carryover }).map(({ word, historyGroup }) => [word.id, historyGroup]),
+    [["undated", "mistake"]]);
+});
+
+test("未练基础题不足五道时只排剩余未练题", (t) => {
+  const now = Date.UTC(2026, 10, 20, 12);
+  t.mock.timers.enable({ apis: ["Date"], now });
+  const oldLesson = "grade-two-first";
+  const untouched = [
+    { ...word("z-first", "木", ["木"]), grade: 2, lessonId: oldLesson },
+    { ...word("a-second", "林", ["林"]), grade: 2, lessonId: oldLesson },
+  ];
+  const mastered = Array.from("山水日月田", (char) => ({ ...word(char, char, [char]), lessonId: "recent" }));
+  const cooling = { ...word("cooling", "冰", ["冰"]), lessonId: "recent" };
+  const lessons = withStoredQuestions([
+    { id: oldLesson, grade: 2, unit: 1, number: 1, title: "二上最早课", words: untouched },
+    { id: "recent", grade: 3, unit: 1, number: 2, title: "近课", words: [...mastered, cooling] },
+    { id: "current", grade: 3, unit: 1, number: 3, title: "本课", words: [] },
+  ]);
+  const state = createDefaultState(progress);
+  for (const { id } of mastered) state.wordStats[id] = { attempts: 1, mistakes: 0, streak: 1 };
+  state.wordStats[cooling.id] = { attempts: 1, mistakes: 1, streak: 0, lastReviewedAt: new Date(now).toISOString() };
+  const first = generateScreeningPractice(lessons, state);
+  assert.deepEqual(first.map(({ word, historyGroup }) => [word.id, historyGroup]), untouched.map(({ id }) => [id, "basic"]));
+  const graded = applyReviewResult(state, first, new Set());
+  assert.deepEqual(generateScreeningPractice(lessons, graded), []);
 });

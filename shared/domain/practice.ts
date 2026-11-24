@@ -1,7 +1,10 @@
 import type { AppState, DictationWord, Lesson, PracticeItem, Progress, QuestionCarryover } from "../types.ts";
 import { uniqueChars, reviewCharsForWord } from "./characters.ts";
 import { getDictationWords, lessonOrder, progressOrder, isVocabularyLesson } from "./catalog.ts";
-import { hasQuestionAttempt, historyMistakeWordLimit, historyQuestionStatus, historyRoundWordLimit, isMasteredQuestion } from "./reviewPolicy.ts";
+import {
+  hasQuestionAttempt, historyBasicWordLimit, historyMistakeWordLimit, historyRoundWordLimit,
+  isMasteredQuestion, pendingQuestionDueAt, questionLearningState,
+} from "./reviewPolicy.ts";
 
 export const isMasteredWord = (word: DictationWord, state: AppState) => isMasteredQuestion(state.wordStats[word.id]);
 
@@ -39,43 +42,66 @@ export const getScreeningQuestions = (lessons: Lesson[], progress: Progress) =>
 export const getScreeningTargetChars = (lessons: Lesson[], progress: Progress) =>
   uniqueChars(getScreeningQuestions(lessons, progress).flatMap(reviewCharsForWord));
 
+type HistoryGroup = NonNullable<PracticeItem["historyGroup"]>;
+const historyReasons = { mistake: "错题再练", recent: "近课未练", basic: "基础未练" } as const;
+
 export const generateScreeningPractice = (
   lessons: Lesson[],
   state: AppState,
   targetCount = historyRoundWordLimit,
-  rotationSeed = 0,
   { carryover = {}, now = Date.now() }: {
     carryover?: Record<string, QuestionCarryover>;
     now?: number;
   } = {},
 ): PracticeItem[] => {
-  const pastLessons = getScreeningLessons(lessons, state.progress);
+  const pastLessons = getScreeningLessons(lessons, state.progress).reverse();
   const textbookWordIds = new Set(pastLessons.flatMap((lesson) => (lesson.textbookWords ?? []).map((word) => word.id)));
-  const questions = getDictationWords(pastLessons);
-  const due: DictationWord[] = [];
-  const unreviewed: DictationWord[] = [];
-  for (const word of questions) {
-    const stat = state.wordStats[word.id];
-    const status = historyQuestionStatus(stat, carryover[word.id], now);
-    if (status === "due") due.push(word);
-    if (status === "unreviewed") unreviewed.push(word);
+  const due: Array<{ word: DictationWord; time: number }> = [];
+  const freshByLesson: DictationWord[][] = [];
+  const basicFresh: DictationWord[] = [];
+  for (const lesson of pastLessons) {
+    const fresh: DictationWord[] = [];
+    for (const word of lesson.dictationWords ?? []) {
+      const stat = state.wordStats[word.id];
+      const carried = carryover[word.id];
+      const learningState = questionLearningState(stat, carried);
+      if (learningState === "pending") {
+        const dueAt = pendingQuestionDueAt(stat, carried);
+        if (dueAt <= now) due.push({ word, time: dueAt });
+      } else if (learningState === "unreviewed") {
+        fresh.push(word);
+      }
+    }
+    freshByLesson.push(fresh);
+    if (lesson.grade >= 2) basicFresh.push(...fresh);
   }
-  const mistakeLimit = Math.min(targetCount, historyMistakeWordLimit);
-  const mistakeOffset = rotationSeed * mistakeLimit;
-  const mistakes = due.slice(mistakeOffset, mistakeOffset + mistakeLimit);
-  const newLimit = targetCount - mistakes.length;
-  const newOffset = rotationSeed * newLimit;
-  const needsFirstResult = unreviewed.slice(newOffset, newOffset + newLimit);
 
-  return [...mistakes, ...needsFirstResult].map((word, index) => {
-    const isMistakeReview = index < mistakes.length;
-    return {
-      word,
-      score: targetCount - index,
-      reasons: [isMistakeReview ? "错题再练" : "待完成整题", textbookWordIds.has(word.id) ? "词语表" : "课文取词"],
-      ...(isMistakeReview && { mistakeReview: state.wordStats[word.id]?.mistakes ? "word" : "character" }),
-    };
-  });
+  // 同一时间沿用上面遍历的教材顺序，课内始终保留原题序。
+  const oldestFirst = (a: { time: number }, b: { time: number }) => a.time === b.time ? 0 : a.time - b.time;
+  const mistakes = due.sort(oldestFirst).slice(0, Math.min(targetCount, historyMistakeWordLimit)).map(({ word }) => word);
+  const openSlots = targetCount - mistakes.length;
+  const recentQuota = historyRoundWordLimit - historyBasicWordLimit - historyMistakeWordLimit;
+  const basicLimit = Math.min(historyBasicWordLimit, Math.max(0, openSlots - recentQuota));
+  const basic = basicFresh.slice(0, basicLimit);
+  const basicIds = new Set(basic.map((word) => word.id));
+  const recent = freshByLesson.reverse().flat()
+    .filter((word) => !basicIds.has(word.id))
+    .slice(0, openSlots - basic.length);
+
+  const items: PracticeItem[] = [];
+  const addGroup = (words: DictationWord[], historyGroup: HistoryGroup) => {
+    for (const word of words) {
+      items.push({
+        word, historyGroup, score: targetCount - items.length,
+        reasons: [historyReasons[historyGroup], textbookWordIds.has(word.id) ? "词语表" : "课文取词"],
+        ...(historyGroup === "mistake" && { mistakeReview: state.wordStats[word.id]?.mistakes ? "word" : "character" }),
+      });
+    }
+  };
+  addGroup(mistakes, "mistake");
+  addGroup(recent, "recent");
+  addGroup(basic, "basic");
+  return items;
 };
 
 export const summarizeCoverage = (words: DictationWord[], state: AppState) => {

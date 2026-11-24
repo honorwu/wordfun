@@ -27,10 +27,12 @@ test("服务端出题保持所有课次原有的题词、拼音、目标字及�
     for (const lesson of [lessons[0], lessons[Math.floor(lessons.length / 2)], lessons.at(-1)]) {
       const progress = { grade: lesson.grade, lessonId: lesson.id };
       const questions = getScreeningQuestions(lessons, progress);
-      const wordStats = Object.fromEntries(questions.map(({ id }, index) => [id, {
-        attempts: index % 4 ? 1 : 0, mistakes: index % 4 && index % 3 === 0 ? 1 : 0, streak: 0,
-        lastReviewedAt: index % 2 ? new Date().toISOString() : "2020-01-01T00:00:00.000Z",
-      }]));
+      const wordStats = Object.fromEntries(questions.map(({ id }, index) => {
+        const attempts = index % 4 ? 1 : 0;
+        const mistakes = attempts && index % 3 === 0 ? 1 : 0;
+        const lastReviewedAt = index % 8 === 0 ? undefined : index % 2 ? new Date().toISOString() : "2020-01-01T00:00:00.000Z";
+        return [id, { attempts, mistakes, streak: attempts - mistakes, lastReviewedAt }];
+      }));
       const state = { progress, charStats: {}, wordStats, logs: [], wordIssues: [] };
       const actual = catalog.practice(progress, wordStats, "history");
       assert.deepEqual(actual.items, generateScreeningPractice(lessons, state, 20));
@@ -150,8 +152,9 @@ test("启动仅返回目录与当前题；历史记录延迟读取，增量保�
     const persistedStats = getState(learningDb, catalogDb).wordStats;
     const historical = await post("/api/practice", { progress: nextProgress, mode: "history" });
     const currentHistory = await historical.json();
-    assert.deepEqual(currentHistory.items.map(({ word }) => word.id), [firstItem.word.id]);
+    assert.deepEqual(currentHistory.items.map(({ word, historyGroup }) => [word.id, historyGroup]), [[firstItem.word.id, "mistake"]]);
     assert.equal(currentHistory.stats.historyReviewed, pastQuestions.length - 1);
+    assert.equal(currentHistory.stats.historyUnreviewed, 0);
     assert.equal(currentHistory.stats.pendingMistakes, 1);
     assert.equal(currentHistory.stats.waitingReview, 0);
     assert.deepEqual(getState(learningDb, catalogDb).wordStats, persistedStats);
@@ -364,7 +367,9 @@ test("承接题以已提交的答题次数为准，排题不修改成绩", async
     const parent = await post("/api/parent-data", {});
     assert.deepEqual(parent.reviewCarryover[due.id], { baselineAttempts: 0, availableAt: null });
     const historical = await post("/api/practice", { progress, mode: "history" });
-    assert.deepEqual(historical.items.map(({ word }) => word.id), [due.id]);
+    assert.deepEqual(historical.items.map(({ word, historyGroup, mistakeReview }) => [word.id, historyGroup, mistakeReview]), [
+      [due.id, "mistake", "character"],
+    ]);
     assert.equal(historical.stats.pendingMistakes, 2);
     assert.equal(historical.stats.waitingReview, 1);
     assert.equal(historical.stats.historyReviewed, pastQuestions.length - 2);
@@ -379,6 +384,18 @@ test("承接题以已提交的答题次数为准，排题不修改成绩", async
     assert.equal(afterAttempt.stats.pendingMistakes, 1);
     assert.equal(afterAttempt.stats.historyReviewed, pastQuestions.length - 1);
     assert.equal(getState(learningDb, catalogDb).wordStats[due.id].attempts, 1);
+
+    const allMasteredStats = { ...next, [waiting.id]: { attempts: 1, mistakes: 0, streak: 1 } };
+    saveState(learningDb, { ...initial, progress, wordStats: allMasteredStats });
+    const allMastered = await post("/api/practice", { progress, mode: "history" });
+    assert.deepEqual(allMastered.items, []);
+    assert.deepEqual(allMastered.stats, {
+      historyTotal: pastQuestions.length,
+      historyReviewed: pastQuestions.length,
+      historyUnreviewed: 0,
+      pendingMistakes: 0,
+      waitingReview: 0,
+    });
   } finally {
     server.closeAllConnections();
     server.close();
@@ -410,6 +427,7 @@ test("船身按本题的已提交成绩安排，龙船的错字只影响本题�
     const pastQuestions = getScreeningQuestions(lessons, progress);
     const mastered = { attempts: 1, mistakes: 0, streak: 1 };
     const wordStats = Object.fromEntries(pastQuestions.filter(({ id }) => id !== hull.id && id !== dragonBoat.id).map(({ id }) => [id, mastered]));
+    wordStats[hull.id] = { attempts: 0, mistakes: 0, streak: 0, lastReviewedAt: "2020-01-01T00:00:00.000Z" };
     const charStats = { 船: mastered, 身: mastered, 龙: mastered };
     const state = { ...initial, progress, charStats, wordStats };
     saveState(learningDb, state);
@@ -419,7 +437,9 @@ test("船身按本题的已提交成绩安排，龙船的错字只影响本题�
 
     const historyRequest = { progress, mode: "history" };
     const firstRound = await post("/api/practice", historyRequest);
+    assert.equal(firstRound.items.length, 2);
     assert.deepEqual(new Set(firstRound.items.map(({ word }) => word.id)), new Set([hull.id, dragonBoat.id]));
+    assert.ok(firstRound.items.every(({ historyGroup }) => historyGroup === "recent" || historyGroup === "basic"));
     assert.equal(firstRound.stats.historyUnreviewed, 2);
     assert.equal(firstRound.stats.historyReviewed, pastQuestions.length - 2);
 
@@ -431,6 +451,7 @@ test("船身按本题的已提交成绩安排，龙船的错字只影响本题�
     learningDb.prepare("INSERT INTO review_carryover (student_id, word_id, baseline_attempts, available_at) SELECT id, ?, 1, NULL FROM students").run(hull.id);
     const history = await post("/api/practice", historyRequest);
     assert.deepEqual(history.items.map(({ word }) => word.id), [dragonBoat.id]);
+    assert.ok(history.items.every(({ historyGroup }) => historyGroup === "recent" || historyGroup === "basic"));
 
     const wrong = new Set([charReviewKey(dragonBoat.id, "船")]);
     const graded = applyReviewResult(hullMastered, history.items, wrong, {

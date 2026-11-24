@@ -2,13 +2,13 @@ import { BookOpenCheck } from "lucide-react";
 import { useState } from "react";
 import type { AppState, DictationWord, LessonSummary, QuestionCarryover } from "../../../shared/types.ts";
 import { lessonOrder } from "../../../shared/domain/catalog.ts";
-import { hasQuestionAttempt, isMasteredChar, isMasteredQuestion, isQuestionCarryoverActive } from "../../../shared/domain/reviewPolicy.ts";
+import { hasQuestionAttempt, isMasteredChar, isQuestionCarryoverActive, questionLearningState } from "../../../shared/domain/reviewPolicy.ts";
 import { lessonLabel } from "../../lib/lessonPresentation";
 
 const labels = {
   mastered: "整题已掌握",
   pending: "已练待巩固",
-  unreviewed: "还没练过",
+  unreviewed: "整题未默",
   future: "后续课",
 };
 const statuses = Object.keys(labels) as Array<keyof typeof labels>;
@@ -66,14 +66,15 @@ export function QuestionMasteryPanel({ charStats, questions, lessons, progress, 
     }
 
     const stat = wordStats[question.id];
-    const carried = isQuestionCarryoverActive(stat, reviewCarryover[question.id]);
+    const carryover = reviewCarryover[question.id];
+    const carried = isQuestionCarryoverActive(stat, carryover);
     const attempted = hasQuestionAttempt(stat) || carried;
     if (attempted) attemptedTotal++;
     for (const char of question.chars) {
       learnedTargets.add(char);
       if (attempted) attemptedTargets.add(char);
     }
-    const group = isMasteredQuestion(stat) ? "mastered" : attempted ? "pending" : "unreviewed";
+    const group = questionLearningState(stat, carryover);
     groups[group].push({ question, lesson, carried });
   }
 
@@ -90,7 +91,7 @@ export function QuestionMasteryPanel({ charStats, questions, lessons, progress, 
       <div className="mastery-heading">
         <div>
           <div className="panel-heading"><BookOpenCheck size={20} aria-hidden="true" /><h2>字词掌握进度</h2></div>
-          <p>统计到当前课（含本课）。考察字按字去重，古诗按整篇另计。</p>
+          <p>统计到当前课（含本课）。最近一次整题批改全对即掌握。考察字按字去重，古诗按整篇另计。</p>
         </div>
         <label>教材范围
           <select value={selectedBook} onChange={(event) => {

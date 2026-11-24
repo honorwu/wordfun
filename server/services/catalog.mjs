@@ -42,7 +42,7 @@ export const createCatalogService = (db) => {
       return {
         lesson: { ...summarizeLesson(lesson), ...(mode === "lesson" && lesson.classicalTexts?.length ? { classicalTexts: lesson.classicalTexts } : {}) },
         mode,
-        items: mode === "history" ? generateScreeningPractice(lessons, state, historyRoundWordLimit, 0, { carryover, now })
+        items: mode === "history" ? generateScreeningPractice(lessons, state, historyRoundWordLimit, { carryover, now })
           : lesson.lessonKind === "classical_poetry" ? generatePoetryPractice(lesson) : generateCurrentLessonPractice(lessons, state),
         stats: {
           historyTotal: previousStatuses.length,

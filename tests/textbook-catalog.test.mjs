@@ -88,6 +88,7 @@ test("同一道题在不同题目组合中沿用 SQLite 保存的挖空语境", 
       .map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }]));
     const historyItems = catalog.practice(progress, mastered, "history").items;
     assert.deepEqual(historyItems.map(({ word }) => [word.id, word.textbookHint]), [[eyes.id, stored]]);
+    assert.ok(historyItems.every(({ historyGroup }) => historyGroup === "recent" || historyGroup === "basic"));
   } finally { db.close(); }
 });
 
@@ -112,12 +113,16 @@ test("当课和历史复习读取同一已审阅的补充题，错题按题等�
     const mastered = Object.fromEntries(pastQuestions.map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }]));
     const questionId = names[0].word.id;
     const recentlyMissed = { attempts: 1, mistakes: 1, streak: 0, lastReviewedAt: new Date().toISOString() };
-    assert.equal(catalog.practice(progress, { ...mastered, [questionId]: recentlyMissed }, "history").items.length, 0);
+    const cooling = catalog.practice(progress, { ...mastered, [questionId]: recentlyMissed }, "history");
+    assert.equal(cooling.stats.waitingReview, 1);
+    assert.deepEqual(cooling.items, []);
     const due = { ...recentlyMissed, lastReviewedAt: new Date(Date.now() - 6 * 86400000).toISOString() };
     const history = catalog.practice(progress, { ...mastered, [questionId]: due }, "history");
-    assert.deepEqual(history.items.map(({ word }) => word.text), ["朱德"]);
-    assert.deepEqual(history.items[0].word, names[0].word);
-    assert.match(history.items[0].word.textbookHint, /〔　〕同志/u);
+    assert.equal(history.items.length, 1);
+    const [mistake] = history.items;
+    assert.equal(mistake.historyGroup, "mistake");
+    assert.deepEqual(mistake.word, names[0].word);
+    assert.match(mistake.word.textbookHint, /〔　〕同志/u);
   } finally { db.close(); }
 });
 
@@ -151,9 +156,9 @@ test("四上语文园地六优先考词语表，再用拉萨、哈尼等教材�
     const questions = getScreeningQuestions(getLessons(db), historyProgress).filter(({ id }) => id !== byText.get("拉萨").id);
     const mastered = Object.fromEntries(questions.map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }]));
     const { items } = catalog.practice(historyProgress, mastered, "history");
-    assert.deepEqual(items.map(({ word }) => word.text), ["拉萨"]);
-    assert.deepEqual(items[0].word, byText.get("拉萨"));
+    assert.deepEqual(items.map(({ word }) => word), [byText.get("拉萨")]);
     assert.match(items[0].word.textbookHint, /〔　〕布达拉宫/u);
+    assert.ok(items.every(({ historyGroup }) => historyGroup === "recent" || historyGroup === "basic"));
   } finally { db.close(); }
 });
 

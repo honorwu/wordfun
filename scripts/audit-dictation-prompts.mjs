@@ -106,14 +106,17 @@ try {
       .map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }])),
   };
   const selectiveHistory = generateScreeningPractice(lessons, selectiveHistoryState, 20);
-  assert.deepEqual(selectiveHistory.map((item) => [item.word.text, item.word.chars]), [["平坦", ["平", "坦"]]]);
+  assert.deepEqual(selectiveHistory.map(({ word }) => word), [flatItem.word]);
+  assert.ok(selectiveHistory.every(({ historyGroup }) => historyGroup === "recent" || historyGroup === "basic"));
   const recentMistakeState = { ...selectiveHistoryState, wordStats: { ...selectiveHistoryState.wordStats, ...reviewed.wordStats } };
-  assert.equal(generateScreeningPractice(lessons, recentMistakeState, 20).length, 0);
+  assert.deepEqual(generateScreeningPractice(lessons, recentMistakeState, 20), []);
   const dueAt = new Date(Date.now() - 8 * 86400000).toISOString();
   recentMistakeState.wordStats[flatItem.word.id] = {
     ...reviewed.wordStats[flatItem.word.id], lastReviewedAt: dueAt, lastMistakeAt: dueAt,
   };
-  assert.equal(generateScreeningPractice(lessons, recentMistakeState, 20)[0]?.word.text, "平坦");
+  assert.deepEqual(generateScreeningPractice(lessons, recentMistakeState, 20).map(({ word, historyGroup }) => [word, historyGroup]), [
+    [flatItem.word, "mistake"],
+  ]);
   assert.ok(generateScreeningPractice(lessons, historyState, 20).every((item) => lessonOrder(lessons.find((lesson) => lesson.id === item.word.lessonId)) < lessonOrder(nextLesson)));
 
   const singleTextbookWord = { id: "single-textbook", text: "光", pinyin: "guāng", chars: ["光"], grade: 4, lessonId: "single-lesson", lessonTitle: "单字词", category: "一类" };

@@ -140,5 +140,6 @@ export interface PracticeItem {
   word: DictationWord;
   score: number;
   reasons: string[];
+  historyGroup?: "mistake" | "recent" | "basic";
   mistakeReview?: "word" | "character";
 }
