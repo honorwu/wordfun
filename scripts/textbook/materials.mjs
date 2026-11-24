@@ -91,7 +91,7 @@ export const readMaterials = (root) => {
   const entries = readEntries(wordContent);
   const entriesByFile = Map.groupBy(entries, (entry) => entry.lesson_file);
   const lessons = [];
-  const sources = new Map([[wordSource, { kind: "word_table", content: wordContent, grade: null, term: null }]]);
+  const sources = new Map([[wordSource, { content: wordContent, grade: null, term: null }]]);
   for (const [grade, term, book, expectedCount] of books) {
     const directory = `小学语文教材结构化/${book}`;
     requireValue(entries.filter((entry) => entry.grade === grade && entry.term === term).length === expectedCount, `${book} 的词条数不符`);
@@ -129,7 +129,7 @@ export const readMaterials = (root) => {
       const grouped = /^古诗[二三]首$/u.test(title);
       const lessonNumber = Number(metadata.get("篇目序号")?.match(/\d+/u)?.[0] ?? sequence);
       const id = stableId("textbook-lesson", grade, term, unit, title);
-      sources.set(source, { kind: "word_table", content, grade, term });
+      sources.set(source, { content, grade, term });
       lessons.push({ id, grade, term, unit, unitIndex, title, source, chars, words,
         number: lessonNumber, sortOrder: Number(sequence), kind: grouped ? "classical_poetry" : garden ? "garden" : "regular",
         section: metadata.get("篇目类型"), poems: grouped ? poems : [],

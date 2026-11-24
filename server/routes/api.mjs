@@ -12,7 +12,7 @@ export const createApiHandler = (learning) => async (request, response, url) => 
     return sendJson(response, 200, learning.practice(await readBody(request)), request);
   }
   if (request.method === "POST" && url.pathname === "/api/parent-data") {
-    return sendJson(response, 200, learning.parentData(await readBody(request)), request);
+    return sendJson(response, 200, learning.parentData(), request);
   }
   if (request.method === "PUT" && url.pathname === "/api/state") {
     return sendJson(response, 200, learning.save(await readBody(request)), request);

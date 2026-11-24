@@ -1,3 +1,5 @@
+export const CATALOG_FORMAT = "dictation-textbook-v4";
+
 export const catalogSchemaSql = `
 PRAGMA foreign_keys = ON;
 
@@ -8,169 +10,53 @@ CREATE TABLE IF NOT EXISTS catalog_meta (
 
 CREATE TABLE IF NOT EXISTS source_files (
   path TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('word_table', 'classical_text', 'summary')),
   grade INTEGER CHECK (grade BETWEEN 1 AND 6),
   term INTEGER CHECK (term IN (1, 2)),
-  sha256 TEXT NOT NULL,
-  imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  sha256 TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS lessons (
   id TEXT PRIMARY KEY,
   grade INTEGER NOT NULL CHECK (grade BETWEEN 1 AND 6),
   term INTEGER NOT NULL CHECK (term IN (1, 2)),
-  term_name TEXT NOT NULL CHECK (term_name IN ('上册', '下册')),
   unit_name TEXT NOT NULL,
-  unit_index INTEGER,
+  unit_index INTEGER NOT NULL,
   section TEXT NOT NULL,
   lesson_number REAL NOT NULL,
   sort_order INTEGER NOT NULL,
   title TEXT NOT NULL,
-  lesson_type TEXT NOT NULL CHECK (lesson_type IN ('正常课文', '古诗词', '其他')),
-  lesson_kind TEXT NOT NULL CHECK (lesson_kind IN ('regular', 'garden', 'pinyin', 'classical_poetry', 'classical_prose', 'traditional_rhyme')),
-  is_classical INTEGER NOT NULL CHECK (is_classical IN (0, 1)),
-  direct_dictation INTEGER NOT NULL CHECK (direct_dictation IN (0, 1)),
+  lesson_kind TEXT NOT NULL CHECK (lesson_kind IN ('regular', 'garden', 'classical_poetry')),
   source_file TEXT NOT NULL REFERENCES source_files(path) ON DELETE RESTRICT,
-  source_row INTEGER NOT NULL,
   UNIQUE (grade, term, section, lesson_number, title)
-);
-
-CREATE TABLE IF NOT EXISTS characters (
-  char TEXT PRIMARY KEY,
-  first_pinyin TEXT,
-  first_lesson_id TEXT REFERENCES lessons(id) ON DELETE SET NULL,
-  first_grade INTEGER CHECK (first_grade BETWEEN 1 AND 6),
-  first_term INTEGER CHECK (first_term IN (1, 2))
 );
 
 CREATE TABLE IF NOT EXISTS lesson_characters (
   lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
   char TEXT NOT NULL,
   category TEXT NOT NULL CHECK (category IN ('一类', '二类')),
-  pinyin TEXT,
+  pinyin TEXT NOT NULL,
   char_order INTEGER NOT NULL,
-  source_column TEXT NOT NULL CHECK (source_column IN ('识字表', '写字表')),
   PRIMARY KEY (lesson_id, char, category)
 );
 
-CREATE TABLE IF NOT EXISTS words (
+CREATE TABLE IF NOT EXISTS questions (
   id TEXT PRIMARY KEY,
+  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  kind TEXT NOT NULL CHECK (kind IN ('textbook', 'supplement', 'poem')),
   text TEXT NOT NULL,
   pinyin TEXT NOT NULL,
-  word_kind TEXT NOT NULL CHECK (word_kind IN ('textbook', 'supplement', 'classical_title', 'classical_line', 'classical_full')),
-  source_file TEXT NOT NULL REFERENCES source_files(path) ON DELETE RESTRICT,
-  source_row INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS word_characters (
-  word_id TEXT NOT NULL REFERENCES words(id) ON DELETE CASCADE,
-  char TEXT NOT NULL,
-  char_order INTEGER NOT NULL,
-  PRIMARY KEY (word_id, char, char_order)
-);
-
-CREATE TABLE IF NOT EXISTS lesson_words (
-  id TEXT PRIMARY KEY,
-  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
-  word_id TEXT NOT NULL REFERENCES words(id) ON DELETE CASCADE,
-  word_order INTEGER NOT NULL,
-  source_column TEXT NOT NULL CHECK (source_column IN ('词语表', '未覆盖生字组词', '古诗词标题', '古诗词正文', '古诗词整篇')),
-  target_char TEXT,
-  UNIQUE (lesson_id, word_id, source_column, target_char)
-);
-
-CREATE TABLE IF NOT EXISTS textbook_word_contexts (
-  lesson_word_id TEXT PRIMARY KEY REFERENCES lesson_words(id) ON DELETE CASCADE,
-  entry_id TEXT NOT NULL UNIQUE,
-  context_type TEXT NOT NULL,
-  context_text TEXT,
-  original_context_text TEXT,
+  target_chars TEXT NOT NULL CHECK (json_valid(target_chars) AND json_type(target_chars) = 'array' AND json_array_length(target_chars) > 0),
   hint_text TEXT,
-  context_pdf_pages TEXT,
-  wordlist_pdf_page INTEGER NOT NULL,
-  note TEXT
-);
-
-CREATE TABLE IF NOT EXISTS lesson_word_targets (
-  lesson_word_id TEXT NOT NULL REFERENCES lesson_words(id) ON DELETE CASCADE,
-  char TEXT NOT NULL REFERENCES characters(char),
-  target_order INTEGER NOT NULL,
-  PRIMARY KEY (lesson_word_id, char),
-  UNIQUE (lesson_word_id, target_order)
-);
-
-CREATE TABLE IF NOT EXISTS lesson_supplement_contexts (
-  lesson_word_id TEXT PRIMARY KEY REFERENCES lesson_words(id) ON DELETE CASCADE,
-  hint_text TEXT,
-  context_kind TEXT NOT NULL,
-  source_text TEXT NOT NULL,
-  source_rows TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS lesson_uncovered_characters (
-  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
-  char TEXT NOT NULL,
-  pinyin TEXT NOT NULL,
   source_file TEXT NOT NULL REFERENCES source_files(path) ON DELETE RESTRICT,
-  source_row INTEGER NOT NULL,
-  PRIMARY KEY (lesson_id, char)
-);
-
-CREATE TABLE IF NOT EXISTS char_companion_words (
-  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
-  char TEXT NOT NULL,
-  word_id TEXT NOT NULL REFERENCES words(id) ON DELETE CASCADE,
-  word TEXT NOT NULL,
-  pinyin TEXT NOT NULL,
-  companion_rank INTEGER NOT NULL CHECK (companion_rank >= 1),
-  source TEXT NOT NULL CHECK (source IN ('textbook_word', 'supplement_word')),
-  source_lesson_id TEXT REFERENCES lessons(id) ON DELETE SET NULL,
-  PRIMARY KEY (lesson_id, char, companion_rank),
-  UNIQUE (lesson_id, char, word)
-);
-
-CREATE TABLE IF NOT EXISTS classical_texts (
-  id TEXT PRIMARY KEY,
-  lesson_id TEXT REFERENCES lessons(id) ON DELETE SET NULL,
-  grade INTEGER NOT NULL CHECK (grade BETWEEN 1 AND 6),
-  term INTEGER NOT NULL CHECK (term IN (1, 2)),
-  unit_index INTEGER,
-  title TEXT NOT NULL,
-  title_pinyin TEXT NOT NULL,
-  author TEXT,
-  dynasty TEXT,
-  source_label TEXT,
-  source_file TEXT NOT NULL REFERENCES source_files(path) ON DELETE RESTRICT,
-  text_order INTEGER NOT NULL,
-  UNIQUE (source_file, title, text_order)
-);
-
-CREATE TABLE IF NOT EXISTS classical_lines (
-  text_id TEXT NOT NULL REFERENCES classical_texts(id) ON DELETE CASCADE,
-  line_order INTEGER NOT NULL,
-  text TEXT NOT NULL,
-  pinyin TEXT NOT NULL,
-  PRIMARY KEY (text_id, line_order)
+  source_row INTEGER NOT NULL CHECK (source_row > 0),
+  source_details TEXT CHECK (source_details IS NULL OR (json_valid(source_details) AND json_type(source_details) = 'object')),
+  poem TEXT CHECK (poem IS NULL OR (json_valid(poem) AND json_type(poem) = 'object')),
+  CHECK ((kind = 'poem') = (poem IS NOT NULL)),
+  UNIQUE (lesson_id, position)
 );
 
 CREATE INDEX IF NOT EXISTS idx_lessons_scope ON lessons(grade, term, sort_order);
-CREATE INDEX IF NOT EXISTS idx_lesson_characters_char ON lesson_characters(char, category);
-CREATE INDEX IF NOT EXISTS idx_words_text ON words(text);
-CREATE INDEX IF NOT EXISTS idx_word_characters_char ON word_characters(char);
-CREATE INDEX IF NOT EXISTS idx_lesson_words_scope ON lesson_words(lesson_id, word_order);
-CREATE INDEX IF NOT EXISTS idx_lesson_uncovered_characters_char ON lesson_uncovered_characters(char);
-CREATE INDEX IF NOT EXISTS idx_companions_char ON char_companion_words(char, source);
-CREATE INDEX IF NOT EXISTS idx_classical_texts_scope ON classical_texts(grade, term, unit_index, text_order);
-
-CREATE VIEW IF NOT EXISTS lesson_chars AS
-SELECT lesson_id, char, category, pinyin, char_order, source_column AS source_table
-FROM lesson_characters;
-
-CREATE VIEW IF NOT EXISTS textbook_words AS
-SELECT lw.id, lw.lesson_id, w.text, w.pinyin, lw.word_order, lw.source_column AS source_table
-FROM lesson_words lw
-JOIN words w ON w.id = lw.word_id
-WHERE lw.source_column = '词语表';
 `;
 
 export const learningSchemaSql = `
@@ -199,6 +85,14 @@ CREATE TABLE IF NOT EXISTS word_stats (
   PRIMARY KEY (student_id, word_id)
 );
 
+CREATE TABLE IF NOT EXISTS review_carryover (
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  word_id TEXT NOT NULL,
+  baseline_attempts INTEGER NOT NULL CHECK (baseline_attempts >= 0),
+  available_at TEXT,
+  PRIMARY KEY (student_id, word_id)
+);
+
 CREATE TABLE IF NOT EXISTS char_stats (
   student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
   char TEXT NOT NULL,
@@ -207,6 +101,12 @@ CREATE TABLE IF NOT EXISTS char_stats (
   streak INTEGER NOT NULL DEFAULT 0 CHECK (streak >= 0),
   last_reviewed_at TEXT,
   last_mistake_at TEXT,
+  PRIMARY KEY (student_id, char)
+);
+
+CREATE TABLE IF NOT EXISTS inherited_char_mastery (
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  char TEXT NOT NULL,
   PRIMARY KEY (student_id, char)
 );
 

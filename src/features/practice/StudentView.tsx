@@ -20,7 +20,7 @@ export interface StudentViewProps {
   correctionItems: CorrectionItem[];
   hintedWordIds: ReadonlySet<string>;
   items: PracticeItem[];
-  lastResult: { total: number; wrong: number };
+  lastResult: { total: number; wrongQuestions: number; wrongChars: number };
   lesson: PracticeLesson;
   lessons: LessonSummary[];
   mode: PracticeMode;
@@ -66,7 +66,7 @@ export function StudentView({
 }: StudentViewProps) {
   const [finishArmed, setFinishArmed] = useState(false);
   const [activeItemIndex, setActiveItemIndex] = useState(0);
-  const mistakeWordCount = mode === "history" ? items.filter((item) => item.reasons.includes("错字再练")).length : 0;
+  const mistakeWordCount = mode === "history" ? items.filter((item) => item.reasons.includes("错题再练")).length : 0;
   const safeActiveItemIndex = Math.max(0, Math.min(activeItemIndex, Math.max(0, items.length - 1)));
   const isPoetryMode = mode === "lesson" && lesson.lessonKind === "classical_poetry";
   const { speechPlayback, stopPlayback, startDoublePlayback } = useSpeechPlayback({ items, isPoetryMode, phase, onActivate: setActiveItemIndex });
@@ -195,10 +195,10 @@ export function StudentView({
         <div className="result-card">
           <span className="result-spark"><Sparkles size={34} /></span>
           <p className="eyebrow">默写完成</p>
-          <h1>{lastResult.wrong === 0 ? "全部写对了！" : "订正完成，继续加油"}</h1>
+          <h1>{lastResult.wrongQuestions === 0 ? "本轮默写完成" : "订正完成，继续加油"}</h1>
           <p>
-            这次完成了 <strong>{lastResult.total}</strong> 项内容，
-            {lastResult.wrong === 0 ? "没有错字。" : <><strong>{lastResult.wrong}</strong> 个字已收进错字记录。</>}
+            这次完成了 <strong>{lastResult.total}</strong> 道题，
+            {lastResult.wrongQuestions === 0 ? "没有标记错字。" : <>共 <strong>{lastResult.wrongQuestions}</strong> 道错题，涉及 <strong>{lastResult.wrongChars}</strong> 个错字。</>}
           </p>
           <button className="primary-button large" type="button" onClick={onRestart}>
             {mode === "history" ? "继续往前复习" : "再默写一次"}<ChevronRight size={20} />
@@ -260,12 +260,13 @@ export function StudentView({
 
       {mode === "history" && !loading && !loadError ? (
         <div className="history-progress">
-          <div className="history-progress-label"><span>本课前已掌握</span><strong>{stats.historyReviewed} / {stats.historyTotal} 字</strong></div>
-          <progress className="progress-track" value={stats.historyReviewed} max={Math.max(1, stats.historyTotal)} aria-label="本课之前的生字掌握进度" />
+          <div className="history-progress-label"><span>本课前整题已掌握</span><strong>{stats.historyReviewed} / {stats.historyTotal} 题</strong></div>
+          <progress className="progress-track" value={stats.historyReviewed} max={Math.max(1, stats.historyTotal)} aria-label="本课之前的题目掌握进度" />
           <ul className="history-progress-details">
-            <li>到期错字 <strong>{stats.pendingMistakes - stats.waitingReview}</strong></li>
+            {stats.historyInherited > 0 ? <li>考察字已继承 <strong>{stats.historyInherited} 题</strong></li> : null}
+            <li>到期错题 <strong>{stats.pendingMistakes - stats.waitingReview}</strong></li>
             <li>等待复测 <strong>{stats.waitingReview}</strong></li>
-            <li>学过未默 <strong>{stats.historyUnreviewed}</strong></li>
+            <li>待完成整题 <strong>{stats.historyUnreviewed}</strong></li>
           </ul>
         </div>
       ) : null}
@@ -278,8 +279,8 @@ export function StudentView({
       ) : items.length === 0 ? (
         <div className="empty-card">
           <Check size={34} />
-          <h2>{mode === "history" ? stats.waitingReview > 0 ? "错字正在间隔复习" : stats.historyTotal > 0 ? "以前的字都写对了" : "前面还没有可复习的课" : isPoetryMode ? "这一课还没有古诗正文" : "这一课还没有可默写的词语"}</h2>
-          <p>{mode === "history" ? stats.waitingReview > 0 ? `含有等待中错字的词会暂缓，错字练过后满 ${historyMistakeCooldownDays} 天才能再默。` : stats.historyTotal > 0 ? "继续学习新课后，再回来巩固吧。" : "学完下一课后，这里会从后往前复习。" : isPoetryMode ? "请让家长检查本课的古诗内容。" : "请选择其他课次。"}</p>
+          <h2>{mode === "history" ? stats.waitingReview > 0 ? "错题正在等待复测" : stats.historyTotal > 0 ? "本轮暂时没有复习题" : "前面还没有可复习的课" : isPoetryMode ? "这一课还没有古诗正文" : "这一课还没有可默写的词语"}</h2>
+          <p>{mode === "history" ? stats.waitingReview > 0 ? `错题上次练过后满 ${historyMistakeCooldownDays} 天会再次出题。` : stats.historyTotal > 0 ? "继续学习新课后，再回来巩固吧。" : "学完下一课后，这里会从后往前复习。" : isPoetryMode ? "请让家长检查本课的古诗内容。" : "请选择其他课次。"}</p>
         </div>
       ) : (
         <>
@@ -293,7 +294,7 @@ export function StudentView({
             {phase === "dictating" && (
               <div className="practice-details">
                 <p>{isPoetryMode ? "按题目拼音默写整篇" : mode === "history"
-                  ? `整词默写 · 错词复测 ${mistakeWordCount} 题 · 向前筛查 ${items.length - mistakeWordCount} 题`
+                  ? `整词默写 · 原题复测 ${mistakeWordCount} 题 · 待完成 ${items.length - mistakeWordCount} 题`
                   : "听词语，写下每个字和拼音"}</p>
                 {!isPoetryMode && (
                   <div className="keyboard-guide" aria-label="键盘快捷操作">

@@ -2,8 +2,9 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dataDir, defaultCatalogDatabasePath, defaultLearningDatabasePath } from "../config.mjs";
-import { catalogSchemaSql, learningSchemaSql } from "./schema.mjs";
+import { CATALOG_FORMAT, catalogSchemaSql, learningSchemaSql } from "./schema.mjs";
 import { migrateLearningDatabase } from "./migrations.mjs";
+import { hasTable, oneRow } from "./query.mjs";
 
 export const ensureDataDir = () => {
   mkdirSync(dataDir, { recursive: true });
@@ -30,5 +31,15 @@ export const requireCatalogDatabase = (databasePath = defaultCatalogDatabasePath
   if (!existsSync(databasePath)) {
     throw new Error(`Catalog SQLite database not found at ${databasePath}. Provide the catalog database before starting the server.`);
   }
-  return openCatalogDatabase(databasePath);
+  const db = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    if (!hasTable(db, "catalog_meta") || !hasTable(db, "questions")
+      || oneRow(db, "SELECT value FROM catalog_meta WHERE key = 'source_format'")?.value !== CATALOG_FORMAT) {
+      throw new Error("教材词库格式不符，请用 npm run rebuild:catalog 重建后再启动");
+    }
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 };

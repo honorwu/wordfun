@@ -1,5 +1,5 @@
-import type { AppState, DictationWord, PracticeItem } from "../types.ts";
-import { fullDictationCharsForWord, hanChars, uniqueChars, reviewCharsForWord, charReviewKey } from "./characters.ts";
+import type { AppState, DictationWord, PracticeItem, ReviewLog } from "../types.ts";
+import { fullDictationCharsForWord, hanChars, reviewCharsForWord, charReviewKey } from "./characters.ts";
 import { uniqueTexts } from "./reviewPolicy.ts";
 
 export const applyReviewResult = (
@@ -10,35 +10,29 @@ export const applyReviewResult = (
   context?: { practiceMode: "lesson" | "history"; lessons: Array<{ id: string; title: string }> },
 ): AppState => {
   const now = new Date().toISOString();
-  const practiceItems = items;
-  const reviewedCharsForItem = ({ word }: PracticeItem) => {
-    if (context?.practiceMode === "history") return fullDictationCharsForWord(word);
-    const targets = reviewCharsForWord(word);
-    return uniqueChars([...(reviewedCharsByWord?.get(word.id) ?? targets)]).filter((char) => hanChars(word.text).includes(char));
-  };
-  const wrongWordIds = practiceItems
-    .filter((item) => reviewedCharsForItem(item).some((char) => wrongCharKeys.has(charReviewKey(item.word.id, char))))
-    .map((item) => item.word.id);
-  const wrongChars = practiceItems.flatMap((item) =>
-    reviewedCharsForItem(item)
-      .filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)))
-      .map((char) => ({ wordId: item.word.id, char })),
-  );
+  const words = new Map(items.map(({ word }) => [word.id, word]));
+  const reviewedItems = [...words.values()].map((word) => {
+    const allChars = fullDictationCharsForWord(word);
+    const wrongChars = allChars.filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)));
+    const reviewed = context?.practiceMode === "history" ? undefined : reviewedCharsByWord?.get(word.id);
+    const reviewedChars = reviewed ? allChars.filter((char) => reviewed.includes(char) || wrongChars.includes(char)) : allChars;
+    return { word, wrongChars, reviewedChars, isFullReview: reviewedChars.length === allChars.length };
+  });
   const reviewLogs =
-    practiceItems.length > 0
+    reviewedItems.length > 0
       ? [
           {
             id: crypto.randomUUID(),
             date: now,
             practiceMode: context?.practiceMode,
             lessons: context?.lessons,
-            wordIds: practiceItems.map((item) => item.word.id),
-            wrongWordIds,
-            wrongChars,
-            reviewedItems: practiceItems.map((item) => ({
-              wordId: item.word.id,
-              wordText: item.word.text,
-              reviewedChars: reviewedCharsForItem(item),
+            wordIds: reviewedItems.map(({ word }) => word.id),
+            wrongWordIds: reviewedItems.filter(({ wrongChars }) => wrongChars.length > 0).map(({ word }) => word.id),
+            wrongChars: reviewedItems.flatMap(({ word, wrongChars }) => wrongChars.map((char) => ({ wordId: word.id, char }))),
+            reviewedItems: reviewedItems.map(({ word, reviewedChars }) => ({
+              wordId: word.id,
+              wordText: word.text,
+              reviewedChars,
             })),
           },
         ]
@@ -51,27 +45,27 @@ export const applyReviewResult = (
   };
   const sessionCharReviews = new Map<string, { isWrong: boolean; correctWordTexts: Set<string>; wrongWordTexts: Set<string> }>();
 
-  for (const item of practiceItems) {
-    const reviewChars = reviewedCharsForItem(item);
-    const isWrong = reviewChars.some((char) => wrongCharKeys.has(charReviewKey(item.word.id, char)));
-    const previous = next.wordStats[item.word.id] ?? { attempts: 0, mistakes: 0, streak: 0 };
-    next.wordStats[item.word.id] = {
-      attempts: previous.attempts + 1,
+  for (const { word, wrongChars, reviewedChars, isFullReview } of reviewedItems) {
+    const isWrong = wrongChars.length > 0;
+    const previous = next.wordStats[word.id] ?? { attempts: 0, mistakes: 0, streak: 0 };
+    // 部分提示且没有标错时，只有练习记录，没有整题做对的证据。
+    next.wordStats[word.id] = {
+      attempts: previous.attempts + Number(isWrong || isFullReview),
       mistakes: previous.mistakes + (isWrong ? 1 : 0),
-      streak: isWrong ? 0 : previous.streak + 1,
+      streak: isWrong ? 0 : previous.streak + Number(isFullReview),
       lastReviewedAt: now,
       lastMistakeAt: isWrong ? now : previous.lastMistakeAt,
     };
 
-    for (const char of reviewChars) {
-      const isCharWrong = wrongCharKeys.has(charReviewKey(item.word.id, char));
+    for (const char of reviewedChars) {
+      const isCharWrong = wrongChars.includes(char);
       const sessionReview = sessionCharReviews.get(char) ?? {
         isWrong: false,
         correctWordTexts: new Set<string>(),
         wrongWordTexts: new Set<string>(),
       };
       sessionReview.isWrong ||= isCharWrong;
-      (isCharWrong ? sessionReview.wrongWordTexts : sessionReview.correctWordTexts).add(item.word.text);
+      (isCharWrong ? sessionReview.wrongWordTexts : sessionReview.correctWordTexts).add(word.text);
       sessionCharReviews.set(char, sessionReview);
     }
   }
@@ -101,6 +95,9 @@ export interface MissedWrongCharCorrection {
 const logWrongWordIds = (log: AppState["logs"][number]) =>
   new Set([...(log.wrongWordIds ?? []), ...(log.wrongChars ?? []).map((item) => item.wordId)]);
 
+const hasPartialSnapshot = (snapshot?: NonNullable<ReviewLog["reviewedItems"]>[number]) =>
+  Boolean(snapshot?.wordText && hanChars(snapshot.wordText).some((char) => !snapshot.reviewedChars.includes(char)));
+
 const logReviewedChars = (
   log: AppState["logs"][number],
   wordById: ReadonlyMap<string, DictationWord>,
@@ -121,6 +118,7 @@ const trailingWordStreak = (logs: AppState["logs"], wordId: string) => {
   for (const log of logs) {
     if (!log.wordIds.includes(wordId)) continue;
     if (logWrongWordIds(log).has(wordId)) break;
+    if (hasPartialSnapshot(log.reviewedItems?.find((item) => item.wordId === wordId))) continue;
     streak += 1;
   }
   return streak;
@@ -161,6 +159,7 @@ export const addMissedWrongChars = (
 
   const hasReviewSnapshot = Boolean(targetLog.reviewedItems && targetLog.reviewedItems.length > 0);
   const loggedWordIds = new Set(targetLog.wordIds);
+  const partialWordIds = new Set((targetLog.reviewedItems ?? []).filter(hasPartialSnapshot).map((item) => item.wordId));
   const reviewedCharsByWordId = new Map(
     hasReviewSnapshot
       ? (targetLog.reviewedItems ?? []).map((item) => [item.wordId, new Set(item.reviewedChars)] as const)
@@ -208,7 +207,7 @@ export const addMissedWrongChars = (
     const charStat = state.charStats[correction.char];
     if (!wordStat || !charStat) return false;
     if (previouslyWrongWords.has(correction.wordId) && wordStat.mistakes === 0) return false;
-    if (!previouslyWrongWords.has(correction.wordId) && wordStat.mistakes >= wordStat.attempts) return false;
+    if (!previouslyWrongWords.has(correction.wordId) && !partialWordIds.has(correction.wordId) && wordStat.mistakes >= wordStat.attempts) return false;
     if (previouslyWrongChars.has(correction.char) && charStat.mistakes === 0) return false;
     if (!previouslyWrongChars.has(correction.char) && charStat.mistakes >= charStat.attempts) return false;
     return true;
@@ -241,6 +240,7 @@ export const addMissedWrongChars = (
     const becomesWrongThisSession = !previouslyWrongWords.has(wordId);
     next.wordStats[wordId] = {
       ...previous,
+      attempts: previous.attempts + Number(becomesWrongThisSession && partialWordIds.has(wordId)),
       mistakes: previous.mistakes + (becomesWrongThisSession ? 1 : 0),
       streak: becomesWrongThisSession ? trailingWordStreak(nextLogs, wordId) : previous.streak,
       lastMistakeAt: laterDate(previous.lastMistakeAt, targetLog.date),

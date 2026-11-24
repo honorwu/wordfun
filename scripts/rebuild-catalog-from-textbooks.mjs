@@ -4,12 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { pinyin } from "pinyin-pro";
+import { defaultCatalogDatabasePath, defaultLearningDatabasePath } from "../server/config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
-const dataDir = path.join(projectRoot, "data");
 const textbookCacheDir = process.env.ZIQU_TEXTBOOK_CACHE_DIR || path.join(projectRoot, ".cache", "textbooks");
-const catalogDbPath = process.env.ZIQU_CATALOG_DB_PATH || path.join(dataDir, "ziqu-catalog.sqlite");
+const catalogDbPath = path.resolve(process.env.ZIQU_LEGACY_CATALOG_DB_PATH ?? path.join(textbookCacheDir, "legacy-catalog.sqlite"));
 const commonWordCachePath = path.join(projectRoot, ".cache", "xiandaihaiyuchangyongcibiao.txt");
 const dictionaryWordCachePath = path.join(projectRoot, ".cache", "jieba-dict-big.txt");
 const contentsUrl =
@@ -1124,7 +1124,17 @@ const applyCuration = (db) => {
 const dedupeBy = (rows, keyFn) => [...new Map(rows.map((row) => [keyFn(row), row])).values()];
 
 const main = async () => {
-  mkdirSync(dataDir, { recursive: true });
+  if (catalogDbPath === defaultCatalogDatabasePath || catalogDbPath === defaultLearningDatabasePath) {
+    throw new Error("旧版 PDF 提取工具只能写入独立的临时词库");
+  }
+  if (existsSync(catalogDbPath)) {
+    const existing = new DatabaseSync(catalogDbPath, { readOnly: true });
+    try {
+      const protectedTable = existing.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name IN ('catalog_meta', 'students')").get();
+      if (protectedTable) throw new Error("目标是教材词库或学习记录库，旧版 PDF 提取工具拒绝覆盖");
+    } finally { existing.close(); }
+  }
+  mkdirSync(path.dirname(catalogDbPath), { recursive: true });
   mkdirSync(textbookCacheDir, { recursive: true });
   const existingCuration = loadExistingCuration();
   if (existsSync(catalogDbPath)) {

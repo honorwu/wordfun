@@ -19,11 +19,11 @@ export function useAppController() {
   const [hintedWordIds, setHintedWordIds] = useState<Set<string>>(() => new Set());
   const [correctionItems, setCorrectionItems] = useState<CorrectionItem[]>([]);
   const [savedMessage, setSavedMessage] = useState("");
-  const [lastResult, setLastResult] = useState({ total: 0, wrong: 0 });
+  const [lastResult, setLastResult] = useState({ total: 0, wrongQuestions: 0, wrongChars: 0 });
 
   const {
     state, setState, allLessons, selectedLesson, practiceItems, practiceLoading, practiceError,
-    allKnownWords, parentState, characterBooks, stats, parentReady, parentError, isReady, loadError,
+    allKnownWords, parentState, questions, reviewCarryover, inheritedMasteredChars, stats, parentReady, parentError, isReady, loadError,
     invalidateParentData, retryLoad,
   } = useLearningData({ viewMode, practiceMode, onSaveError: setSavedMessage });
 
@@ -33,7 +33,7 @@ export function useAppController() {
     setWrongCharKeys(new Set());
     setHintedWordIds(new Set());
     setCorrectionItems([]);
-    setLastResult({ total: 0, wrong: 0 });
+    setLastResult({ total: 0, wrongQuestions: 0, wrongChars: 0 });
   };
 
   const setProgress = (lesson: LessonSummary) => {
@@ -85,11 +85,6 @@ export function useAppController() {
         return [item.word.id, Array.from(new Set([...baseReviewChars, ...explicitlyWrongChars]))] as const;
       }),
     );
-    const wrongCount = new Set(
-      practiceItems.flatMap((item) =>
-        (reviewedCharsByWord.get(item.word.id) ?? []).filter((char) => wrongCharKeys.has(charReviewKey(item.word.id, char))),
-      ),
-    ).size;
     const reviewedLessons = practiceMode === "lesson"
       ? [{ id: selectedLesson.id, title: selectedLesson.title }]
       : Array.from(
@@ -104,18 +99,21 @@ export function useAppController() {
       practiceMode,
       lessons: reviewedLessons,
     });
-    const nextCorrectionItems = practiceItems.flatMap((item) => {
-      const wrongChars = (reviewedCharsByWord.get(item.word.id) ?? []).flatMap((char) => {
-        if (!wrongCharKeys.has(charReviewKey(item.word.id, char))) return [];
-        const mistakeCount = nextState.charStats[char]?.mistakes ?? 1;
-        return [{ char, mistakeCount, repetitions: Math.max(2, mistakeCount + 1) }];
-      });
-      return wrongChars.length > 0 ? [{ wordId: item.word.id, text: item.word.text, pinyin: item.word.pinyin, wrongChars }] : [];
+    const nextCorrectionItems = practiceItems.flatMap(({ word }) => {
+      const wrongChars = (reviewedCharsByWord.get(word.id) ?? [])
+        .filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)))
+        .map((char) => ({ char, mistakeCount: nextState.charStats[char]?.mistakes ?? 1 }));
+      if (wrongChars.length === 0) return [];
+      return [{ wordId: word.id, text: word.text, pinyin: word.pinyin, wrongChars, mistakeCount: nextState.wordStats[word.id].mistakes }];
     });
     setState(nextState);
     invalidateParentData();
     setCorrectionItems(nextCorrectionItems);
-    setLastResult({ total: practiceItems.length, wrong: wrongCount });
+    setLastResult({
+      total: practiceItems.length,
+      wrongQuestions: nextCorrectionItems.length,
+      wrongChars: new Set(nextCorrectionItems.flatMap((item) => item.wrongChars.map(({ char }) => char))).size,
+    });
     setWrongCharKeys(new Set());
     setHintedWordIds(new Set());
     setPhase(nextCorrectionItems.length > 0 ? "correcting" : "done");
@@ -175,10 +173,12 @@ export function useAppController() {
       wordIssues: state.wordIssues,
     } satisfies StudentViewProps,
     parentProps: {
-      characterBooks,
+      inheritedMasteredChars,
+      questions,
       lessons: allLessons,
       onSupplementReviewMistakes: supplementReviewMistakes,
       onSetIssueResolved: setIssueResolved,
+      reviewCarryover,
       selectedLesson,
       state: parentState,
       wordById: allKnownWords,

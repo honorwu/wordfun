@@ -1,0 +1,156 @@
+import { useState } from "react";
+import type { AppState, DictationWord, LessonSummary, QuestionCarryover } from "../../../shared/types.ts";
+import { lessonOrder } from "../../../shared/domain/catalog.ts";
+import { hasQuestionAttempt, isMasteredChar, isMasteredQuestion, isQuestionCarryoverActive, isQuestionMasteryInherited } from "../../../shared/domain/reviewPolicy.ts";
+import { lessonLabel } from "../../lib/lessonPresentation";
+
+const labels = {
+  mastered: "整题已掌握",
+  inherited: "考察字已继承",
+  pending: "待巩固",
+  carryover: "旧错字待复练",
+  unreviewed: "还没练过",
+  future: "后续课",
+};
+const statuses = Object.keys(labels) as Array<keyof typeof labels>;
+const bookKey = ({ grade, unit }: LessonSummary) => `${grade}-${unit}`;
+const gradeNames = ["", "一", "二", "三", "四", "五", "六"];
+const pageSize = 48;
+
+export function MarkedQuestionText({ text, targets, wrongChars }: {
+  text: string;
+  targets: readonly string[];
+  wrongChars?: ReadonlySet<string>;
+}) {
+  return Array.from(text).map((char, index) => (
+    <span
+      className={[targets.includes(char) && "target-character", wrongChars?.has(char) && "wrong-character"].filter(Boolean).join(" ")}
+      key={index}
+    >{char}</span>
+  ));
+}
+
+export function QuestionMasteryPanel({ charStats, inheritedMasteredChars, questions, lessons, progress, reviewCarryover, wordStats, wrongCharsById }: {
+  charStats: AppState["charStats"];
+  inheritedMasteredChars: string[];
+  questions: DictationWord[];
+  lessons: LessonSummary[];
+  progress: LessonSummary;
+  reviewCarryover: Record<string, QuestionCarryover>;
+  wordStats: AppState["wordStats"];
+  wrongCharsById: ReadonlyMap<string, ReadonlySet<string>>;
+}) {
+  const [selectedBook, setSelectedBook] = useState("all");
+  const [status, setStatus] = useState<keyof typeof labels>("pending");
+  const [visibleQuestionCount, setVisibleQuestionCount] = useState(pageSize);
+  const lessonsById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+  const books = new Map<string, LessonSummary>();
+  const inherited = new Set(inheritedMasteredChars.filter((char) => isMasteredChar(charStats[char])));
+  const groups: Record<keyof typeof labels, Array<{ question: DictationWord; lesson: LessonSummary }>> = {
+    mastered: [], inherited: [], pending: [], carryover: [], unreviewed: [], future: [],
+  };
+  const allTargets = new Set<string>();
+  const learnedTargets = new Set<string>();
+  const attemptedTargets = new Set<string>();
+  let attemptedTotal = 0;
+  const progressOrder = lessonOrder(progress);
+  for (const question of questions) {
+    const lesson = lessonsById.get(question.lessonId);
+    if (!lesson || lesson.lessonKind === "classical_poetry") continue;
+    const book = bookKey(lesson);
+    books.set(book, lesson);
+    if (selectedBook !== "all" && selectedBook !== book) continue;
+
+    for (const char of question.chars) allTargets.add(char);
+    if (lessonOrder(lesson) > progressOrder) {
+      groups.future.push({ question, lesson });
+      continue;
+    }
+
+    const stat = wordStats[question.id];
+    const attempted = hasQuestionAttempt(stat);
+    if (attempted) attemptedTotal++;
+    for (const char of question.chars) {
+      learnedTargets.add(char);
+      if (attempted) attemptedTargets.add(char);
+    }
+    const group = isQuestionCarryoverActive(stat, reviewCarryover[question.id])
+      ? "carryover" : isMasteredQuestion(stat) ? "mastered"
+      : isQuestionMasteryInherited(question, stat, inherited) ? "inherited" : attempted ? "pending" : "unreviewed";
+    groups[group].push({ question, lesson });
+  }
+
+  if (!books.size) return null;
+  const masteredCharTotal = [...learnedTargets].filter((char) => isMasteredChar(charStats[char])).length;
+  const masteredTotal = groups.mastered.length;
+  const learnedTotal = masteredTotal + groups.inherited.length + groups.pending.length + groups.carryover.length + groups.unreviewed.length;
+  const masteryPercent = masteredTotal === learnedTotal ? 100 : Math.min(99.9, Math.round(masteredTotal / learnedTotal * 1000) / 10);
+  const visibleStatuses = statuses.filter((key) => (key !== "carryover" || Object.keys(reviewCarryover).length > 0)
+    && (key !== "inherited" || inheritedMasteredChars.length > 0));
+  const visibleQuestions = groups[status].slice(0, visibleQuestionCount);
+
+  return (
+    <section className="panel wide question-mastery-panel">
+      <div className="panel-title-row">
+        <div className="panel-heading"><h2>字词题掌握进度</h2></div>
+        <label>查看范围{" "}
+          <select value={selectedBook} onChange={(event) => {
+            setSelectedBook(event.target.value);
+            setVisibleQuestionCount(pageSize);
+          }}>
+            <option value="all">全部教材</option>
+            {[...books.entries()].sort(([, left], [, right]) => lessonOrder(left) - lessonOrder(right)).map(([key, book]) => (
+              <option key={key} value={key}>{gradeNames[book.grade]}年级{book.unit === 1 ? "上" : "下"}册</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <p className="muted">统计到{lessonLabel(progress)}（含本课）。古诗另按整篇练习统计。</p>
+      <div className="mastery-summary">
+        <div className="mastery-summary-count">
+          <strong>已掌握 {masteredCharTotal} / {learnedTargets.size} 个已学考察字</strong>
+        </div>
+        <div className="mastery-summary-count">
+          <strong>整题已掌握 {masteredTotal} / {learnedTotal} 道已学题</strong>
+          <span>{learnedTotal ? `${masteryPercent}%` : "—"}</span>
+        </div>
+        <progress aria-label="字词题掌握进度" value={masteredTotal} max={Math.max(1, learnedTotal)} />
+        <p>已练 <strong>{attemptedTotal}</strong> 题，覆盖 <strong>{attemptedTargets.size} / {learnedTargets.size}</strong> 个已学考察字。</p>
+        <p>所选教材共有 <strong>{allTargets.size}</strong> 个考察字，按字去重。</p>
+      </div>
+      <div className="mastery-statuses" aria-label="题目掌握状态">
+        {visibleStatuses.map((key) => (
+          <button key={key} type="button" aria-pressed={status === key} onClick={() => {
+            setStatus(key);
+            setVisibleQuestionCount(pageSize);
+          }}>{labels[key]} <strong>{groups[key].length}</strong></button>
+        ))}
+      </div>
+      {visibleQuestions.length ? (
+        <>
+          <p className="muted">{status === "inherited"
+            ? "这些题的考察字沿用旧库逐字成绩。整题评出对错后，按实际结果计分。"
+            : "下划线标出考察字，红字标出有记录的错字。"}</p>
+          <ul className="mastery-question-list" aria-label={labels[status]}>
+            {visibleQuestions.map(({ question, lesson }) => {
+              const wrongChars = wrongCharsById.get(question.id);
+              return (
+                <li key={question.id} className="mastery-question-item">
+                  <strong aria-label={`${question.text}，考察字 ${question.chars.join("、")}${wrongChars?.size ? `，曾错字 ${[...wrongChars].join("、")}` : ""}`}>
+                    <MarkedQuestionText text={question.text} targets={question.chars} wrongChars={wrongChars} />
+                  </strong>
+                  <small>{lessonLabel(lesson)}</small>
+                </li>
+              );
+            })}
+          </ul>
+          {visibleQuestions.length < groups[status].length && (
+            <button className="show-more-logs" type="button" onClick={() => setVisibleQuestionCount((current) => current + pageSize)}>
+              显示更多 · 已显示 {visibleQuestions.length} / {groups[status].length} 题
+            </button>
+          )}
+        </>
+      ) : <p className="muted">所选范围没有这类题目。</p>}
+    </section>
+  );
+}

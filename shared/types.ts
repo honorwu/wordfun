@@ -57,6 +57,7 @@ export type PracticeLesson = LessonSummary & Pick<Lesson, "classicalTexts">;
 export interface PracticeStats {
   historyTotal: number;
   historyReviewed: number;
+  historyInherited: number;
   historyUnreviewed: number;
   pendingMistakes: number;
   waitingReview: number;
@@ -78,11 +79,17 @@ export interface ReviewActivity {
 }
 
 export interface WordStat {
+  // 仅累计可判定整题正误的作答。部分提示且无错的练习仍记录 lastReviewedAt。
   attempts: number;
   mistakes: number;
   streak: number;
   lastReviewedAt?: string;
   lastMistakeAt?: string;
+}
+
+export interface QuestionCarryover {
+  baselineAttempts: number;
+  availableAt: string | null;
 }
 
 export interface CharacterStat {

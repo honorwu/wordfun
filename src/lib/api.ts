@@ -1,4 +1,4 @@
-import type { AppDataResponse, ParentDataRequest, ParentDataResponse, PracticeRequest, PracticeResponse, SaveStateRequest, SaveStateResponse } from "../../shared/contracts.ts";
+import type { AppDataResponse, ParentDataResponse, PracticeRequest, PracticeResponse, SaveStateRequest, SaveStateResponse } from "../../shared/contracts.ts";
 import type { AppState, LessonSummary, PracticeMode, Progress } from "../../shared/types.ts";
 import { normalizeState } from "../../shared/domain/state.ts";
 
@@ -41,15 +41,11 @@ export const fetchAppData = (): Promise<AppData> => {
   return appDataRequest;
 };
 
-export const fetchPractice = (progress: Progress, charStats: AppState["charStats"], mode: PracticeMode, signal: AbortSignal) =>
-  requestJson<PracticeResponse>("/api/practice", { method: "POST", body: JSON.stringify({ progress, charStats, mode } satisfies PracticeRequest), signal });
+export const fetchPractice = (progress: Progress, wordStats: AppState["wordStats"], mode: PracticeMode, signal: AbortSignal) =>
+  requestJson<PracticeResponse>("/api/practice", { method: "POST", body: JSON.stringify({ progress, wordStats, mode } satisfies PracticeRequest), signal });
 
-export const fetchParentData = (state: AppState, signal: AbortSignal) =>
-  requestJson<ParentDataResponse>("/api/parent-data", {
-    method: "POST",
-    body: JSON.stringify({ progress: state.progress, wordIds: state.logs.flatMap((log) => log.wordIds) } satisfies ParentDataRequest),
-    signal,
-  });
+export const fetchParentData = (signal: AbortSignal) =>
+  requestJson<ParentDataResponse>("/api/parent-data", { method: "POST", signal });
 
 export const saveRemoteState = async (state: AppState) => {
   await requestJson<SaveStateResponse>("/api/state", {

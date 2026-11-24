@@ -3,5 +3,5 @@ export { projectRoot, dataDir, defaultCatalogDatabasePath, defaultLearningDataba
 export { catalogSchemaSql, learningSchemaSql } from "./db/schema.mjs";
 export { ensureDataDir, openCatalogDatabase, openLearningDatabase, requireCatalogDatabase } from "./db/connection.mjs";
 export { runTransaction } from "./db/query.mjs";
-export { normalizeCategory, getLessons, getCompanionWords } from "./db/catalog.mjs";
+export { getLessons } from "./db/catalog.mjs";
 export { ensureDefaultStudent, getState, getReviewActivity, saveState } from "./db/learning.mjs";

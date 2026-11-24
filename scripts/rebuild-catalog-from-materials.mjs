@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { defaultCatalogDatabasePath, defaultLearningDatabasePath } from "../server/config.mjs";
+import { defaultCatalogDatabasePath, defaultLearningDatabasePath, projectRoot } from "../server/config.mjs";
 import { hasTable, runTransaction } from "../server/db/query.mjs";
-import { catalogSchemaSql } from "../server/db/schema.mjs";
+import { CATALOG_FORMAT, catalogSchemaSql } from "../server/db/schema.mjs";
 import { hanChars, readMaterials, stableId } from "./textbook/materials.mjs";
 import { resolveReviewedPrompts } from "./textbook/reviewed-prompts.mjs";
 import { compileSupplementWords } from "./textbook/dictation-words.mjs";
@@ -12,78 +12,56 @@ import { compileSupplementWords } from "./textbook/dictation-words.mjs";
 const writeCatalog = (db, { lessons, sources, wordSource }) => {
   const reviewedPrompts = Map.groupBy(resolveReviewedPrompts(lessons, sources), (entry) => entry.lessonId);
   db.exec(catalogSchemaSql);
-  const insert = (table, columns, prefix = "INSERT") =>
-    db.prepare(`${prefix} INTO ${table} (${columns}) VALUES (${columns.split(", ").map(() => "?").join(", ")})`);
-  const insertSource = insert("source_files", "path, kind, grade, term, sha256");
-  const insertLesson = insert("lessons", "id, grade, term, term_name, unit_name, unit_index, section, lesson_number, sort_order, title, lesson_type, lesson_kind, is_classical, direct_dictation, source_file, source_row");
-  const insertChar = insert("characters", "char, first_pinyin, first_lesson_id, first_grade, first_term", "INSERT OR IGNORE");
-  const insertLessonChar = insert("lesson_characters", "lesson_id, char, category, pinyin, char_order, source_column");
-  const insertWord = insert("words", "id, text, pinyin, word_kind, source_file, source_row");
-  const insertWordChar = insert("word_characters", "word_id, char, char_order");
-  const insertLessonWord = insert("lesson_words", "id, lesson_id, word_id, word_order, source_column");
-  const insertContext = insert("textbook_word_contexts", "lesson_word_id, entry_id, context_type, context_text, original_context_text, hint_text, context_pdf_pages, wordlist_pdf_page, note");
-  const insertTarget = insert("lesson_word_targets", "lesson_word_id, char, target_order");
-  const insertSupplementContext = insert("lesson_supplement_contexts", "lesson_word_id, hint_text, context_kind, source_text, source_rows");
-  const insertPoem = insert("classical_texts", "id, lesson_id, grade, term, unit_index, title, title_pinyin, author, dynasty, source_file, text_order");
-  const insertLine = insert("classical_lines", "text_id, line_order, text, pinyin");
+  const insert = (table, columns) =>
+    db.prepare(`INSERT INTO ${table} (${columns}) VALUES (${columns.split(", ").map(() => "?").join(", ")})`);
+  const insertSource = insert("source_files", "path, grade, term, sha256");
+  const insertLesson = insert("lessons", "id, grade, term, unit_name, unit_index, section, lesson_number, sort_order, title, lesson_kind, source_file");
+  const insertLessonChar = insert("lesson_characters", "lesson_id, char, category, pinyin, char_order");
+  const insertQuestion = insert("questions", "id, lesson_id, position, kind, text, pinyin, target_chars, hint_text, source_file, source_row, source_details, poem");
+
   runTransaction(db, () => {
-    insert("catalog_meta", "key, value").run("source_format", "dictation-textbook-v3");
-    for (const [source, { kind, grade, term, content }] of sources) {
-      insertSource.run(source, kind, grade, term, createHash("sha256").update(content).digest("hex"));
+    insert("catalog_meta", "key, value").run("source_format", CATALOG_FORMAT);
+    for (const [source, { grade, term, content }] of sources) {
+      insertSource.run(source, grade, term, createHash("sha256").update(content).digest("hex"));
     }
     for (const lesson of lessons) {
       const { id, grade, term, number, sortOrder, title, kind, section, unit, unitIndex, source, chars, words, poems } = lesson;
-      const classical = kind === "classical_poetry" ? 1 : 0;
-      const lessonType = classical ? "古诗词" : section === "课文" || section === "识字" ? "正常课文" : "其他";
-      insertLesson.run(id, grade, term, term === 1 ? "上册" : "下册", unit, unitIndex, section, number, sortOrder, title,
-        lessonType, kind, classical, classical, source, 1);
+      insertLesson.run(id, grade, term, unit, unitIndex, section, number, sortOrder, title, kind, source);
+
       for (const { char, pinyin, order, column } of chars) {
-        insertChar.run(char, pinyin, id, grade, term);
-        insertLessonChar.run(id, char, column === "写字表" ? "一类" : "二类", pinyin || null, order, column);
+        insertLessonChar.run(id, char, column === "写字表" ? "一类" : "二类", pinyin, order);
       }
       for (const entry of words) {
-        const wordId = stableId("textbook-word", id, entry.text);
-        const lessonWordId = stableId("textbook-prompt", id, entry.text);
-        insertWord.run(wordId, entry.text, entry.pinyin, "textbook", wordSource, entry.sourceRow);
-        const sounds = entry.pinyin.split(/\s+/u);
-        hanChars(entry.text).forEach((char, order) => {
-          insertChar.run(char, sounds[order], id, grade, term);
-          insertWordChar.run(wordId, char, order);
-        });
-        insertLessonWord.run(lessonWordId, id, wordId, entry.word_order - 1, "词语表");
-        insertContext.run(lessonWordId, entry.entry_id, entry.context_type, entry.context_text, entry.original_context_text,
-          entry.hint_text, entry.context_pdf_pages, entry.wordlist_pdf_page, entry.note);
+        const { entry_id, context_type, context_text, original_context_text, context_pdf_pages, wordlist_pdf_page, note } = entry;
+        const sourceDetails = JSON.stringify({ entry_id, context_type, context_text, original_context_text, context_pdf_pages, wordlist_pdf_page, note });
+        insertQuestion.run(stableId("textbook-prompt", id, entry.text), id, entry.word_order - 1, "textbook", entry.text, entry.pinyin,
+          JSON.stringify([...new Set(hanChars(entry.text))]), entry.hint_text, wordSource, entry.sourceRow, sourceDetails, null);
       }
       for (const [order, poem] of poems.entries()) {
-        const poemId = stableId("textbook-classical", id, poem.title);
-        insertPoem.run(poemId, id, grade, term, unitIndex, poem.title, poem.titlePinyin, poem.author, poem.dynasty, source, order);
-        poem.lines.forEach((line, index) => insertLine.run(poemId, index, line.text, line.pinyin));
-        const wordId = `${poemId}-full`;
-        const text = [poem.title, poem.dynasty, poem.author, poem.lines.map((line) => line.text).join("\n")].filter(Boolean).join("\n");
-        const pinyin = [poem.titlePinyin, poem.lines.map((line) => line.pinyin).join("\n")].filter(Boolean).join("\n");
-        insertWord.run(wordId, text, pinyin, "classical_full", source, 1);
-        hanChars(text).forEach((char, index) => insertWordChar.run(wordId, char, index));
-        insertLessonWord.run(`poem-${poemId}`, id, wordId, order, "古诗词整篇");
+        const { title, titlePinyin, author, dynasty, lines } = poem;
+        const poemId = stableId("textbook-classical", id, title);
+        const text = lines.map((line) => line.text).join("\n");
+        const pinyin = lines.map((line) => line.pinyin).join("\n");
+        const targets = [...new Set(hanChars([title, dynasty, author, text].filter(Boolean).join("\n")))];
+        insertQuestion.run(`poem-${poemId}`, id, words.length + order, "poem", text, pinyin, JSON.stringify(targets), null,
+          source, 1, null, JSON.stringify({ title, titlePinyin, author, dynasty }));
       }
-      if (classical) continue;
+      if (kind === "classical_poetry") continue;
+
       const supplements = compileSupplementWords(lesson, reviewedPrompts.get(id) ?? []);
       for (const [index, { prompt, targets }] of supplements.entries()) {
-        const { word, pinyin, hint, kind, source: excerpt, rows } = prompt;
-        const wordId = stableId("supplement-word", id, word, pinyin);
-        const lessonWordId = `${id}-char-${targets[0]}`;
-        insertWord.run(wordId, word, pinyin, "supplement", source, rows[0]);
-        hanChars(word).forEach((char, order) => insertWordChar.run(wordId, char, order));
-        insertLessonWord.run(lessonWordId, id, wordId, words.length + index, "未覆盖生字组词");
-        targets.forEach((char, order) => insertTarget.run(lessonWordId, char, order));
-        insertSupplementContext.run(lessonWordId, hint, kind, excerpt, rows.join("、"));
+        const { word, pinyin, hint, kind: context_kind, source: source_text, rows: source_rows } = prompt;
+        const details = JSON.stringify({ context_kind, source_text, source_rows });
+        insertQuestion.run(`${id}-char-${targets[0]}`, id, words.length + poems.length + index, "supplement", word, pinyin,
+          JSON.stringify(targets), hint, source, source_rows[0], details, null);
       }
     }
   });
 };
 
-const [materialRoot] = process.argv.slice(2);
-if (!materialRoot || process.argv.length !== 3) {
-  throw new Error("用法：node scripts/rebuild-catalog-from-materials.mjs <教材目录>");
+const materialRoot = process.argv[2] ?? path.join(projectRoot, "textbook");
+if (process.argv.length > 3) {
+  throw new Error("用法：node scripts/rebuild-catalog-from-materials.mjs [教材目录]");
 }
 if (defaultCatalogDatabasePath === defaultLearningDatabasePath) throw new Error("词库和学习库不能使用同一路径");
 if (existsSync(defaultCatalogDatabasePath)) {
@@ -105,11 +83,11 @@ try {
     }
     console.log(JSON.stringify({
       lessons: db.prepare("SELECT COUNT(*) AS count FROM lessons").get().count,
-      textbookWords: db.prepare("SELECT COUNT(*) AS count FROM textbook_words").get().count,
-      textbookHints: db.prepare("SELECT COUNT(hint_text) AS count FROM textbook_word_contexts").get().count,
-      supplementWords: db.prepare("SELECT COUNT(*) AS count FROM lesson_words WHERE source_column = '未覆盖生字组词'").get().count,
-      supplementTargets: db.prepare("SELECT COUNT(*) AS count FROM lesson_word_targets").get().count,
-      poemPrompts: db.prepare("SELECT COUNT(*) AS count FROM lesson_words WHERE source_column = '古诗词整篇'").get().count,
+      textbookWords: db.prepare("SELECT COUNT(*) AS count FROM questions WHERE kind = 'textbook'").get().count,
+      textbookHints: db.prepare("SELECT COUNT(hint_text) AS count FROM questions WHERE kind = 'textbook'").get().count,
+      supplementWords: db.prepare("SELECT COUNT(*) AS count FROM questions WHERE kind = 'supplement'").get().count,
+      supplementTargets: db.prepare("SELECT SUM(json_array_length(target_chars)) AS count FROM questions WHERE kind = 'supplement'").get().count,
+      poemPrompts: db.prepare("SELECT COUNT(*) AS count FROM questions WHERE kind = 'poem'").get().count,
     }, null, 2));
   } finally { db.close(); }
   renameSync(filename, defaultCatalogDatabasePath);

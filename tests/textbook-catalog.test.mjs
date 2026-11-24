@@ -8,26 +8,26 @@ import test from "node:test";
 import { defaultCatalogDatabasePath, defaultStudentId, getLessons, getState, openLearningDatabase, saveState } from "../server/db.mjs";
 import { createCatalogService } from "../server/services/catalog.mjs";
 import { buildBookCharacterIndex, characterMastery, groupCharacterMastery, learnedTextbookChars } from "../shared/domain/characterMastery.ts";
-import { getScreeningTargetChars } from "../shared/domain/practice.ts";
+import { getScreeningQuestions, getScreeningTargetChars } from "../shared/domain/practice.ts";
 import { createTextbookHintMask } from "../src/features/practice/titleMask.ts";
 
 test("新词库仅包含五册材料，课次、册末词和可用提示完整对应", () => {
   const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
   try {
-    const books = db.prepare(`SELECT grade, term, COUNT(*) AS count FROM textbook_words words
-      JOIN lessons ON lessons.id = words.lesson_id GROUP BY grade, term ORDER BY grade, term`).all();
+    const tables = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all();
+    assert.deepEqual(tables.map(({ name }) => name), ["catalog_meta", "lesson_characters", "lessons", "questions", "source_files"]);
+    const books = db.prepare(`SELECT grade, term, COUNT(*) AS count FROM questions q
+      JOIN lessons l ON l.id = q.lesson_id WHERE q.kind = 'textbook' GROUP BY grade, term ORDER BY grade, term`).all();
     assert.deepEqual(books.map((row) => [row.grade, row.term, row.count]), [
       [2, 1, 229], [2, 2, 297], [3, 1, 272], [3, 2, 271], [4, 1, 220],
     ]);
     assert.equal(db.prepare("SELECT COUNT(DISTINCT grade || '-' || term) AS count FROM lessons").get().count, 5);
-    const context = db.prepare("SELECT COUNT(*) AS total, COUNT(hint_text) AS ready FROM textbook_word_contexts").get();
+    const context = db.prepare("SELECT COUNT(*) AS total, COUNT(hint_text) AS ready FROM questions WHERE kind = 'textbook'").get();
     assert.equal(context.total, 1289);
     assert.equal(context.ready, 1249);
-    const supplement = db.prepare(`SELECT w.text AS word, w.pinyin, c.hint_text
-      FROM lesson_words lw JOIN lessons l ON l.id = lw.lesson_id JOIN words w ON w.id = lw.word_id
-      JOIN lesson_word_targets t ON t.lesson_word_id = lw.id
-      JOIN lesson_supplement_contexts c ON c.lesson_word_id = lw.id
-      WHERE l.title = ? AND t.char = ?`);
+    const supplement = db.prepare(`SELECT q.text AS word, q.pinyin, q.hint_text, q.target_chars, q.source_file, q.source_row, q.source_details
+      FROM questions q JOIN lessons l ON l.id = q.lesson_id
+      WHERE q.kind = 'supplement' AND l.title = ? AND EXISTS (SELECT 1 FROM json_each(q.target_chars) WHERE value = ?)`);
     const fortress = supplement.get("长城", "垒");
     assert.equal(fortress.word, "堡垒");
     assert.equal(fortress.pinyin, "bǎo lěi");
@@ -39,7 +39,13 @@ test("新词库仅包含五册材料，课次、册末词和可用提示完整�
     const mix = supplement.get("肥皂泡", "和");
     assert.equal(mix.word, "和弄");
     assert.equal(mix.pinyin, "huò nòng");
-    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM lesson_word_targets").get().n, 1617);
+    const health = supplement.get("难忘的泼水节", "健");
+    assert.equal(health.word, "健康");
+    assert.deepEqual(JSON.parse(health.target_chars), ["健", "康"]);
+    assert.match(health.source_file, /难忘的泼水节/);
+    assert.equal(health.source_row, JSON.parse(health.source_details).source_rows[0]);
+    const targets = db.prepare("SELECT SUM(json_array_length(target_chars)) AS n FROM questions WHERE kind = 'supplement'").get();
+    assert.equal(targets.n, 1617);
     assert.equal(db.prepare("SELECT unit_index FROM lessons WHERE title = ?").get("一匹出色的马").unit_index, 2);
     assert.ok(db.prepare("SELECT 1 FROM lessons WHERE title = ?").get("曹冲称象"));
     assert.equal(db.prepare("PRAGMA foreign_key_check").get(), undefined);
@@ -50,7 +56,8 @@ test("新词库仅包含五册材料，课次、册末词和可用提示完整�
     assert.match(items[0].word.textbookHint, /〔　〕/u);
     assert.equal(catalog.practice({ grade: 2, lessonId: catalog.summaries().find((row) => row.title === "田家四季歌").id }, {})
       .items.find((item) => item.word.text === "四季").word.textbookHint, undefined);
-    assert.ok(catalog.characterBooks().find((book) => book.grade === 2 && book.term === 1).characters.见.includes("看见"));
+    const book = buildBookCharacterIndex(getLessons(db)).find((entry) => entry.grade === 2 && entry.term === 1);
+    assert.ok(book.characters.见.includes("看见"));
   } finally { db.close(); }
 });
 
@@ -67,7 +74,7 @@ test("教材句子保留本题空位，其他目标字用带声调拼音；多�
   assert.equal(mask("〔　〕，行。"), "〔　〕，…。");
 });
 
-test("当课和历史复习读取已审阅的补充题，保留教材提示并遵守错字间隔", () => {
+test("当课和历史复习读取同一已审阅的补充题，错题按题等待复习间隔", () => {
   const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
   try {
     const catalog = createCatalogService(db);
@@ -84,12 +91,13 @@ test("当课和历史复习读取已审阅的补充题，保留教材提示并�
 
     const next = lessons[lessons.indexOf(lesson) + 1];
     const progress = { grade: next.grade, lessonId: next.id };
-    const learned = getScreeningTargetChars(getLessons(db), progress);
-    const mastered = Object.fromEntries(learned.map((char) => [char, { attempts: 1, mistakes: 0, streak: 1 }]));
+    const pastQuestions = getScreeningQuestions(getLessons(db), progress);
+    const mastered = Object.fromEntries(pastQuestions.map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }]));
+    const questionId = names[0].word.id;
     const recentlyMissed = { attempts: 1, mistakes: 1, streak: 0, lastReviewedAt: new Date().toISOString() };
-    assert.equal(catalog.practice(progress, { ...mastered, 德: recentlyMissed }, "history").items.length, 0);
+    assert.equal(catalog.practice(progress, { ...mastered, [questionId]: recentlyMissed }, "history").items.length, 0);
     const due = { ...recentlyMissed, lastReviewedAt: new Date(Date.now() - 6 * 86400000).toISOString() };
-    const history = catalog.practice(progress, { ...mastered, 德: due }, "history");
+    const history = catalog.practice(progress, { ...mastered, [questionId]: due }, "history");
     assert.deepEqual(history.items.map(({ word }) => word.text), ["朱德"]);
     assert.deepEqual(history.items[0].word, names[0].word);
     assert.match(history.items[0].word.textbookHint, /〔　〕同志/u);
@@ -123,8 +131,8 @@ test("四上语文园地六优先考词语表，再用拉萨、哈尼等教材�
 
     const next = lessons[lessons.indexOf(garden) + 1];
     const historyProgress = { grade: next.grade, lessonId: next.id };
-    const learned = getScreeningTargetChars(getLessons(db), historyProgress);
-    const mastered = Object.fromEntries(learned.filter((char) => char !== "萨").map((char) => [char, { attempts: 1, mistakes: 0, streak: 1 }]));
+    const questions = getScreeningQuestions(getLessons(db), historyProgress).filter(({ id }) => id !== byText.get("拉萨").id);
+    const mastered = Object.fromEntries(questions.map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }]));
     const { items } = catalog.practice(historyProgress, mastered, "history");
     assert.deepEqual(items.map(({ word }) => word.text), ["拉萨"]);
     assert.deepEqual(items[0].word, byText.get("拉萨"));
@@ -157,7 +165,7 @@ test("教材库里的已学字等于当课和历史可考的字词目标之并�
   try {
     const catalog = createCatalogService(db);
     const lessons = getLessons(db);
-    const books = catalog.characterBooks();
+    const books = buildBookCharacterIndex(lessons);
     for (const lesson of [lessons[0], lessons.find((row) => row.title === "颐和园"), lessons.find((row) => row.lessonKind === "classical_poetry")]) {
       const progress = { grade: lesson.grade, lessonId: lesson.id };
       const currentChars = lesson.lessonKind === "classical_poetry" ? [] : catalog.practice(progress, {}).items.flatMap((item) => item.word.chars);
@@ -208,7 +216,10 @@ test("只初始化教材范围内的逐字计分，不带入课外字、旧场�
       assert.equal(characterMastery(state.charStats.看), "unreviewed");
       assert.deepEqual(state.charStats.见.wrongWordTexts, []);
       assert.equal(state.charStats.见.lastReviewedAt, undefined);
-      assert.ok(catalog.practice(state.progress, state.charStats, "history").items.some((item) => item.word.chars.includes("坦")));
+      const history = catalog.practice(state.progress, state.wordStats, "history");
+      assert.ok(history.items.length > 0);
+      assert.equal(history.stats.historyUnreviewed, history.stats.historyTotal);
+      assert.equal(history.stats.pendingMistakes, 0);
     } finally { learning.close(); }
   } finally { catalogDb.close(); rmSync(directory, { recursive: true, force: true }); }
 });

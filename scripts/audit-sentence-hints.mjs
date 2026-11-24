@@ -1,30 +1,15 @@
-import { getCompanionWords, getLessons, requireCatalogDatabase } from "../server/db.mjs";
+import { getLessons, requireCatalogDatabase } from "../server/db.mjs";
 import { sentenceHintForWord } from "../src/lib/sentenceHints.ts";
 
 const catalogDb = requireCatalogDatabase();
 const lessons = getLessons(catalogDb);
-const companionWords = getCompanionWords(catalogDb);
+catalogDb.close();
 
 const byText = new Map();
 
 for (const lesson of lessons) {
   for (const word of lesson.words) {
     byText.set(word.text, word);
-  }
-}
-
-for (const [char, words] of Object.entries(companionWords)) {
-  for (const word of words) {
-    if (!byText.has(word.text)) {
-      byText.set(word.text, {
-        ...word,
-        id: `companion-${char}-${word.text}`,
-        grade: 1,
-        lessonId: "",
-        lessonTitle: "配词",
-        category: "二类",
-      });
-    }
   }
 }
 

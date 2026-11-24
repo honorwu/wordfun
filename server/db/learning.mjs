@@ -1,3 +1,4 @@
+import { masteryNetCorrect } from "../../shared/domain/reviewPolicy.ts";
 import { defaultStudentId } from "../config.mjs";
 import { allRows, oneRow, runTransaction } from "./query.mjs";
 
@@ -46,6 +47,21 @@ export const ensureDefaultStudent = (learningDb, catalogDb, studentId = defaultS
     )
     .run(studentId, lesson.grade, lesson.lesson_id);
 };
+
+export const getReviewCarryover = (learningDb, studentId = defaultStudentId) => Object.fromEntries(allRows(
+  learningDb,
+  "SELECT word_id, baseline_attempts, available_at FROM review_carryover WHERE student_id = ?",
+  studentId,
+).map(({ word_id, baseline_attempts, available_at }) => [word_id, { baselineAttempts: baseline_attempts, availableAt: available_at }]));
+
+export const getInheritedMasteredChars = (learningDb, studentId = defaultStudentId) => allRows(
+  learningDb,
+  `SELECT inherited.char FROM inherited_char_mastery inherited
+   JOIN char_stats stats ON stats.student_id = inherited.student_id AND stats.char = inherited.char
+   WHERE inherited.student_id = ? AND stats.attempts - 2 * stats.mistakes >= ?
+   ORDER BY inherited.char`,
+  studentId, masteryNetCorrect,
+).map(({ char }) => char);
 
 export const getState = (learningDb, catalogDb, studentId = defaultStudentId, { includeLogs = true } = {}) => {
   ensureDefaultStudent(learningDb, catalogDb, studentId);
@@ -128,20 +144,15 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId, { 
       lessonsByLog.set(item.log_id, [...(lessonsByLog.get(item.log_id) || []), { id: item.lesson_id, title: item.lesson_title }]);
     }
   }
-  const catalogLessons = logRows.length ? allRows(catalogDb, "SELECT id, title FROM lessons ORDER BY LENGTH(id) DESC") : [];
-  const poetryLessons = new Map(
-    (logRows.length ? allRows(
-      catalogDb,
-      `SELECT 'poem-' || ct.id AS word_id, l.id AS lesson_id, l.title
-       FROM classical_texts ct
-       JOIN lessons l ON l.id = ct.lesson_id`,
-    ) : []).map((row) => [row.word_id, { id: row.lesson_id, title: row.title }]),
-  );
+  const questionLessons = new Map(logRows.some((log) => !lessonsByLog.has(log.id)) ? allRows(
+    catalogDb,
+    `SELECT q.id AS question_id, l.id AS lesson_id, l.title
+     FROM questions q JOIN lessons l ON l.id = q.lesson_id`,
+  ).map((row) => [row.question_id, { id: row.lesson_id, title: row.title }]) : []);
   const inferLessons = (items) => {
     const inferred = new Map();
     for (const item of items) {
-      const poetryLesson = poetryLessons.get(item.word_id);
-      const lesson = poetryLesson || catalogLessons.find((candidate) => item.word_id.startsWith(`${candidate.id}-`));
+      const lesson = questionLessons.get(item.word_id);
       if (lesson) inferred.set(lesson.id, { id: lesson.id, title: lesson.title });
     }
     return [...inferred.values()];

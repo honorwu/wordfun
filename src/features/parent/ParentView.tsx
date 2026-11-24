@@ -1,31 +1,35 @@
 import { BarChart3, CalendarDays, Check, ChevronLeft, ChevronRight, ClipboardCheck, History, Printer } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AppState, BookCharacterIndex, DictationWord, LessonSummary } from "../../../shared/types.ts";
-import { isMasteredChar, isPendingScreeningMistakeChar } from "../../../shared/domain/index.ts";
-import { learnedTextbookChars, textbookCharacterSet } from "../../../shared/domain/characterMastery.ts";
+import type { AppState, DictationWord, LessonSummary, QuestionCarryover } from "../../../shared/types.ts";
+import { lessonOrder } from "../../../shared/domain/catalog.ts";
+import { isMasteredQuestion } from "../../../shared/domain/reviewPolicy.ts";
 import type { MissedWrongCharCorrection } from "../../../shared/domain/reviews.ts";
 import { WordIssuesPanel } from "../../components/WordIssues";
 import { lessonLabel } from "../../lib/lessonPresentation";
 import { localDateKey } from "../../lib/dates";
 import { RecentReviewItem } from "./RecentReviewItem";
 import { ReviewCorrectionPage } from "./ReviewCorrectionPage";
-import { CharacterMasteryPanel } from "./CharacterMasteryPanel";
+import { MarkedQuestionText, QuestionMasteryPanel } from "./QuestionMasteryPanel";
 
 export interface ParentViewProps {
-  characterBooks: BookCharacterIndex[];
+  inheritedMasteredChars: string[];
   lessons: LessonSummary[];
   onSetIssueResolved: (id: string, resolved: boolean) => void;
   onSupplementReviewMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => number;
+  questions: DictationWord[];
+  reviewCarryover: Record<string, QuestionCarryover>;
   selectedLesson: LessonSummary;
   state: AppState;
   wordById: Map<string, DictationWord>;
 }
 
 export function ParentView({
-  characterBooks,
+  inheritedMasteredChars,
   lessons,
   onSetIssueResolved,
   onSupplementReviewMistakes,
+  questions,
+  reviewCarryover,
   selectedLesson,
   state,
   wordById,
@@ -69,61 +73,37 @@ export function ParentView({
     );
   }
 
-  const textbookChars = textbookCharacterSet(characterBooks);
-  const learnedChars = learnedTextbookChars(characterBooks, selectedLesson);
-  const textbookStats = Object.entries(state.charStats).filter(([char]) => textbookChars.has(char));
-  const pendingWrongChars = textbookStats
-    .filter(([char, stat]) => learnedChars.has(char) && stat.mistakes > 0 && !isMasteredChar(stat))
-    .sort((left, right) => right[1].mistakes - left[1].mistakes);
-  const wrongWordsByText = new Map<string, { chars: Set<string>; lastMistakeAt: string }>();
-  const charsWithWordEvidence = new Set<string>();
-  for (const [char, stat] of pendingWrongChars) {
-    for (const wordText of stat.wrongWordTexts ?? []) {
-      if (!wordText.trim()) continue;
-      const existing = wrongWordsByText.get(wordText) ?? { chars: new Set<string>(), lastMistakeAt: "" };
-      existing.chars.add(char);
-      charsWithWordEvidence.add(char);
-      if ((stat.lastMistakeAt ?? "") > existing.lastMistakeAt) existing.lastMistakeAt = stat.lastMistakeAt ?? "";
-      wrongWordsByText.set(wordText, existing);
+  const lessonsById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+  const questionsById = new Map(questions.map((question) => [question.id, question]));
+  const wrongCharsById = new Map<string, Set<string>>();
+  for (const log of state.logs) {
+    const snapshots = new Map((log.reviewedItems ?? []).map((item) => [item.wordId, item.wordText]));
+    for (const { wordId, char } of log.wrongChars ?? []) {
+      const question = questionsById.get(wordId);
+      const snapshot = snapshots.get(wordId);
+      if (!question?.text.includes(char) || (snapshot && snapshot !== question.text)) continue;
+      const wrongChars = wrongCharsById.get(wordId) ?? new Set<string>();
+      wrongChars.add(char);
+      wrongCharsById.set(wordId, wrongChars);
     }
   }
-  const wrongWords = [
-    ...[...wrongWordsByText.entries()].map(([wordText, detail]) => ({
-      key: `word-${wordText}`,
-      wordText,
-      ...detail,
-      missingWordEvidence: false,
-    })),
-    ...pendingWrongChars
-      .filter(([char]) => !charsWithWordEvidence.has(char))
-      .map(([char, stat]) => ({
-        key: `legacy-char-${char}`,
-        wordText: char,
-        chars: new Set([char]),
-        lastMistakeAt: stat.lastMistakeAt ?? "",
-        missingWordEvidence: true,
-      })),
-  ].sort((left, right) => right.lastMistakeAt.localeCompare(left.lastMistakeAt) || right.chars.size - left.chars.size);
-  const missingWordEvidenceCount = wrongWords.filter((item) => item.missingWordEvidence).length;
-  const historicalWrongWordsByText = new Map<string, { chars: Set<string>; pendingChars: Set<string> }>();
-  const historicalWrongCharsWithoutWordEvidence: string[] = [];
-  for (const [char, stat] of textbookStats) {
-    if (stat.mistakes <= 0) continue;
-    const wordTexts = Array.from(new Set((stat.wrongWordTexts ?? []).map((wordText) => wordText.trim()).filter(Boolean)));
-    if (wordTexts.length === 0) historicalWrongCharsWithoutWordEvidence.push(char);
-    for (const wordText of wordTexts) {
-      const existing = historicalWrongWordsByText.get(wordText) ?? { chars: new Set<string>(), pendingChars: new Set<string>() };
-      existing.chars.add(char);
-      if (isPendingScreeningMistakeChar(stat)) existing.pendingChars.add(char);
-      historicalWrongWordsByText.set(wordText, existing);
-    }
-  }
-  const historicalWrongWords = [...historicalWrongWordsByText.entries()]
-    .map(([wordText, detail]) => ({ wordText, ...detail }))
-    .sort((left, right) => Number(right.pendingChars.size > 0) - Number(left.pendingChars.size > 0)
-      || left.wordText.localeCompare(right.wordText, "zh-CN"));
-  const historicalPendingWordCount = historicalWrongWords.filter((item) => item.pendingChars.size > 0).length;
-  const historicalMasteredWordCount = historicalWrongWords.length - historicalPendingWordCount;
+
+  const scoredQuestions = questions.flatMap((question) => {
+    const stat = state.wordStats[question.id];
+    const lesson = lessonsById.get(question.lessonId);
+    return stat && lesson ? [{ question, lesson, stat }] : [];
+  });
+  const historicalWrongQuestions = scoredQuestions.filter(({ stat }) => stat.mistakes > 0)
+    .map((item) => ({ ...item, mastered: isMasteredQuestion(item.stat) }))
+    .sort((left, right) => Number(left.mastered) - Number(right.mastered)
+      || (right.stat.lastMistakeAt ?? "").localeCompare(left.stat.lastMistakeAt ?? ""));
+  const pendingWrongQuestions = historicalWrongQuestions.filter(({ lesson, mastered }) =>
+    !mastered && lessonOrder(lesson) <= lessonOrder(selectedLesson),
+  );
+  const historicalMasteredCount = historicalWrongQuestions.filter(({ mastered }) => mastered).length;
+  const displayQuestion = (question: DictationWord, lesson: LessonSummary) => lesson.lessonKind === "classical_poetry"
+    ? `《${question.lessonTitle}》全文`
+    : question.text;
   const printDate = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric" }).format(new Date());
   const totalPracticeCount = state.logs.reduce((total, log) => total + log.wordIds.length, 0);
   const totalCheckinDays = new Set(state.logs.map((log) => localDateKey(new Date(log.date)))).size;
@@ -139,10 +119,10 @@ export function ParentView({
       })
       .map((log) => localDateKey(new Date(log.date))),
   ).size;
-  const totalCharacterAttempts = textbookStats.reduce((total, [, stat]) => total + stat.attempts, 0);
-  const totalCharacterMistakes = textbookStats.reduce((total, [, stat]) => total + stat.mistakes, 0);
-  const accuracy = totalCharacterAttempts > 0
-    ? Math.max(0, Math.round(((totalCharacterAttempts - totalCharacterMistakes) / totalCharacterAttempts) * 100))
+  const totalQuestionAttempts = scoredQuestions.reduce((total, { stat }) => total + stat.attempts, 0);
+  const totalQuestionMistakes = scoredQuestions.reduce((total, { stat }) => total + stat.mistakes, 0);
+  const accuracy = totalQuestionAttempts > 0
+    ? Math.max(0, Math.round(((totalQuestionAttempts - totalQuestionMistakes) / totalQuestionAttempts) * 100))
     : null;
   const activityByDate = state.logs.reduce<Map<string, number>>((result, log) => {
     const key = localDateKey(new Date(log.date));
@@ -167,7 +147,16 @@ export function ParentView({
       </div>
 
       <div className="parent-grid">
-        <CharacterMasteryPanel books={characterBooks} progress={selectedLesson} charStats={state.charStats} />
+        <QuestionMasteryPanel
+          charStats={state.charStats}
+          inheritedMasteredChars={inheritedMasteredChars}
+          lessons={lessons}
+          progress={selectedLesson}
+          questions={questions}
+          reviewCarryover={reviewCarryover}
+          wordStats={state.wordStats}
+          wrongCharsById={wrongCharsById}
+        />
 
         <section className="panel overview-panel">
           <div className="panel-heading"><BarChart3 size={20} /><h2>学习概览</h2></div>
@@ -175,9 +164,9 @@ export function ParentView({
             <div className="overview-stat"><strong>{totalPracticeCount}</strong><span>累计默写（项）</span></div>
             <div className="overview-stat"><strong>{totalCheckinDays}</strong><span>累计打卡（天）</span></div>
             <div className="overview-stat"><strong>{recentCheckinDays}</strong><span>近 7 天打卡</span></div>
-            <div className="overview-stat"><strong>{accuracy === null ? "—" : `${accuracy}%`}</strong><span>字准确率（含初始状态）</span></div>
-            <div className="overview-stat attention"><strong>{pendingWrongChars.length}</strong><span>待巩固错字</span></div>
-            <div className="overview-stat history-total"><strong>{historicalWrongWords.length}</strong><span>历史错词</span></div>
+            <div className="overview-stat"><strong>{accuracy === null ? "—" : `${accuracy}%`}</strong><span>整题正确率</span></div>
+            <div className="overview-stat attention"><strong>{pendingWrongQuestions.length}</strong><span>待巩固错题</span></div>
+            <div className="overview-stat history-total"><strong>{historicalWrongQuestions.length}</strong><span>历史错题</span></div>
           </div>
         </section>
 
@@ -242,29 +231,24 @@ export function ParentView({
 
         <section className="panel wide pending-words-panel printable-report" data-print-section="pending">
           <div className="panel-title-row">
-            <div className="panel-heading"><ClipboardCheck size={20} /><h2>待巩固错字</h2></div>
-            <button className="print-report-button" type="button" onClick={() => printReport("pending")} disabled={wrongWords.length === 0}>
+            <div className="panel-heading"><ClipboardCheck size={20} /><h2>待巩固错题</h2></div>
+            <button className="print-report-button" type="button" onClick={() => printReport("pending")} disabled={pendingWrongQuestions.length === 0}>
               <Printer size={16} />打印待巩固
             </button>
           </div>
-          <p className="print-metadata">待巩固错字清单 · 打印日期：{printDate}</p>
-          {wrongWords.length === 0 ? <p className="muted">目前没有待巩固的错字。新的批改结果会自动记在这里。</p> : (
+          <p className="print-metadata">待巩固错题清单 · {printDate}</p>
+          {pendingWrongQuestions.length === 0 ? <p className="muted">目前没有待巩固的错题。</p> : (
             <>
-              <p className="panel-note">
-                共 {pendingWrongChars.length} 个待巩固错字，完整列出 {wrongWordsByText.size} 个相关词语；同一个字可能出现在多个词中。
-                {missingWordEvidenceCount > 0 ? `另有 ${missingWordEvidenceCount} 个字仅有逐字状态，已单独列出。` : ""}
-              </p>
-              <div className="wrong-word-list">{wrongWords.map(({ chars, key, missingWordEvidence, wordText }) => {
-                const isLongText = Array.from(wordText).filter((char) => /\p{Script=Han}/u.test(char)).length > 10;
-                const displayText = isLongText ? `《${wordText.split("\n")[0]}》全文` : wordText;
+              <p className="panel-note">共 {pendingWrongQuestions.length} 道待巩固错题。下划线标出考察字，红字标出有记录的错字。</p>
+              <div className="wrong-word-list">{pendingWrongQuestions.map(({ question, lesson }) => {
+                const wrongChars = wrongCharsById.get(question.id);
                 return (
-                  <div className={`wrong-word-item ${missingWordEvidence ? "missing-evidence" : ""}`} key={key}>
+                  <div className="wrong-word-item" key={question.id}>
                     <strong className="wrong-word-text">
-                      {Array.from(displayText).map((char, index) => (
-                        <span className={chars.has(char) ? "wrong-character" : ""} key={`${char}-${index}`}>{char}</span>
-                      ))}
+                      <MarkedQuestionText text={displayQuestion(question, lesson)} targets={question.chars} wrongChars={wrongChars} />
                     </strong>
-                    <small>{missingWordEvidence ? "仅有逐字状态 · " : "错字："}{[...chars].map((char) => <b key={char}>{char}</b>)}</small>
+                    <small>{lessonLabel(lesson)}</small>
+                    <small>{wrongChars?.size ? <>曾错字 {[...wrongChars].map((char) => <b key={char}>{char}</b>)}</> : "暂无错字明细"}</small>
                   </div>
                 );
               })}</div>
@@ -274,41 +258,39 @@ export function ParentView({
 
         <section className="panel wide history-words-panel printable-report" data-print-section="history">
           <div className="panel-title-row">
-            <div className="panel-heading"><History size={20} /><h2>历史错词</h2></div>
-            <button className="print-report-button" type="button" onClick={() => printReport("history")} disabled={historicalWrongWords.length === 0}>
-              <Printer size={16} />打印历史错词
+            <div className="panel-heading"><History size={20} /><h2>历史错题</h2></div>
+            <button className="print-report-button" type="button" onClick={() => printReport("history")} disabled={historicalWrongQuestions.length === 0}>
+              <Printer size={16} />打印历史错题
             </button>
           </div>
-          <p className="print-metadata">历史错词清单 · 打印日期：{printDate}</p>
-          {historicalWrongWords.length === 0 ? <p className="muted">还没有历史错词记录。</p> : (
+          <p className="print-metadata">历史错题清单 · {printDate}</p>
+          {historicalWrongQuestions.length === 0 ? <p className="muted">还没有历史错题记录。</p> : (
             <>
               <p className="panel-note">
-                历史上共错过 {historicalWrongWords.length} 个词语，其中 {historicalPendingWordCount} 个仍待巩固，{historicalMasteredWordCount} 个已经掌握。历史错词掌握后仍会保留在这里。
-                {historicalWrongCharsWithoutWordEvidence.length > 0 ? `另有 ${historicalWrongCharsWithoutWordEvidence.length} 个旧错字未保留原词，未计入词语总数。` : ""}
+                共 {historicalWrongQuestions.length} 道历史错题，其中 {historicalWrongQuestions.length - historicalMasteredCount} 道待巩固，{historicalMasteredCount} 道已掌握。
               </p>
               <div className="history-word-table-wrap">
                 <table className="history-word-table">
                   <thead>
-                    <tr><th scope="col">序号</th><th scope="col">历史错词</th><th scope="col">曾错字</th><th scope="col">当前状态</th></tr>
+                    <tr><th scope="col">题目</th><th scope="col">课次</th><th scope="col">曾错字</th><th scope="col">当前状态</th></tr>
                   </thead>
                   <tbody>
-                    {historicalWrongWords.map(({ chars, pendingChars, wordText }, index) => {
-                      const isLongText = Array.from(wordText).filter((char) => /\p{Script=Han}/u.test(char)).length > 10;
-                      const displayText = isLongText ? `《${wordText.split("\n")[0]}》全文` : wordText;
+                    {historicalWrongQuestions.map(({ question, lesson, mastered }) => {
+                      const wrongChars = wrongCharsById.get(question.id);
                       return (
-                        <tr key={wordText}>
-                          <td className="history-word-index">{index + 1}</td>
+                        <tr key={question.id}>
                           <td>
                             <strong className="history-word-text">
-                              {Array.from(displayText).map((char, charIndex) => (
-                                <span className={chars.has(char) ? "wrong-character" : ""} key={`${char}-${charIndex}`}>{char}</span>
-                              ))}
+                              <MarkedQuestionText text={displayQuestion(question, lesson)} targets={question.chars} wrongChars={wrongChars} />
                             </strong>
                           </td>
-                          <td><span className="historical-wrong-chars">{[...chars].map((char) => <b key={char}>{char}</b>)}</span></td>
+                          <td>{lessonLabel(lesson)}</td>
+                          <td>{wrongChars?.size
+                            ? <span className="historical-wrong-chars">{[...wrongChars].map((char) => <b key={char}>{char}</b>)}</span>
+                            : "暂无明细"}</td>
                           <td>
-                            <span className={`mastery-status ${pendingChars.size > 0 ? "pending" : "mastered"}`}>
-                              {pendingChars.size > 0 ? `待巩固 ${pendingChars.size} 字` : "已掌握"}
+                            <span className={`mastery-status ${mastered ? "mastered" : "pending"}`}>
+                              {mastered ? "已掌握" : "待巩固"}
                             </span>
                           </td>
                         </tr>
