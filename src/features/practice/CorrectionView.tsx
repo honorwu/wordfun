@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { CorrectionItem } from "./types";
 import { mistakeReviewLabels } from "./types";
 import { hanCharacterCount } from "./titleMask";
+import { TextbookHint } from "./TextbookHint";
 
 export function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; onFinish: () => void }) {
   const [finishArmed, setFinishArmed] = useState(false);
@@ -47,6 +48,7 @@ export function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; o
               {item.mistakeReview && <span className="mistake-review-label">{mistakeReviewLabels[item.mistakeReview]}</span>}
               <span>{item.wrongChars.length > 1 ? `${item.wrongChars.length} 个错字` : "1 个错字"}</span>
             </div>
+            <TextbookHint text={item.textbookHint} />
             <div className="correction-answer">
               <div className="correction-pinyin">
                 <span>{isPoetry ? "题目与正文拼音" : "拼音"}</span>

@@ -2,7 +2,7 @@ import { hanChars } from "./materials.mjs";
 
 const selectTextbookSupplement = (reviewed, generated) => {
   if (!reviewed) return generated;
-  if (!generated || reviewed.word !== reviewed.char) return reviewed;
+  if (!generated || reviewed.replaces || reviewed.word !== reviewed.char) return reviewed;
   return generated.word !== generated.char || (reviewed.kind !== "课文原句" && generated.kind === "课文原句")
     ? generated : reviewed;
 };

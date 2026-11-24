@@ -5,7 +5,6 @@ import { defaultCatalogDatabasePath, getLessons } from "../server/db.mjs";
 import { createCatalogService } from "../server/services/catalog.mjs";
 import { buildBookCharacterIndex, characterMastery, groupCharacterMastery, learnedTextbookChars } from "../shared/domain/characterMastery.ts";
 import { getScreeningQuestions, getScreeningTargetChars } from "../shared/domain/practice.ts";
-import { createTextbookHintMask } from "../src/features/practice/titleMask.ts";
 
 test("新词库仅包含五册材料，课次、册末词和可用提示完整对应", () => {
   const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
@@ -20,7 +19,8 @@ test("新词库仅包含五册材料，课次、册末词和可用提示完整�
     assert.equal(db.prepare("SELECT COUNT(DISTINCT grade || '-' || term) AS count FROM lessons").get().count, 5);
     const context = db.prepare("SELECT COUNT(*) AS total, COUNT(hint_text) AS ready FROM questions WHERE kind = 'textbook'").get();
     assert.equal(context.total, 1289);
-    assert.equal(context.ready, 1249);
+    assert.equal(context.ready, 1289);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM questions WHERE kind != 'poem' AND hint_text IS NULL").get().count, 0);
     const supplement = db.prepare(`SELECT q.text AS word, q.pinyin, q.hint_text, q.target_chars, q.source_file, q.source_row, q.source_details
       FROM questions q JOIN lessons l ON l.id = q.lesson_id
       WHERE q.kind = 'supplement' AND l.title = ? AND EXISTS (SELECT 1 FROM json_each(q.target_chars) WHERE value = ?)`);
@@ -50,24 +50,45 @@ test("新词库仅包含五册材料，课次、册末词和可用提示完整�
     const items = catalog.practice({ grade: lesson.grade, lessonId: lesson.id }, {}).items;
     assert.equal(items[0].word.text, "看见");
     assert.match(items[0].word.textbookHint, /〔　〕/u);
-    assert.equal(catalog.practice({ grade: 2, lessonId: catalog.summaries().find((row) => row.title === "田家四季歌").id }, {})
-      .items.find((item) => item.word.text === "四季").word.textbookHint, undefined);
+    const seasons = catalog.summaries().find((row) => row.title === "田家四季歌");
+    const fourSeasons = catalog.practice({ grade: seasons.grade, lessonId: seasons.id }, {}).items.find(({ word }) => word.text === "四季").word;
+    assert.equal(fourSeasons.textbookHint, "春、夏、秋、冬是一年的〔　〕。");
+    const reviewedContext = db.prepare("SELECT source_details FROM questions WHERE id = ?").get(fourSeasons.id);
+    assert.equal(JSON.parse(reviewedContext.source_details).hint_source.kind, "据教材编写");
+    const fogLesson = catalog.summaries().find((row) => row.title === "雾在哪里");
+    const fogItems = catalog.practice({ grade: fogLesson.grade, lessonId: fogLesson.id }, {}).items;
+    assert.ok(fogItems.every(({ word }) => word.text !== "雾把海岸" && word.id !== `${fogLesson.id}-char-雾`));
+    const fog = fogItems.find(({ word }) => word.text === "雾").word;
+    assert.equal(fog.pinyin, "wù");
+    assert.deepEqual(fog.chars, ["雾"]);
+    assert.equal(fog.textbookHint, "从前有一片〔　〕，他是个淘气的孩子。");
     const book = buildBookCharacterIndex(getLessons(db)).find((entry) => entry.grade === 2 && entry.term === 1);
     assert.ok(book.characters.见.includes("看见"));
   } finally { db.close(); }
 });
 
-test("教材句子保留本题空位，其他目标字用带声调拼音；多音字优先使用匹配词语的读音", () => {
-  const words = [
-    { text: "漆", pinyin: "qī" },
-    { text: "栏杆", pinyin: "lán gān" },
-    { text: "银行", pinyin: "yín háng" },
-    { text: "行走", pinyin: "xíng zǒu" },
-  ];
-  const mask = createTextbookHintMask(words, new Set(["漆", "栏", "杆", "行"]));
-  assert.equal(mask("绿漆的〔　〕，红漆的栏杆，一眼望不到头。"), "绿 qī 的〔　〕，红 qī 的 lán gān，一眼望不到头。");
-  assert.equal(mask("从银行前行走，〔　〕。"), "从银 háng 前 xíng 走，〔　〕。");
-  assert.equal(mask("〔　〕，行。"), "〔　〕，…。");
+test("同一道题在不同题目组合中沿用 SQLite 保存的挖空语境", () => {
+  const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
+  try {
+    const catalog = createCatalogService(db);
+    const lessons = catalog.summaries();
+    const lessonIndex = lessons.findIndex((lesson) => lesson.title === "小蝌蚪找妈妈");
+    const current = lessons[lessonIndex];
+    const next = lessons[lessonIndex + 1];
+    const currentItems = catalog.practice({ grade: current.grade, lessonId: current.id }, {}).items;
+    const eyes = currentItems.find(({ word }) => word.text === "眼睛").word;
+    const stored = db.prepare("SELECT hint_text FROM questions WHERE id = ?").get(eyes.id).hint_text;
+    assert.equal(stored, "你们的妈妈头顶上有两只大〔　〕");
+    assert.ok(currentItems.some(({ word }) => word.text === "头顶"));
+    assert.equal(eyes.textbookHint, stored);
+
+    const progress = { grade: next.grade, lessonId: next.id };
+    const mastered = Object.fromEntries(getScreeningQuestions(getLessons(db), progress)
+      .filter(({ id }) => id !== eyes.id)
+      .map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }]));
+    const historyItems = catalog.practice(progress, mastered, "history").items;
+    assert.deepEqual(historyItems.map(({ word }) => [word.id, word.textbookHint]), [[eyes.id, stored]]);
+  } finally { db.close(); }
 });
 
 test("当课和历史复习读取同一已审阅的补充题，错题按题等待复习间隔", () => {

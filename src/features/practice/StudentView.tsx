@@ -2,11 +2,11 @@ import { BookOpen, Check, ChevronRight, ClipboardCheck, History, Sparkles } from
 import { useEffect, useMemo, useState } from "react";
 import type { DictationWord, Grade, LessonSummary, PracticeItem, PracticeLesson, PracticeStats, WordIssue, WordIssueKind } from "../../../shared/types.ts";
 import type { PracticeMode, PracticePhase, CorrectionItem } from "./types";
-import { fullDictationCharsForWord, historyMistakeCooldownDays, historyMistakeWordLimit } from "../../../shared/domain/index.ts";
+import { historyMistakeCooldownDays, historyMistakeWordLimit } from "../../../shared/domain/index.ts";
 import { findWordIssue } from "../../../shared/domain/wordIssues.ts";
 import { gradeNames } from "../../data/metadata";
 import { termLabel, lessonNumberLabel, shortBookLabel, availableGrades } from "../../lib/lessonPresentation";
-import { createTextbookHintMask, maskLessonTitle } from "./titleMask";
+import { maskLessonTitle } from "./titleMask";
 import { CorrectionView } from "./CorrectionView";
 import { PoetryCard } from "./PoetryCard";
 import { DictationCard } from "./DictationCard";
@@ -94,14 +94,6 @@ export function StudentView({
       ]),
     );
   }, [items]);
-  const sentenceProtectedChars = useMemo(
-    () => new Set(items.flatMap((item) => fullDictationCharsForWord(item.word))),
-    [items],
-  );
-  const maskSentence = useMemo(
-    () => createTextbookHintMask(items.map((item) => item.word), sentenceProtectedChars),
-    [items, sentenceProtectedChars],
-  );
 
   const pickFirstLesson = (grade: Grade, term?: number) => {
     const first = lessons.find((item) => item.grade === grade && (term ? item.unit === term : true));
@@ -318,7 +310,7 @@ export function StudentView({
           ) : null}
 
           {phase === "dictating" && !isPoetryMode && items.some((item) => item.word.textbookHint) ? (
-            <p className="muted sentence-guide">默写<span className="textbook-hint-blank">（　）</span>里的词语。提示里的拼音用来帮助阅读。</p>
+            <p className="muted sentence-guide">默写<span className="textbook-hint-blank">（　）</span>里的词语。</p>
           ) : null}
 
           <div className={`dictation-grid ${isPoetryMode ? "poetry-grid" : ""}`}>
@@ -348,7 +340,6 @@ export function StudentView({
                   onTogglePlayback={() => void startDoublePlayback(globalIndex)}
                   onShowPinyin={() => onShowPinyin(item.word.id)}
                   playback={speechPlayback.index === globalIndex ? speechPlayback : idleSpeechPlayback}
-                  maskedSentence={item.word.textbookHint && maskSentence(item.word.textbookHint)}
                   reviewing={phase === "reviewing"}
                   onToggleWrong={onToggleWrong}
                   wrongCharKeys={wrongCharKeys}

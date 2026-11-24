@@ -9,6 +9,7 @@ export type CorrectionItem = {
   wordId: string;
   text: string;
   pinyin: string;
+  textbookHint?: string;
   mistakeReview?: PracticeItem["mistakeReview"];
   mistakeCount: number;
   wrongChars: string[];

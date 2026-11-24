@@ -1,10 +1,10 @@
 import { Check, Eye, Volume2, X } from "lucide-react";
-import { Fragment } from "react";
 import type { PracticeItem, WordIssue, WordIssueKind } from "../../../shared/types.ts";
 import type { SpeechPlayback } from "./types";
 import { mistakeReviewLabels } from "./types";
 import { charReviewKey, hanChars } from "../../../shared/domain/characters.ts";
 import { WordIssueControls } from "../../components/WordIssues";
+import { TextbookHint } from "./TextbookHint";
 
 export function DictationCard({
   active,
@@ -17,7 +17,6 @@ export function DictationCard({
   onTogglePlayback,
   onToggleWrong,
   playback,
-  maskedSentence,
   reviewing,
   wrongCharKeys,
   issue,
@@ -33,7 +32,6 @@ export function DictationCard({
   onTogglePlayback: () => void;
   onToggleWrong: (wordId: string, char: string) => void;
   playback: SpeechPlayback;
-  maskedSentence?: string;
   reviewing: boolean;
   wrongCharKeys: Set<string>;
   issue?: WordIssue;
@@ -95,17 +93,7 @@ export function DictationCard({
           <Eye size={17} />{pinyinShown ? "拼音已显示" : "显示拼音"}
         </button>
       </div> : null}
-      {!reviewing && maskedSentence ? (
-        <p className="textbook-hint">
-          <strong className="textbook-hint-label">教材语境</strong>
-          {maskedSentence.split("〔　〕").map((part, partIndex) => (
-            <Fragment key={partIndex}>
-              {partIndex > 0 ? <strong className="textbook-hint-blank">（　）</strong> : null}
-              {part}
-            </Fragment>
-          ))}
-        </p>
-      ) : null}
+      <TextbookHint text={item.word.textbookHint} />
       <div className="word-cells" aria-label={`第 ${index + 1} 题`}>
         {chars.map((char, charIndex) => {
           const isWrong = wrongCharKeys.has(charReviewKey(item.word.id, char));

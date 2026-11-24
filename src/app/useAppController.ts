@@ -94,7 +94,15 @@ export function useAppController() {
     const nextCorrectionItems = practiceItems.flatMap(({ word, mistakeReview }) => {
       const wrongChars = fullDictationCharsForWord(word).filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)));
       if (wrongChars.length === 0) return [];
-      return [{ wordId: word.id, text: word.text, pinyin: word.pinyin, mistakeReview, wrongChars, mistakeCount: nextState.wordStats[word.id].mistakes }];
+      return [{
+        wordId: word.id,
+        text: word.text,
+        pinyin: word.pinyin,
+        textbookHint: word.textbookHint,
+        mistakeReview,
+        wrongChars,
+        mistakeCount: nextState.wordStats[word.id].mistakes,
+      }];
     });
     setState(nextState);
     invalidateParentData();

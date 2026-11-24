@@ -2942,10 +2942,10 @@ select:focus-visible {
 .textbook-hint {
   margin: 7px 0 0;
   padding: 6px 9px;
-  border-inline-start: 2px solid var(--practice-line);
+  border-inline-start: 2px solid var(--practice-line, var(--line));
   border-radius: 6px;
   color: #293044;
-  background: var(--practice-soft);
+  background: var(--practice-soft, var(--purple-soft));
   font-size: 15px;
   line-height: 1.55;
   overflow-wrap: anywhere;
@@ -2953,7 +2953,7 @@ select:focus-visible {
 
 .textbook-hint-label {
   margin-inline-end: 8px;
-  color: var(--practice-dark);
+  color: var(--practice-dark, var(--purple-dark));
   font-size: 12px;
   white-space: nowrap;
 }

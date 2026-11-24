@@ -6,11 +6,13 @@ import { defaultCatalogDatabasePath, defaultLearningDatabasePath, projectRoot } 
 import { hasTable, runTransaction } from "../server/db/query.mjs";
 import { CATALOG_FORMAT, catalogSchemaSql } from "../server/db/schema.mjs";
 import { hanChars, readMaterials, stableId } from "./textbook/materials.mjs";
+import { resolveReviewedHints } from "./textbook/reviewed-hints.mjs";
 import { resolveReviewedPrompts } from "./textbook/reviewed-prompts.mjs";
 import { compileSupplementWords } from "./textbook/dictation-words.mjs";
 
 const writeCatalog = (db, { lessons, sources, wordSource }) => {
   const reviewedPrompts = Map.groupBy(resolveReviewedPrompts(lessons, sources), (entry) => entry.lessonId);
+  const reviewedHints = resolveReviewedHints(sources);
   db.exec(catalogSchemaSql);
   const insert = (table, columns) =>
     db.prepare(`INSERT INTO ${table} (${columns}) VALUES (${columns.split(", ").map(() => "?").join(", ")})`);
@@ -33,9 +35,10 @@ const writeCatalog = (db, { lessons, sources, wordSource }) => {
       }
       for (const entry of words) {
         const { entry_id, context_type, context_text, original_context_text, context_pdf_pages, wordlist_pdf_page, note } = entry;
-        const sourceDetails = JSON.stringify({ entry_id, context_type, context_text, original_context_text, context_pdf_pages, wordlist_pdf_page, note });
+        const [hint, sourceDetails] = reviewedHints.forQuestion(source, entry.text, entry.hint_text,
+          { entry_id, context_type, context_text, original_context_text, context_pdf_pages, wordlist_pdf_page, note });
         insertQuestion.run(stableId("textbook-prompt", id, entry.text), id, entry.word_order - 1, "textbook", entry.text, entry.pinyin,
-          JSON.stringify([...new Set(hanChars(entry.text))]), entry.hint_text, wordSource, entry.sourceRow, sourceDetails, null);
+          JSON.stringify([...new Set(hanChars(entry.text))]), hint, wordSource, entry.sourceRow, sourceDetails, null);
       }
       for (const [order, poem] of poems.entries()) {
         const { title, titlePinyin, author, dynasty, lines } = poem;
@@ -50,12 +53,15 @@ const writeCatalog = (db, { lessons, sources, wordSource }) => {
 
       const supplements = compileSupplementWords(lesson, reviewedPrompts.get(id) ?? []);
       for (const [index, { prompt, targets }] of supplements.entries()) {
-        const { word, pinyin, hint, kind: context_kind, source: source_text, rows: source_rows } = prompt;
-        const details = JSON.stringify({ context_kind, source_text, source_rows });
-        insertQuestion.run(`${id}-char-${targets[0]}`, id, words.length + poems.length + index, "supplement", word, pinyin,
+        const { word, pinyin, kind: context_kind, source: source_text, rows: source_rows, replaces } = prompt;
+        const [hint, details] = reviewedHints.forQuestion(source, word, prompt.hint,
+          { context_kind, source_text, source_rows, replaces });
+        const questionId = replaces ? stableId("supplement-prompt", id, word, pinyin) : `${id}-char-${targets[0]}`;
+        insertQuestion.run(questionId, id, words.length + poems.length + index, "supplement", word, pinyin,
           JSON.stringify(targets), hint, source, source_rows[0], details, null);
       }
     }
+    reviewedHints.assertAllUsed();
   });
 };
 

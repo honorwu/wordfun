@@ -51,15 +51,26 @@ try {
   const historyProgress = lessons.map((lesson) => ({
     grade: lesson.grade, term: lesson.unit, lesson: lesson.title, singleWithoutHint: historyFor(lesson).filter(isBareSingle).length,
   }));
+  const invalidHints = current.flatMap((word) => {
+    if (!word.textbookHint) return [];
+    const parts = word.textbookHint.split("〔　〕");
+    const missingBlank = parts.length === 1;
+    const showsAnswer = parts.some((part) => part.includes(word.text));
+    if (!missingBlank && !showsAnswer) return [];
+    return [{ id: word.id, lesson: word.lessonTitle, word: word.text, hint: word.textbookHint, missingBlank, showsAnswer }];
+  });
+  const lessonPractice = audit(current);
   console.log(JSON.stringify({
     textbookWords: audit(lessons.flatMap((lesson) => lesson.textbookWords ?? [])),
-    lessonPractice: audit(current),
+    lessonPractice,
     historyPractice: audit(historyFor(boundary, [...lessons, boundary])),
     historyProgress: {
       checkedLessons: historyProgress.length,
       withSingleWithoutHint: historyProgress.filter((row) => row.singleWithoutHint > 0),
     },
+    invalidHints,
   }, null, 2));
+  if (lessonPractice.stats.withoutSentence > 0 || invalidHints.length > 0) process.exitCode = 1;
 } finally {
   catalog.close();
 }
