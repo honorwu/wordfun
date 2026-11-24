@@ -42,7 +42,6 @@ export interface Lesson {
   words: DictationWord[];
   textbookWords?: DictationWord[];
   dictationWords?: DictationWord[];
-  textCompanions?: CompanionDictionary;
   classicalTexts?: ClassicalText[];
 }
 
@@ -51,7 +50,7 @@ export interface Progress {
   lessonId: string;
 }
 
-export type LessonSummary = Omit<Lesson, "words" | "textbookWords" | "dictationWords" | "textCompanions" | "classicalTexts">;
+export type LessonSummary = Omit<Lesson, "words" | "textbookWords" | "dictationWords" | "classicalTexts">;
 export type PracticeLesson = LessonSummary & Pick<Lesson, "classicalTexts">;
 
 export interface PracticeStats {
@@ -142,12 +141,3 @@ export interface PracticeItem {
   reasons: string[];
   mistakeReview?: "word" | "character";
 }
-
-export interface DictationCompanion {
-  text: string;
-  pinyin: string;
-  chars: string[];
-  textbookHint?: string;
-}
-
-export type CompanionDictionary = Record<string, DictationCompanion[]>;

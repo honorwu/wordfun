@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { createCatalogService } from "../server/catalog.mjs";
 import { createAppServer } from "../server/index.mjs";
-import { defaultCatalogDatabasePath, getLessons, getState, openLearningDatabase, saveState } from "../server/db.mjs";
+import { defaultCatalogDatabasePath, getLessons, getState, learningSchemaSql, openLearningDatabase, saveState } from "../server/db.mjs";
 import { charReviewKey } from "../shared/domain/characters.ts";
 import { generateCurrentLessonPractice, generatePoetryPractice, generateScreeningPractice, getScreeningQuestions } from "../shared/domain/practice.ts";
 import { isMasteredQuestion, isPendingQuestionMistake, isQuestionCoolingDown } from "../shared/domain/reviewPolicy.ts";
@@ -65,7 +65,34 @@ test("词库缓存复用查询结果，外部更新词库后失效", () => {
   } finally { writer.close(); db.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test("启动仅返回目录与当前题；历史记录延迟读取，增量保存保留旧记录", async () => {
+test("启动拒绝格式不符的学习库，保留原文件", (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "ziqu-unsupported-learning-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const filename = path.join(directory, "learning.sqlite");
+  const database = new DatabaseSync(filename);
+  try {
+    database.exec(learningSchemaSql);
+    database.exec(`
+      ALTER TABLE char_stats DROP COLUMN streak;
+      ALTER TABLE char_stats DROP COLUMN last_mistake_at;
+      ALTER TABLE review_logs DROP COLUMN practice_mode;
+      ALTER TABLE review_log_words DROP COLUMN prompt_text;
+    `);
+  } finally {
+    database.close();
+  }
+  const original = readFileSync(filename);
+  assert.throws(() => openLearningDatabase(filename), (error) => {
+    assert.match(error.message, /学习库格式不符/);
+    for (const field of ["char_stats.streak", "char_stats.last_mistake_at", "review_logs.practice_mode", "review_log_words.prompt_text"]) {
+      assert.ok(error.message.includes(field), field);
+    }
+    return true;
+  });
+  assert.deepEqual(readFileSync(filename), original);
+});
+
+test("启动仅返回目录与当前题；历史记录延迟读取，增量保存保留已入库的场次", async () => {
   const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
   const learningDb = openLearningDatabase(":memory:");
   const server = createAppServer({ catalogDb, learningDb });
@@ -80,8 +107,8 @@ test("启动仅返回目录与当前题；历史记录延迟读取，增量保�
     const wrong = new Set([charReviewKey(firstItem.word.id, firstItem.word.chars[0])]);
     state = applyReviewResult(state, practice.items, wrong, undefined, { practiceMode: "lesson", lessons: [{ id: practice.lesson.id, title: practice.lesson.title }] });
     const originalLog = state.logs[0];
-    // 同时保留没有题词快照的旧记录，验证延迟索引与旧版一致。
-    state.logs.push({ id: "legacy-log", date: "2020-01-01T00:00:00.000Z", wordIds: [firstItem.word.id], wrongWordIds: [firstItem.word.id] });
+    // 当前学习库也可能包含没有完整计分快照的历史场次。
+    state.logs.push({ id: "imported-log", date: "2020-01-01T00:00:00.000Z", wordIds: [firstItem.word.id], wrongWordIds: [firstItem.word.id] });
     saveState(learningDb, state);
     const savedLogs = getState(learningDb, catalogDb).logs;
 
@@ -126,10 +153,10 @@ test("启动仅返回目录与当前题；历史记录延迟读取，增量保�
     assert.equal((await post("/api/practice", { progress: state.progress, mode: "invalid" })).status, 400);
 
     // 未打开家长看板就切课、保存，旧记录必须保留。
-    assert.equal((await post("/api/state", { ...startup.state, mergeLogs: true }, "PUT")).status, 200);
+    assert.equal((await post("/api/state", startup.state, "PUT")).status, 200);
     assert.deepEqual(getState(learningDb, catalogDb).logs, savedLogs);
     const nextState = applyReviewResult(startup.state, practice.items, new Set(), undefined, { practiceMode: "lesson", lessons: [] });
-    assert.equal((await post("/api/state", { ...nextState, mergeLogs: true }, "PUT")).status, 200);
+    assert.equal((await post("/api/state", nextState, "PUT")).status, 200);
     assert.equal(getState(learningDb, catalogDb).logs.length, 3);
 
     const parent = await (await post("/api/parent-data", {})).json();
@@ -140,7 +167,7 @@ test("启动仅返回目录与当前题；历史记录延迟读取，增量保�
 
     // 补记是在原记录上更新，不能额外增加一场默写。
     const corrected = { ...originalLog, wrongChars: [{ wordId: firstItem.word.id, char: firstItem.word.chars[0] }] };
-    await post("/api/state", { ...nextState, logs: [corrected], mergeLogs: true }, "PUT");
+    await post("/api/state", { ...nextState, logs: [corrected] }, "PUT");
     const restored = getState(learningDb, catalogDb);
     assert.equal(restored.logs.length, 3);
     assert.deepEqual(restored.logs.find((log) => log.id === originalLog.id).wrongChars, corrected.wrongChars);
@@ -215,7 +242,7 @@ test("超过 120 场仍可查阅和补记最早场次，重试和切课保留历
     assert.equal(corrected.wordStats[wordId].attempts, roundCount);
     assert.equal(corrected.wordStats[wordId].mistakes, 1);
     await request("/api/state", "PUT", { ...corrected, logs: [corrected.logs.at(-1)] });
-    await request("/api/state", "PUT", { ...corrected, logs: [earliest], mergeLogs: true });
+    await request("/api/state", "PUT", { ...corrected, logs: [earliest] });
 
     const nextLesson = getLessons(catalogDb).find(({ id }) => id !== state.progress.lessonId);
     await request("/api/state", "PUT", { ...corrected, progress: { grade: nextLesson.grade, lessonId: nextLesson.id }, logs: [] });
@@ -312,7 +339,7 @@ test("旧掌握字跨词继承，但整题成绩、待巩固和课次练习独�
     const mastered = { attempts: 1, mistakes: 0, streak: 1 };
     const missed = { attempts: 1, mistakes: 1, streak: 0, lastReviewedAt: "2020-01-01T00:00:00.000Z" };
     const wordStats = Object.fromEntries(pastQuestions.filter(({ id }) => id !== inherited.id && id !== partial.id).map(({ id }) => [id, mastered]));
-    // 模拟龙字后来学会，但只把旧库明确继承的船、身用于历史排题。
+    // 模拟龙字后来学会，历史排题以学习库中已经标记为继承掌握的船、身为准。
     const charStats = { 船: mastered, 身: mastered, 龙: mastered };
     saveState(learningDb, { ...initial, progress, charStats, wordStats });
     const insert = learningDb.prepare("INSERT INTO inherited_char_mastery (student_id, char) SELECT id, ? FROM students");

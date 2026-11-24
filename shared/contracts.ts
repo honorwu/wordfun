@@ -23,6 +23,6 @@ export interface ParentDataResponse {
   inheritedMasteredChars: string[];
 }
 
-// logs 包含新增或补记的场次。mergeLogs 保留给旧客户端。
-export type SaveStateRequest = AppState & { mergeLogs?: boolean };
+// logs 包含新增或补记的场次。
+export type SaveStateRequest = AppState;
 export interface SaveStateResponse { ok: true }

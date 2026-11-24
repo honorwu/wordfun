@@ -4,7 +4,7 @@ import {
 } from "../../shared/domain/practice.ts";
 import { historyQuestionStatus, historyRoundWordLimit, isQuestionMasteryInherited } from "../../shared/domain/reviewPolicy.ts";
 
-const summarizeLesson = ({ words, textbookWords, dictationWords, textCompanions, classicalTexts, ...summary }) => summary;
+const summarizeLesson = ({ words, textbookWords, dictationWords, classicalTexts, ...summary }) => summary;
 
 // 词库在服务端复用；另一连接更新词库时丢弃缓存，学习状态始终使用本次请求的数据。
 export const createCatalogService = (db) => {

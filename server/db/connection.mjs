@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dataDir, defaultCatalogDatabasePath, defaultLearningDatabasePath } from "../config.mjs";
@@ -19,7 +19,45 @@ const openDatabaseWithSchema = (databasePath, schemaSql) => {
 
 export const openCatalogDatabase = (databasePath = defaultCatalogDatabasePath) => openDatabaseWithSchema(databasePath, catalogSchemaSql);
 
+const requiredLearningTables = {
+  students: [],
+  progress: [],
+  word_stats: [],
+  char_stats: ["streak", "last_mistake_at"],
+  char_word_evidence: [],
+  review_carryover: [],
+  inherited_char_mastery: [],
+  review_logs: ["practice_mode"],
+  review_log_lessons: [],
+  review_log_words: ["prompt_text"],
+  review_log_chars: [],
+  review_log_reviewed_chars: [],
+  word_issues: [],
+};
+
+const requireLearningSchema = (databasePath) => {
+  if (databasePath === ":memory:" || !statSync(databasePath, { throwIfNoEntry: false })?.size) return;
+
+  const db = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    const tables = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map(({ name }) => name));
+    const tableInfo = db.prepare("SELECT name FROM pragma_table_info(?)");
+    const missing = Object.entries(requiredLearningTables).flatMap(([table, columns]) => {
+      if (!tables.has(table)) return [table];
+      if (columns.length === 0) return [];
+      const available = new Set(tableInfo.all(table).map(({ name }) => name));
+      return columns.filter((column) => !available.has(column)).map((column) => `${table}.${column}`);
+    });
+    if (missing.length > 0) {
+      throw new Error(`学习库格式不符（缺少 ${missing.join("、")}）：${databasePath}。请将 ZIQU_LEARNING_DB_PATH 指向当前版学习库。`);
+    }
+  } finally {
+    db.close();
+  }
+};
+
 export const openLearningDatabase = (databasePath = defaultLearningDatabasePath) => {
+  requireLearningSchema(databasePath);
   const db = openDatabaseWithSchema(databasePath, learningSchemaSql);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA optimize;");
   return db;

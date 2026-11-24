@@ -5,3 +5,5 @@
 dist
 node_modules
 npm-debug.log
+data/ziqu-learning*.sqlite*
+data/ziqu.sqlite*
