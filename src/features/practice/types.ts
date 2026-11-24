@@ -11,7 +11,7 @@ export type CorrectionItem = {
   pinyin: string;
   mistakeReview?: PracticeItem["mistakeReview"];
   mistakeCount: number;
-  wrongChars: Array<{ char: string; mistakeCount: number }>;
+  wrongChars: string[];
 };
 export type PlaybackStage = "idle" | "first" | "waiting" | "second";
 export type SpeechPlayback = { index: number | null; stage: PlaybackStage; countdown: number };

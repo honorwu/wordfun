@@ -16,6 +16,7 @@ import { idleSpeechPlayback } from "./types";
 export interface StudentViewProps {
   loading: boolean;
   loadError: string;
+  waitingForSave: boolean;
   onRetry: () => void;
   correctionItems: CorrectionItem[];
   pinyinShownWordIds: ReadonlySet<string>;
@@ -42,6 +43,7 @@ export interface StudentViewProps {
 export function StudentView({
   loading,
   loadError,
+  waitingForSave,
   onRetry,
   correctionItems,
   pinyinShownWordIds,
@@ -259,7 +261,6 @@ export function StudentView({
           <div className="history-progress-label"><span>本课前整题已掌握</span><strong>{stats.historyReviewed} / {stats.historyTotal} 题</strong></div>
           <progress className="progress-track" value={stats.historyReviewed} max={Math.max(1, stats.historyTotal)} aria-label="本课之前的题目掌握进度" />
           <ul className="history-progress-details">
-            {stats.historyInherited > 0 ? <li>考察字已继承 <strong>{stats.historyInherited} 题</strong></li> : null}
             <li>到期错题 <strong>{stats.pendingMistakes - stats.waitingReview}</strong></li>
             <li>等待复测 <strong>{stats.waitingReview}</strong></li>
             <li>待完成整题 <strong>{stats.historyUnreviewed}</strong></li>
@@ -269,14 +270,24 @@ export function StudentView({
 
       {loading || loadError ? (
         <div className="empty-card" role="status">
-          <h2>{loadError ? "题目加载失败" : "正在加载题目"}</h2>
-          {loadError ? <><p>{loadError}</p><button className="primary-button" type="button" onClick={onRetry}>重新加载</button></> : null}
+          <h2>{waitingForSave
+            ? loadError ? "学习记录保存失败" : "正在保存学习记录"
+            : loadError ? "题目加载失败" : "正在加载题目"}</h2>
+          {loadError ? (
+            <>
+              <p>{loadError}</p>
+              <button className="primary-button" type="button" onClick={onRetry}>{waitingForSave ? "重试保存" : "重新加载"}</button>
+            </>
+          ) : null}
         </div>
       ) : items.length === 0 ? (
         <div className="empty-card">
           <Check size={34} />
           <h2>{mode === "history" ? stats.waitingReview > 0 ? "错题正在等待复测" : stats.historyTotal > 0 ? "本轮暂时没有复习题" : "前面还没有可复习的课" : isPoetryMode ? "这一课还没有古诗正文" : "这一课还没有可默写的词语"}</h2>
           <p>{mode === "history" ? stats.waitingReview > 0 ? `错题上次练过后满 ${historyMistakeCooldownDays} 天会再次出题。` : stats.historyTotal > 0 ? "继续学习新课后，再回来巩固吧。" : "学完下一课后，这里会从后往前复习。" : isPoetryMode ? "请让家长检查本课的古诗内容。" : "请选择其他课次。"}</p>
+          {mode === "history" && stats.historyTotal > 0 ? (
+            <button className="primary-button" type="button" onClick={onRestart}>重新出题</button>
+          ) : null}
         </div>
       ) : (
         <>

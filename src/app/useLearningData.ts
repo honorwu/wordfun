@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppState, DictationWord, LessonSummary, PracticeData, PracticeMode, QuestionCarryover, ReviewActivity, ReviewLog } from "../../shared/types.ts";
 import { lessonOrder } from "../../shared/domain/catalog.ts";
 import { createDefaultState } from "../../shared/domain/state.ts";
@@ -6,30 +6,49 @@ import { fetchAppData, fetchParentData, fetchPractice, saveRemoteState } from ".
 import type { ViewMode } from "./types";
 
 // 管理远程数据的生命周期；练习阶段、批改草稿等页面状态由控制器维护。
-export function useLearningData({ viewMode, practiceMode, onSaveError }: {
+export function useLearningData({ viewMode, practiceMode, roundId, onSaveError }: {
   viewMode: ViewMode;
   practiceMode: PracticeMode;
+  roundId: number;
   onSaveError: (message: string) => void;
 }) {
   const [state, setState] = useState<AppState>(() => createDefaultState());
   const [lessons, setLessons] = useState<LessonSummary[]>([]);
-  const [practiceData, setPracticeData] = useState<PracticeData | null>(null);
+  const [practiceRound, setPracticeRound] = useState<{ id: number; data: PracticeData } | null>(null);
   const [reviewActivity, setReviewActivity] = useState<ReviewActivity[]>([]);
-  const [isPracticeLoading, setIsPracticeLoading] = useState(false);
-  const [practiceError, setPracticeError] = useState("");
+  const [practiceFailure, setPracticeFailure] = useState<{ roundId: number; retryCount: number; message: string } | null>(null);
   const [parentReady, setParentReady] = useState(false);
   const [parentError, setParentError] = useState("");
   const [questions, setQuestions] = useState<DictationWord[]>([]);
   const [historicalLogs, setHistoricalLogs] = useState<ReviewLog[]>([]);
   const [reviewCarryover, setReviewCarryover] = useState<Record<string, QuestionCarryover>>({});
-  const [inheritedMasteredChars, setInheritedMasteredChars] = useState<string[]>([]);
   const [retryCount, setRetryCount] = useState(0);
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [savedState, setSavedState] = useState<AppState | null>(null);
+  const [saveFailure, setSaveFailure] = useState<{ state: AppState; retryCount: number; message: string } | null>(null);
+  const [correctionSaving, setCorrectionSaving] = useState(false);
 
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const savedStateRef = useRef<AppState | null>(null);
-  const practiceSourceRef = useRef<{ progress: AppState["progress"]; wordStats: AppState["wordStats"]; mode: PracticeMode } | null>(null);
+  const saveTimerRef = useRef<number | undefined>(undefined);
+  const correctionSavingRef = useRef(false);
+  const practiceData = practiceRound?.id === roundId ? practiceRound.data : null;
+  const needsSave = state !== savedState;
+
+  const queueSave = useCallback((snapshot: AppState) => {
+    const task = saveQueueRef.current.catch(() => undefined).then(async () => {
+      if (snapshot === savedStateRef.current) return;
+      const savedLogs = new Map(savedStateRef.current?.logs.map((log) => [log.id, log]));
+      const logs = snapshot.logs.filter((log) => savedLogs.get(log.id) !== log);
+      await saveRemoteState({ ...snapshot, logs });
+      savedStateRef.current = snapshot;
+      setSavedState(snapshot);
+      setSaveFailure(null);
+    });
+    saveQueueRef.current = task;
+    return task;
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -37,10 +56,10 @@ export function useLearningData({ viewMode, practiceMode, onSaveError }: {
       .then((data) => {
         if (!active) return;
         setLessons(data.lessons);
-        setPracticeData(data.practice);
+        setPracticeRound({ id: 0, data: data.practice });
         setReviewActivity(data.activity);
         savedStateRef.current = data.state;
-        practiceSourceRef.current = { progress: data.state.progress, wordStats: data.state.wordStats, mode: "lesson" };
+        setSavedState(data.state);
         setState(data.state);
         setIsReady(true);
       })
@@ -53,49 +72,49 @@ export function useLearningData({ viewMode, practiceMode, onSaveError }: {
   }, []);
 
   useEffect(() => {
-    if (!isReady || state === savedStateRef.current) return;
+    if (!isReady || correctionSaving || state === savedStateRef.current) return;
     const timeout = window.setTimeout(() => {
-      saveQueueRef.current = saveQueueRef.current
-        .catch(() => undefined)
-        .then(async () => {
-          // 以队列中最近一次写入成功的状态为准，未确认的场次随下一次保存重发。
-          const savedLogs = new Map(savedStateRef.current?.logs.map((log) => [log.id, log]));
-          const logs = state.logs.filter((log) => savedLogs.get(log.id) !== log);
-          await saveRemoteState({ ...state, logs });
-          savedStateRef.current = state;
-        })
-        .catch((error: unknown) => {
-          onSaveError(error instanceof Error ? `保存失败：${error.message}` : "保存失败");
-        });
+      void queueSave(state).catch((error: unknown) => {
+        const message = error instanceof Error ? `学习记录保存失败：${error.message}` : "学习记录保存失败";
+        setSaveFailure({ state, retryCount, message });
+        onSaveError(message);
+      });
     }, 250);
+    saveTimerRef.current = timeout;
     return () => window.clearTimeout(timeout);
-  }, [isReady, state, onSaveError]);
+  }, [isReady, state, retryCount, correctionSaving, queueSave, onSaveError]);
+
+  const saveCorrection = async (updatedState: AppState) => {
+    if (correctionSavingRef.current) throw new Error("正在保存补记，请稍候");
+    correctionSavingRef.current = true;
+    setCorrectionSaving(true);
+    window.clearTimeout(saveTimerRef.current);
+    try {
+      // 先提交当前批改，补记成功后再把更正应用到界面。
+      await queueSave(state);
+      await queueSave(updatedState);
+      setState(updatedState);
+    } finally {
+      correctionSavingRef.current = false;
+      setCorrectionSaving(false);
+    }
+  };
 
   useEffect(() => {
-    if (!isReady) return;
-    const source = practiceSourceRef.current;
-    if (source?.progress === state.progress && source.wordStats === state.wordStats && source.mode === practiceMode) {
-      setIsPracticeLoading(false);
-      setPracticeError("");
-      return;
-    }
+    // 一轮已出题期间只保存学习记录。下一轮从 SQLite 中同一份已确认的状态取题。
+    if (!isReady || practiceData || needsSave || correctionSaving) return;
     const controller = new AbortController();
-    setIsPracticeLoading(true);
-    setPracticeError("");
-    fetchPractice(state.progress, state.wordStats, practiceMode, controller.signal)
+    setPracticeFailure(null);
+    fetchPractice(state.progress, practiceMode, controller.signal)
       .then((data) => {
-        if (controller.signal.aborted) return;
-        practiceSourceRef.current = { progress: state.progress, wordStats: state.wordStats, mode: practiceMode };
-        setPracticeData(data);
-        setIsPracticeLoading(false);
+        if (!controller.signal.aborted) setPracticeRound({ id: roundId, data });
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
-        setPracticeError(error instanceof Error ? error.message : "题目加载失败");
-        setIsPracticeLoading(false);
+        setPracticeFailure({ roundId, retryCount, message: error instanceof Error ? error.message : "题目加载失败" });
       });
     return () => controller.abort();
-  }, [isReady, state.progress, state.wordStats, practiceMode, retryCount]);
+  }, [isReady, practiceData, needsSave, correctionSaving, state.progress, practiceMode, roundId, retryCount]);
 
   useEffect(() => {
     if (!isReady || viewMode !== "parent" || parentReady) return;
@@ -107,7 +126,6 @@ export function useLearningData({ viewMode, practiceMode, onSaveError }: {
         setQuestions(data.questions);
         setHistoricalLogs(data.logs);
         setReviewCarryover(data.reviewCarryover ?? {});
-        setInheritedMasteredChars(data.inheritedMasteredChars ?? []);
         setParentReady(true);
       })
       .catch((error: unknown) => {
@@ -118,9 +136,13 @@ export function useLearningData({ viewMode, practiceMode, onSaveError }: {
 
   const allLessons = useMemo(() => [...lessons].sort((a, b) => lessonOrder(a) - lessonOrder(b)), [lessons]);
   const selectedSummary = allLessons.find((lesson) => lesson.id === state.progress.lessonId) ?? allLessons[0];
-  const selectedLesson = practiceData && practiceData.lesson.id === selectedSummary?.id ? practiceData.lesson : selectedSummary;
+  const selectedLesson = practiceData?.lesson ?? selectedSummary;
   const practiceItems = practiceData?.items ?? [];
-  const practiceLoading = isPracticeLoading || practiceData?.lesson.id !== selectedSummary?.id || practiceData?.mode !== practiceMode;
+  const saveError = saveFailure?.state === state && saveFailure.retryCount === retryCount ? saveFailure.message : "";
+  const fetchError = practiceFailure?.roundId === roundId && practiceFailure.retryCount === retryCount ? practiceFailure.message : "";
+  const practiceError = practiceData ? "" : needsSave ? saveError : fetchError;
+  const practiceLoading = !practiceData && !practiceError;
+  const practiceWaitingForSave = isReady && !practiceData && (needsSave || correctionSaving);
   const allKnownWords = useMemo(() => new Map([
     ...questions,
     ...practiceItems.map((item) => item.word),
@@ -138,12 +160,12 @@ export function useLearningData({ viewMode, practiceMode, onSaveError }: {
     for (const item of activity.values()) {
       if (new Date(item.date).toDateString() === today) todayCount += item.count;
     }
-    return { ...(practiceData?.stats ?? { historyTotal: 0, historyReviewed: 0, historyInherited: 0, historyUnreviewed: 0, pendingMistakes: 0, waitingReview: 0 }), todayCount };
+    return { ...(practiceData?.stats ?? { historyTotal: 0, historyReviewed: 0, historyUnreviewed: 0, pendingMistakes: 0, waitingReview: 0 }), todayCount };
   }, [practiceData, reviewActivity, state.logs]);
 
   return {
-    state, setState, allLessons, selectedLesson, practiceItems, practiceLoading, practiceError,
-    allKnownWords, parentState, questions, reviewCarryover, inheritedMasteredChars, stats, parentReady, parentError, isReady, loadError,
+    state, setState, allLessons, selectedLesson, practiceItems, practiceLoading, practiceWaitingForSave, practiceError,
+    allKnownWords, parentState, questions, reviewCarryover, stats, parentReady, parentError, isReady, loadError, correctionSaving, saveCorrection,
     invalidateParentData: () => setParentReady(false),
     retryLoad: () => setRetryCount((count) => count + 1),
   };

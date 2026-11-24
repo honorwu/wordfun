@@ -56,7 +56,6 @@ export type PracticeLesson = LessonSummary & Pick<Lesson, "classicalTexts">;
 export interface PracticeStats {
   historyTotal: number;
   historyReviewed: number;
-  historyInherited: number;
   historyUnreviewed: number;
   pendingMistakes: number;
   waitingReview: number;

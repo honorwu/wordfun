@@ -1,4 +1,4 @@
-import { masteryNetCorrect } from "../../shared/domain/reviewPolicy.ts";
+import { isWithinReviewCorrectionWindow } from "../../shared/domain/reviewPolicy.ts";
 import { defaultStudentId } from "../config.mjs";
 import { allRows, oneRow, runTransaction } from "./query.mjs";
 
@@ -48,20 +48,28 @@ export const ensureDefaultStudent = (learningDb, catalogDb, studentId = defaultS
     .run(studentId, lesson.grade, lesson.lesson_id);
 };
 
+const getWordStats = (learningDb, studentId) => Object.fromEntries(allRows(
+  learningDb,
+  "SELECT word_id, attempts, mistakes, streak, last_reviewed_at, last_mistake_at FROM word_stats WHERE student_id = ?",
+  studentId,
+).map((row) => [row.word_id, {
+  attempts: row.attempts,
+  mistakes: row.mistakes,
+  streak: row.streak,
+  lastReviewedAt: row.last_reviewed_at || undefined,
+  lastMistakeAt: row.last_mistake_at || undefined,
+}]));
+
 export const getReviewCarryover = (learningDb, studentId = defaultStudentId) => Object.fromEntries(allRows(
   learningDb,
   "SELECT word_id, baseline_attempts, available_at FROM review_carryover WHERE student_id = ?",
   studentId,
 ).map(({ word_id, baseline_attempts, available_at }) => [word_id, { baselineAttempts: baseline_attempts, availableAt: available_at }]));
 
-export const getInheritedMasteredChars = (learningDb, studentId = defaultStudentId) => allRows(
-  learningDb,
-  `SELECT inherited.char FROM inherited_char_mastery inherited
-   JOIN char_stats stats ON stats.student_id = inherited.student_id AND stats.char = inherited.char
-   WHERE inherited.student_id = ? AND stats.attempts - 2 * stats.mistakes >= ?
-   ORDER BY inherited.char`,
-  studentId, masteryNetCorrect,
-).map(({ char }) => char);
+export const getPracticeSnapshot = (learningDb, studentId = defaultStudentId) => runTransaction(learningDb, () => ({
+  wordStats: getWordStats(learningDb, studentId),
+  carryover: getReviewCarryover(learningDb, studentId),
+}));
 
 export const getReviewLogs = (learningDb, catalogDb, studentId = defaultStudentId) => {
   const logRows = allRows(learningDb, "SELECT id, date, practice_mode FROM review_logs WHERE student_id = ? ORDER BY date DESC", studentId);
@@ -128,16 +136,7 @@ export const getReviewLogs = (learningDb, catalogDb, studentId = defaultStudentI
 export const getState = (learningDb, catalogDb, studentId = defaultStudentId, { includeLogs = true } = {}) => {
   ensureDefaultStudent(learningDb, catalogDb, studentId);
   const progress = oneRow(learningDb, "SELECT grade, lesson_id FROM progress WHERE student_id = ?", studentId) || defaultProgress(catalogDb);
-  const wordStats = {};
-  for (const row of allRows(learningDb, "SELECT * FROM word_stats WHERE student_id = ?", studentId)) {
-    wordStats[row.word_id] = {
-      attempts: row.attempts,
-      mistakes: row.mistakes,
-      streak: row.streak,
-      lastReviewedAt: row.last_reviewed_at || undefined,
-      lastMistakeAt: row.last_mistake_at || undefined,
-    };
-  }
+  const wordStats = getWordStats(learningDb, studentId);
   const charStats = {};
   for (const row of allRows(learningDb, "SELECT * FROM char_stats WHERE student_id = ?", studentId)) {
     charStats[row.char] = {
@@ -197,7 +196,7 @@ export const getReviewActivity = (learningDb, studentId = defaultStudentId) => a
 const appendReviewLogs = (learningDb, studentId, logs) => {
   if (logs.length === 0) return;
 
-  const findLog = learningDb.prepare("SELECT student_id FROM review_logs WHERE id = ?");
+  const findLog = learningDb.prepare("SELECT student_id, date FROM review_logs WHERE id = ?");
   const insertLog = learningDb.prepare("INSERT INTO review_logs (id, student_id, date, practice_mode) VALUES (?, ?, ?, ?)");
   const insertLogLesson = learningDb.prepare(
     "INSERT INTO review_log_lessons (log_id, lesson_id, lesson_title, lesson_order) VALUES (?, ?, ?, ?)",
@@ -220,6 +219,7 @@ const appendReviewLogs = (learningDb, studentId, logs) => {
      ON CONFLICT(log_id, word_id, char) DO NOTHING`,
   );
 
+  const now = Date.now();
   for (const log of logs) {
     const existing = findLog.get(log.id);
     if (existing && existing.student_id !== studentId) throw new Error("默写记录 ID 已被使用");
@@ -228,9 +228,12 @@ const appendReviewLogs = (learningDb, studentId, logs) => {
     const wrongWordIds = new Set(log.wrongWordIds ?? []);
     for (const { wordId } of wrongChars) wrongWordIds.add(wordId);
 
+    let changed = false;
     if (existing) {
       // 同一场次只补充错误，保留首次保存的题目和计分快照。
-      for (const wordId of wrongWordIds) markWordWrong.run(log.id, wordId);
+      for (const wordId of wrongWordIds) {
+        if (markWordWrong.run(log.id, wordId).changes) changed = true;
+      }
     } else {
       const practiceMode = log.practiceMode === "lesson" || log.practiceMode === "history" ? log.practiceMode : null;
       insertLog.run(log.id, studentId, log.date, practiceMode);
@@ -249,7 +252,12 @@ const appendReviewLogs = (learningDb, studentId, logs) => {
         }
       }
     }
-    for (const { wordId, char } of wrongChars) insertWrongChar.run(char, log.id, wordId);
+    for (const { wordId, char } of wrongChars) {
+      if (insertWrongChar.run(char, log.id, wordId).changes) changed = true;
+    }
+    if (existing && changed && !isWithinReviewCorrectionWindow(existing.date, now)) {
+      throw Object.assign(new Error("这条默写记录不在 3 天补记期限内"), { statusCode: 409 });
+    }
   }
 };
 

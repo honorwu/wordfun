@@ -1,10 +1,16 @@
-import type { CharacterCategory, CharacterStat, DictationWord, QuestionCarryover, WordStat } from "../types.ts";
+import type { CharacterCategory, CharacterStat, QuestionCarryover, WordStat } from "../types.ts";
 
 const dayMs = 24 * 60 * 60 * 1000;
 export const masteryNetCorrect = 1;
 export const historyMistakeCooldownDays = 5;
 export const historyMistakeWordLimit = 5;
 export const historyRoundWordLimit = 20;
+export const reviewCorrectionWindowMs = 3 * dayMs;
+
+export const isWithinReviewCorrectionWindow = (date: string, now = Date.now()) => {
+  const elapsed = now - Date.parse(date);
+  return elapsed >= 0 && elapsed <= reviewCorrectionWindowMs;
+};
 
 export const categoryWeights: Record<CharacterCategory, number> = { "一类": 9, "二类": 7 };
 
@@ -63,21 +69,11 @@ export const isPendingQuestionMistake = (stat?: WordStat) => Boolean(stat && sta
 export const isQuestionCoolingDown = (stat?: WordStat) => isPendingQuestionMistake(stat) && isWithinReviewInterval(stat);
 
 export const isQuestionCarryoverActive = (stat?: WordStat, carryover?: QuestionCarryover): carryover is QuestionCarryover =>
-  Boolean(carryover && (stat?.attempts ?? 0) <= carryover.baselineAttempts);
+  Boolean(carryover && !isMasteredQuestion(stat) && (stat?.attempts ?? 0) <= carryover.baselineAttempts);
 
-export const isQuestionMasteryInherited = (
-  word: Pick<DictationWord, "chars">,
-  stat: WordStat | undefined,
-  inheritedMasteredChars: ReadonlySet<string>,
-) => !stat?.attempts && word.chars.length > 0 && word.chars.every((char) => inheritedMasteredChars.has(char));
-
-export const historyQuestionStatus = (stat?: WordStat, carryover?: QuestionCarryover, now = Date.now(), inherited = false) => {
-  const carried = isQuestionCarryoverActive(stat, carryover);
-  const pendingMistake = isPendingQuestionMistake(stat);
-  if (carried || pendingMistake) {
-    return (carried && Date.parse(carryover.availableAt ?? "") > now) || (pendingMistake && isWithinReviewInterval(stat, now))
-      ? "waiting" : "due";
-  }
+export const historyQuestionStatus = (stat?: WordStat, carryover?: QuestionCarryover, now = Date.now()) => {
   if (isMasteredQuestion(stat)) return "mastered";
-  return inherited ? "inherited" : "unreviewed";
+  if (isPendingQuestionMistake(stat)) return isWithinReviewInterval(stat, now) ? "waiting" : "due";
+  if (isQuestionCarryoverActive(stat, carryover)) return Date.parse(carryover.availableAt ?? "") > now ? "waiting" : "due";
+  return "unreviewed";
 };

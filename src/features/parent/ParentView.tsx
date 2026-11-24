@@ -1,7 +1,8 @@
 import { BookOpenCheck, ChartNoAxesCombined, Flag, History } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AppState, DictationWord, LessonSummary, QuestionCarryover } from "../../../shared/types.ts";
 import type { MissedWrongCharCorrection } from "../../../shared/domain/reviews.ts";
+import { isQuestionCarryoverActive, isWithinReviewCorrectionWindow, reviewCorrectionWindowMs } from "../../../shared/domain/reviewPolicy.ts";
 import { WordIssuesPanel } from "../../components/WordIssues";
 import { lessonLabel } from "../../lib/lessonPresentation";
 import { localDateKey } from "../../lib/dates";
@@ -19,10 +20,9 @@ const sections = [
 ] as const;
 
 export interface ParentViewProps {
-  inheritedMasteredChars: string[];
   lessons: LessonSummary[];
   onSetIssueResolved: (id: string, resolved: boolean) => void;
-  onSupplementReviewMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => number;
+  onSupplementReviewMistakes: (logId: string, corrections: MissedWrongCharCorrection[]) => Promise<number>;
   questions: DictationWord[];
   reviewCarryover: Record<string, QuestionCarryover>;
   selectedLesson: LessonSummary;
@@ -31,7 +31,6 @@ export interface ParentViewProps {
 }
 
 export function ParentView({
-  inheritedMasteredChars,
   lessons,
   onSetIssueResolved,
   onSupplementReviewMistakes,
@@ -43,6 +42,7 @@ export function ParentView({
 }: ParentViewProps) {
   const [section, setSection] = useState<typeof sections[number]["id"]>("progress");
   const [activeCorrectionLogId, setActiveCorrectionLogId] = useState<string | null>(null);
+  const [correctionNow, setCorrectionNow] = useState(Date.now);
   const activeCorrectionLog = state.logs.find((log) => log.id === activeCorrectionLogId);
   const lessonsById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
   const questionsById = new Map(questions.map((question) => [question.id, question]));
@@ -70,17 +70,50 @@ export function ParentView({
     const lesson = lessonsById.get(question.lessonId);
     return stat && lesson ? [{ question, lesson, stat }] : [];
   });
+  const carriedQuestions = questions.flatMap((question) => {
+    const lesson = lessonsById.get(question.lessonId);
+    return lesson && isQuestionCarryoverActive(state.wordStats[question.id], reviewCarryover[question.id])
+      ? [{ question, lesson }]
+      : [];
+  });
+
+  useEffect(() => {
+    if (section !== "records") return;
+    const refreshCorrectionTime = () => setCorrectionNow(Date.now());
+    let nextDeadline = Number.POSITIVE_INFINITY;
+    for (const log of state.logs) {
+      if (!isWithinReviewCorrectionWindow(log.date, correctionNow)) continue;
+      const deadline = Date.parse(log.date) + reviewCorrectionWindowMs;
+      nextDeadline = Math.min(nextDeadline, deadline);
+    }
+    const timeout = Number.isFinite(nextDeadline)
+      ? window.setTimeout(refreshCorrectionTime, Math.max(0, nextDeadline - Date.now() + 1))
+      : undefined;
+    document.addEventListener("visibilitychange", refreshCorrectionTime);
+    window.addEventListener("focus", refreshCorrectionTime);
+    return () => {
+      if (timeout !== undefined) window.clearTimeout(timeout);
+      document.removeEventListener("visibilitychange", refreshCorrectionTime);
+      window.removeEventListener("focus", refreshCorrectionTime);
+    };
+  }, [correctionNow, section, state.logs]);
 
   return (
     <>
       {activeCorrectionLog && (
         <ReviewCorrectionPage
           key={activeCorrectionLog.id}
+          correctionNow={correctionNow}
           lessons={lessons}
           log={activeCorrectionLog}
           onBack={() => {
+            setCorrectionNow(Date.now());
             setActiveCorrectionLogId(null);
-            window.requestAnimationFrame(() => document.getElementById(`review-correction-open-${activeCorrectionLog.id}`)?.focus());
+            window.requestAnimationFrame(() => {
+              const focusTarget = document.getElementById(`review-correction-open-${activeCorrectionLog.id}`)
+                ?? document.getElementById("practice-records-heading");
+              focusTarget?.focus();
+            });
           }}
           onSupplementReviewMistakes={onSupplementReviewMistakes}
           wordById={wordById}
@@ -93,7 +126,10 @@ export function ParentView({
         </div>
         <nav className="parent-nav" aria-label="家长看板分区">
           {sections.map(({ id, label, icon: Icon }) => (
-            <button type="button" key={id} aria-current={section === id ? "page" : undefined} onClick={() => setSection(id)}>
+            <button type="button" key={id} aria-current={section === id ? "page" : undefined} onClick={() => {
+              if (id === "records") setCorrectionNow(Date.now());
+              setSection(id);
+            }}>
               <Icon size={17} aria-hidden="true" />{label}
             </button>
           ))}
@@ -104,7 +140,6 @@ export function ParentView({
             <CheckinCalendar activityByDate={activityByDate} />
             <QuestionMasteryPanel
               charStats={state.charStats}
-              inheritedMasteredChars={inheritedMasteredChars}
               lessons={lessons}
               progress={selectedLesson}
               questions={questions}
@@ -115,16 +150,23 @@ export function ParentView({
           </div>
         )}
         {section === "mistakes" && (
-          <MistakeNotebook scoredQuestions={scoredQuestions} selectedLesson={selectedLesson} wrongCharsById={wrongCharsById} />
+          <MistakeNotebook
+            carriedQuestions={carriedQuestions}
+            scoredQuestions={scoredQuestions}
+            selectedLesson={selectedLesson}
+            wrongCharsById={wrongCharsById}
+          />
         )}
         {section === "records" && (
           <PracticeRecords
             logs={state.logs}
             activityByDate={activityByDate}
+            correctionNow={correctionNow}
             lessons={lessons}
             wordById={wordById}
             scoredQuestions={scoredQuestions}
             onOpenCorrection={(id) => {
+              setCorrectionNow(Date.now());
               setActiveCorrectionLogId(id);
               window.scrollTo({ top: 0, behavior: "auto" });
             }}

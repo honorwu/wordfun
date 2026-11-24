@@ -3,6 +3,7 @@ import type { DictationWord, LessonSummary, WordIssueKind } from "../../shared/t
 import { addMissedWrongChars, applyReviewResult } from "../../shared/domain/reviews.ts";
 import type { MissedWrongCharCorrection } from "../../shared/domain/reviews.ts";
 import { charReviewKey, fullDictationCharsForWord } from "../../shared/domain/characters.ts";
+import { isWithinReviewCorrectionWindow } from "../../shared/domain/reviewPolicy.ts";
 import { toggleWordIssue } from "../../shared/domain/wordIssues.ts";
 import type { CorrectionItem, PracticeMode, PracticePhase } from "../features/practice/types";
 import type { StudentViewProps } from "../features/practice/StudentView";
@@ -14,6 +15,7 @@ import type { ViewMode } from "./types";
 export function useAppController() {
   const [viewMode, setViewMode] = useState<ViewMode>("student");
   const [practiceMode, setPracticeMode] = useState<PracticeMode>("lesson");
+  const [roundId, setRoundId] = useState(0);
   const [phase, setPhase] = useState<PracticePhase>("dictating");
   const [wrongCharKeys, setWrongCharKeys] = useState<Set<string>>(() => new Set());
   const [pinyinShownWordIds, setPinyinShownWordIds] = useState<Set<string>>(() => new Set());
@@ -22,13 +24,14 @@ export function useAppController() {
   const [lastResult, setLastResult] = useState({ total: 0, wrongQuestions: 0, wrongChars: 0 });
 
   const {
-    state, setState, allLessons, selectedLesson, practiceItems, practiceLoading, practiceError,
-    allKnownWords, parentState, questions, reviewCarryover, inheritedMasteredChars, stats, parentReady, parentError, isReady, loadError,
+    state, setState, allLessons, selectedLesson, practiceItems, practiceLoading, practiceError, practiceWaitingForSave,
+    allKnownWords, parentState, questions, reviewCarryover, stats, parentReady, parentError, isReady, loadError, correctionSaving, saveCorrection,
     invalidateParentData, retryLoad,
-  } = useLearningData({ viewMode, practiceMode, onSaveError: setSavedMessage });
+  } = useLearningData({ viewMode, practiceMode, roundId, onSaveError: setSavedMessage });
 
   const resetPractice = (nextMode = practiceMode) => {
     setPracticeMode(nextMode);
+    setRoundId((current) => current + 1);
     setPhase("dictating");
     setWrongCharKeys(new Set());
     setPinyinShownWordIds(new Set());
@@ -37,6 +40,7 @@ export function useAppController() {
   };
 
   const setProgress = (lesson: LessonSummary) => {
+    if (lesson.id === state.progress.lessonId) return;
     setState((current) => ({ ...current, progress: { grade: lesson.grade, lessonId: lesson.id } }));
     invalidateParentData();
     resetPractice();
@@ -88,9 +92,7 @@ export function useAppController() {
       lessons: reviewedLessons,
     });
     const nextCorrectionItems = practiceItems.flatMap(({ word, mistakeReview }) => {
-      const wrongChars = fullDictationCharsForWord(word)
-        .filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)))
-        .map((char) => ({ char, mistakeCount: nextState.charStats[char]?.mistakes ?? 1 }));
+      const wrongChars = fullDictationCharsForWord(word).filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)));
       if (wrongChars.length === 0) return [];
       return [{ wordId: word.id, text: word.text, pinyin: word.pinyin, mistakeReview, wrongChars, mistakeCount: nextState.wordStats[word.id].mistakes }];
     });
@@ -100,18 +102,21 @@ export function useAppController() {
     setLastResult({
       total: practiceItems.length,
       wrongQuestions: nextCorrectionItems.length,
-      wrongChars: new Set(nextCorrectionItems.flatMap((item) => item.wrongChars.map(({ char }) => char))).size,
+      wrongChars: new Set(nextCorrectionItems.flatMap((item) => item.wrongChars)).size,
     });
     setWrongCharKeys(new Set());
     setPinyinShownWordIds(new Set());
     setPhase(nextCorrectionItems.length > 0 ? "correcting" : "done");
-    setSavedMessage(nextCorrectionItems.length > 0 ? "批改结果已记录，请完成订正" : "批改结果已记录");
+    setSavedMessage(nextCorrectionItems.length > 0 ? "批改完成，请完成订正" : "批改完成");
     window.setTimeout(() => setSavedMessage(""), 1800);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const supplementReviewMistakes = (logId: string, corrections: MissedWrongCharCorrection[]) => {
+  const supplementReviewMistakes = async (logId: string, corrections: MissedWrongCharCorrection[]) => {
     const previousLog = parentState.logs.find((log) => log.id === logId);
+    if (!previousLog || !isWithinReviewCorrectionWindow(previousLog.date)) {
+      throw new Error("只能补记完成后 3 天内的默写记录");
+    }
     const nextState = addMissedWrongChars(parentState, logId, corrections, allKnownWords);
     const nextLog = nextState.logs.find((log) => log.id === logId);
     const previousKeys = new Set((previousLog?.wrongChars ?? []).map((item) => charReviewKey(item.wordId, item.char)));
@@ -126,10 +131,10 @@ export function useAppController() {
       window.setTimeout(() => setSavedMessage(""), 2200);
       return 0;
     }
-    setState((current) => ({
+    await saveCorrection({
       ...nextState,
-      logs: [nextLog, ...current.logs.filter((log) => log.id !== logId)],
-    }));
+      logs: [nextLog, ...state.logs.filter((log) => log.id !== logId)],
+    });
     setSavedMessage(appliedKeys.size === requestedKeys.size
       ? `已在原默写记录中补记 ${appliedKeys.size} 处错字`
       : `已补记 ${appliedKeys.size} 处，另有 ${requestedKeys.size - appliedKeys.size} 处未写入，请刷新核对`);
@@ -138,11 +143,12 @@ export function useAppController() {
   };
 
   return {
-    viewMode, setViewMode, savedMessage, loadError, isReady, selectedLesson, parentReady, parentError, retryLoad,
+    viewMode, setViewMode, correctionSaving, savedMessage, loadError, isReady, selectedLesson, parentReady, parentError, retryLoad,
     studentProps: {
       items: practiceLoading || practiceError ? [] : practiceItems,
       loading: practiceLoading && !practiceError,
       loadError: practiceError,
+      waitingForSave: practiceWaitingForSave,
       onRetry: retryLoad,
       correctionItems, pinyinShownWordIds, lastResult,
       lesson: selectedLesson,
@@ -157,14 +163,15 @@ export function useAppController() {
       onRestart: () => resetPractice(practiceMode),
       onSave: saveReview,
       onSelectLesson: setProgress,
-      onSelectMode: (mode) => resetPractice(mode),
+      onSelectMode: (mode) => {
+        if (mode !== practiceMode) resetPractice(mode);
+      },
       onToggleWrong: toggleWrongChar,
       onToggleIssue: toggleIssue,
       phase, stats, wrongCharKeys,
       wordIssues: state.wordIssues,
     } satisfies StudentViewProps,
     parentProps: {
-      inheritedMasteredChars,
       questions,
       lessons: allLessons,
       onSupplementReviewMistakes: supplementReviewMistakes,

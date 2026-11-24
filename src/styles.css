@@ -1376,13 +1376,6 @@ select:focus-visible {
   line-height: 1;
 }
 
-.correction-duplicate-note {
-  margin: -5px 0 14px;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
 .correction-error-list {
   display: grid;
   gap: 11px;

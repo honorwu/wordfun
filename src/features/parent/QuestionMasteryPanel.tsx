@@ -2,14 +2,12 @@ import { BookOpenCheck } from "lucide-react";
 import { useState } from "react";
 import type { AppState, DictationWord, LessonSummary, QuestionCarryover } from "../../../shared/types.ts";
 import { lessonOrder } from "../../../shared/domain/catalog.ts";
-import { hasQuestionAttempt, isMasteredChar, isMasteredQuestion, isQuestionCarryoverActive, isQuestionMasteryInherited } from "../../../shared/domain/reviewPolicy.ts";
+import { hasQuestionAttempt, isMasteredChar, isMasteredQuestion, isQuestionCarryoverActive } from "../../../shared/domain/reviewPolicy.ts";
 import { lessonLabel } from "../../lib/lessonPresentation";
 
 const labels = {
   mastered: "整题已掌握",
-  inherited: "考察字已继承",
-  pending: "已练待掌握",
-  carryover: "错字待复练",
+  pending: "已练待巩固",
   unreviewed: "还没练过",
   future: "后续课",
 };
@@ -32,9 +30,8 @@ export function MarkedQuestionText({ text, targets, wrongChars }: {
   ));
 }
 
-export function QuestionMasteryPanel({ charStats, inheritedMasteredChars, questions, lessons, progress, reviewCarryover, wordStats, wrongCharsById }: {
+export function QuestionMasteryPanel({ charStats, questions, lessons, progress, reviewCarryover, wordStats, wrongCharsById }: {
   charStats: AppState["charStats"];
-  inheritedMasteredChars: string[];
   questions: DictationWord[];
   lessons: LessonSummary[];
   progress: LessonSummary;
@@ -47,9 +44,8 @@ export function QuestionMasteryPanel({ charStats, inheritedMasteredChars, questi
   const [visibleQuestionCount, setVisibleQuestionCount] = useState(previewSize);
   const lessonsById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
   const books = new Map<string, LessonSummary>();
-  const inherited = new Set(inheritedMasteredChars.filter((char) => isMasteredChar(charStats[char])));
-  const groups: Record<keyof typeof labels, Array<{ question: DictationWord; lesson: LessonSummary }>> = {
-    mastered: [], inherited: [], pending: [], carryover: [], unreviewed: [], future: [],
+  const groups: Record<keyof typeof labels, Array<{ question: DictationWord; lesson: LessonSummary; carried?: boolean }>> = {
+    mastered: [], pending: [], unreviewed: [], future: [],
   };
   const allTargets = new Set<string>();
   const learnedTargets = new Set<string>();
@@ -70,26 +66,23 @@ export function QuestionMasteryPanel({ charStats, inheritedMasteredChars, questi
     }
 
     const stat = wordStats[question.id];
-    const attempted = hasQuestionAttempt(stat);
+    const carried = isQuestionCarryoverActive(stat, reviewCarryover[question.id]);
+    const attempted = hasQuestionAttempt(stat) || carried;
     if (attempted) attemptedTotal++;
     for (const char of question.chars) {
       learnedTargets.add(char);
       if (attempted) attemptedTargets.add(char);
     }
-    const group = isQuestionCarryoverActive(stat, reviewCarryover[question.id])
-      ? "carryover" : isMasteredQuestion(stat) ? "mastered"
-      : isQuestionMasteryInherited(question, stat, inherited) ? "inherited" : attempted ? "pending" : "unreviewed";
-    groups[group].push({ question, lesson });
+    const group = isMasteredQuestion(stat) ? "mastered" : attempted ? "pending" : "unreviewed";
+    groups[group].push({ question, lesson, carried });
   }
 
   if (!books.size) return null;
   const masteredCharTotal = [...learnedTargets].filter((char) => isMasteredChar(charStats[char])).length;
   const masteredTotal = groups.mastered.length;
-  const learnedTotal = masteredTotal + groups.inherited.length + groups.pending.length + groups.carryover.length + groups.unreviewed.length;
+  const learnedTotal = masteredTotal + groups.pending.length + groups.unreviewed.length;
   const masteryPercent = masteredTotal === learnedTotal ? 100 : Math.min(99.9, Math.round(masteredTotal / learnedTotal * 1000) / 10);
-  const visibleStatuses = statuses.filter((key) => (key !== "carryover" || Object.keys(reviewCarryover).length > 0)
-    && (key !== "inherited" || inheritedMasteredChars.length > 0));
-  const status = selectedStatus ?? visibleStatuses.find((key) => groups[key].length > 0) ?? "unreviewed";
+  const status = selectedStatus ?? statuses.find((key) => groups[key].length > 0) ?? "unreviewed";
   const visibleQuestions = groups[status].slice(0, visibleQuestionCount);
 
   return (
@@ -130,7 +123,7 @@ export function QuestionMasteryPanel({ charStats, inheritedMasteredChars, questi
       </dl>
       <h3 className="mastery-list-heading">按状态查看题目</h3>
       <div className="mastery-statuses" role="group" aria-label="题目掌握状态">
-        {visibleStatuses.map((key) => (
+        {statuses.map((key) => (
           <button key={key} type="button" aria-pressed={status === key} onClick={() => {
             setSelectedStatus(key);
             setVisibleQuestionCount(previewSize);
@@ -139,18 +132,16 @@ export function QuestionMasteryPanel({ charStats, inheritedMasteredChars, questi
       </div>
       {visibleQuestions.length ? (
         <>
-          <p className="muted">{status === "inherited"
-            ? "以往的逐字记录显示，这些题的考察字都已掌握。完成整题默写后，按整题结果计分。"
-            : "下划线标出考察字，红字标出有记录的错字。"}</p>
+          <p className="muted">下划线标出考察字，红字标出有记录的错字。</p>
           <ul className="mastery-question-list" aria-label={labels[status]}>
-            {visibleQuestions.map(({ question, lesson }) => {
+            {visibleQuestions.map(({ question, lesson, carried }) => {
               const wrongChars = wrongCharsById.get(question.id);
               return (
                 <li key={question.id} className="mastery-question-item">
                   <strong aria-label={`${question.text}，考察字 ${question.chars.join("、")}${wrongChars?.size ? `，曾错字 ${[...wrongChars].join("、")}` : ""}`}>
                     <MarkedQuestionText text={question.text} targets={question.chars} wrongChars={wrongChars} />
                   </strong>
-                  <small>{lessonLabel(lesson)}</small>
+                  <small>{lessonLabel(lesson)}{carried && " · 历史错字复练"}</small>
                 </li>
               );
             })}

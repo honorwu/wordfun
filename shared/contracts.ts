@@ -10,7 +10,6 @@ export interface AppDataResponse {
 
 export interface PracticeRequest {
   progress: Progress;
-  wordStats: AppState["wordStats"];
   mode: PracticeMode;
 }
 
@@ -20,7 +19,6 @@ export interface ParentDataResponse {
   logs: ReviewLog[];
   questions: DictationWord[];
   reviewCarryover: Record<string, QuestionCarryover>;
-  inheritedMasteredChars: string[];
 }
 
 // logs 包含新增或补记的场次。

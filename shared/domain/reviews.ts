@@ -1,6 +1,6 @@
 import type { AppState, DictationWord, PracticeItem, ReviewLog } from "../types.ts";
 import { fullDictationCharsForWord, hanChars, reviewCharsForWord, charReviewKey } from "./characters.ts";
-import { uniqueTexts } from "./reviewPolicy.ts";
+import { isWithinReviewCorrectionWindow, uniqueTexts } from "./reviewPolicy.ts";
 
 export const applyReviewResult = (
   state: AppState,
@@ -149,9 +149,11 @@ export const addMissedWrongChars = (
   logId: string,
   requestedCorrections: readonly MissedWrongCharCorrection[],
   wordById: ReadonlyMap<string, DictationWord>,
+  now = Date.now(),
 ): AppState => {
   const targetLog = state.logs.find((log) => log.id === logId);
   if (!targetLog || (targetLog.practiceMode !== "lesson" && targetLog.practiceMode !== "history")) return state;
+  if (!isWithinReviewCorrectionWindow(targetLog.date, now)) return state;
 
   const hasReviewSnapshot = Boolean(targetLog.reviewedItems && targetLog.reviewedItems.length > 0);
   const loggedWordIds = new Set(targetLog.wordIds);

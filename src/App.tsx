@@ -14,7 +14,7 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <AppHeader viewMode={app.viewMode} onSelectView={app.setViewMode} />
+      <AppHeader viewMode={app.viewMode} onSelectView={app.setViewMode} navigationDisabled={app.correctionSaving} />
       {app.viewMode === "student" ? (
         <StudentView {...app.studentProps} />
       ) : !app.parentReady ? (

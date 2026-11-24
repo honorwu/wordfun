@@ -1,7 +1,7 @@
 import type { AppState, DictationWord, Lesson, PracticeItem, Progress, QuestionCarryover, WordStat } from "../types.ts";
 import { uniqueChars, reviewCharsForWord } from "./characters.ts";
 import { getDictationWords, lessonOrder, progressOrder, getEligibleWords, isVocabularyLesson } from "./catalog.ts";
-import { categoryWeights, daysSince, hasQuestionAttempt, historyMistakeWordLimit, historyQuestionStatus, historyRoundWordLimit, isMasteredQuestion, isPendingQuestionMistake, isQuestionMasteryInherited } from "./reviewPolicy.ts";
+import { categoryWeights, daysSince, hasQuestionAttempt, historyMistakeWordLimit, historyQuestionStatus, historyRoundWordLimit, isMasteredQuestion, isPendingQuestionMistake } from "./reviewPolicy.ts";
 
 const wordScore = (word: DictationWord, state: AppState): PracticeItem => {
   const stat: WordStat | undefined = state.wordStats[word.id];
@@ -248,9 +248,8 @@ export const generateScreeningPractice = (
   state: AppState,
   targetCount = historyRoundWordLimit,
   rotationSeed = 0,
-  { carryover = {}, inheritedMasteredChars = new Set<string>(), now = Date.now() }: {
+  { carryover = {}, now = Date.now() }: {
     carryover?: Record<string, QuestionCarryover>;
-    inheritedMasteredChars?: ReadonlySet<string>;
     now?: number;
   } = {},
 ): PracticeItem[] => {
@@ -261,7 +260,7 @@ export const generateScreeningPractice = (
   const unreviewed: DictationWord[] = [];
   for (const word of questions) {
     const stat = state.wordStats[word.id];
-    const status = historyQuestionStatus(stat, carryover[word.id], now, isQuestionMasteryInherited(word, stat, inheritedMasteredChars));
+    const status = historyQuestionStatus(stat, carryover[word.id], now);
     if (status === "due") due.push(word);
     if (status === "unreviewed") unreviewed.push(word);
   }

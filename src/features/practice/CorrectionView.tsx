@@ -6,7 +6,7 @@ import { hanCharacterCount } from "./titleMask";
 
 export function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; onFinish: () => void }) {
   const [finishArmed, setFinishArmed] = useState(false);
-  const wrongCharTotal = new Set(items.flatMap((item) => item.wrongChars.map((mistake) => mistake.char))).size;
+  const wrongCharTotal = new Set(items.flatMap((item) => item.wrongChars)).size;
 
   useEffect(() => {
     if (!finishArmed) return;
@@ -28,20 +28,19 @@ export function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; o
       <div className="correction-heading">
         <div>
           <p className="eyebrow">第 3 步 · 订正</p>
-          <h1>把写错的词认真订正好</h1>
-          <p>先看完整词语，红色字是本次错字。第一次写错订正 2 遍，以后每错一次增加 1 遍。</p>
+          <h1>把写错的题认真订正好</h1>
+          <p>每道错题按整题订正，红色字是本次错字。第一次写错订正 2 遍，以后每错一次增加 1 遍。</p>
         </div>
         <div className="correction-total"><strong>{items.length}</strong><span>道错题</span><small>共 {wrongCharTotal} 个错字</small></div>
       </div>
 
       <div className={`correction-grid ${items.length === 1 ? "single" : ""}`}>
         {items.map((item, index) => {
-          const mistakeOrder = new Map(item.wrongChars.map((mistake, mistakeIndex) => [mistake.char, mistakeIndex + 1]));
+          const mistakeOrder = new Map(item.wrongChars.map((char, mistakeIndex) => [char, mistakeIndex + 1]));
           const isLongText = item.text.includes("\n") || hanCharacterCount(item.text) > 10;
           const isPoetry = item.wordId.startsWith("poem-");
-          const hasRepeatedWrongChar = isPoetry && item.wrongChars.some((mistake) => Array.from(item.text).filter((char) => char === mistake.char).length > 1);
-          const instructions = isPoetry ? item.wrongChars.map(({ char, mistakeCount }) => ({ label: `红字「${char}」`, mistakeCount }))
-            : [{ label: "整词", mistakeCount: item.mistakeCount }];
+          const label = isPoetry ? "整首" : "整词";
+          const repetitions = Math.max(2, item.mistakeCount + 1);
           return <article className={`correction-card ${isLongText ? "long-text" : ""}`} key={item.wordId}>
             <div className="correction-card-heading">
               <span className="correction-number">{String(index + 1).padStart(2, "0")}</span>
@@ -54,29 +53,23 @@ export function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; o
                 <p>{item.pinyin.trim() || "暂无拼音"}</p>
                 {isPoetry ? <small>朝代、作者未标注拼音</small> : null}
               </div>
-              <div className="correction-word" aria-label={`错词：${item.text}；错字：${item.wrongChars.map((mistake) => mistake.char).join("、")}`}>
+              <div className="correction-word" aria-label={`错题：${item.text}；错字：${item.wrongChars.join("、")}`}>
                 {Array.from(item.text).map((char, charIndex) => {
                   const order = mistakeOrder.get(char);
                   return <span className={order ? "wrong" : ""} key={`${char}-${charIndex}`}>{char}{order && item.wrongChars.length > 1 ? <sup aria-hidden="true">{order}</sup> : null}</span>;
                 })}
               </div>
             </div>
-            {hasRepeatedWrongChar ? <p className="correction-duplicate-note">同一个红字在原文中出现多次，只需按下方要求订正一次。</p> : null}
             <div className="correction-error-list">
-              {instructions.map(({ label, mistakeCount }) => {
-                const repetitions = Math.max(2, mistakeCount + 1);
-                return (
-                  <div className="correction-error-detail" key={label}>
-                    <div className="correction-requirement">
-                      <b>{label}订正 {repetitions} 遍</b>
-                      <span>这是第 {mistakeCount} 次写错</span>
-                    </div>
-                    <div className="correction-writing-count" aria-label={`${label}需要订正 ${repetitions} 遍`}>
-                      {Array.from({ length: repetitions }, (_, repeatIndex) => <i key={repeatIndex}>{repeatIndex + 1}</i>)}
-                    </div>
-                  </div>
-                );
-              })}
+              <div className="correction-error-detail">
+                <div className="correction-requirement">
+                  <b>{label}订正 {repetitions} 遍</b>
+                  <span>本题第 {item.mistakeCount} 次写错</span>
+                </div>
+                <div className="correction-writing-count" aria-label={`${label}需要订正 ${repetitions} 遍`}>
+                  {Array.from({ length: repetitions }, (_, repeatIndex) => <i key={repeatIndex}>{repeatIndex + 1}</i>)}
+                </div>
+              </div>
             </div>
           </article>;
         })}

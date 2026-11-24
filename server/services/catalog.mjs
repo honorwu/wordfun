@@ -2,7 +2,7 @@ import { getLessons } from "../db/catalog.mjs";
 import {
   generateCurrentLessonPractice, generatePoetryPractice, generateScreeningPractice, getScreeningQuestions,
 } from "../../shared/domain/practice.ts";
-import { historyQuestionStatus, historyRoundWordLimit, isQuestionMasteryInherited } from "../../shared/domain/reviewPolicy.ts";
+import { historyQuestionStatus, historyRoundWordLimit } from "../../shared/domain/reviewPolicy.ts";
 
 const summarizeLesson = ({ words, textbookWords, dictationWords, classicalTexts, ...summary }) => summary;
 
@@ -27,7 +27,7 @@ export const createCatalogService = (db) => {
   return {
     summaries: () => catalog().summaries,
     questions: () => catalog().questions,
-    practice: (progress, wordStats = {}, mode = "lesson", carryover = {}, inheritedMasteredChars = new Set()) => {
+    practice: (progress, wordStats = {}, mode = "lesson", carryover = {}) => {
       const { lessons, historyQuestions } = catalog();
       const lesson = lessons.find((item) => item.id === progress?.lessonId);
       if (!lesson) throw Object.assign(new Error("所选课次不存在，请刷新后重新选择"), { statusCode: 404 });
@@ -37,17 +37,16 @@ export const createCatalogService = (db) => {
       const now = Date.now();
       const previousStatuses = historyQuestions.get(lesson.id).map((word) => {
         const stat = wordStats[word.id];
-        return historyQuestionStatus(stat, carryover[word.id], now, isQuestionMasteryInherited(word, stat, inheritedMasteredChars));
+        return historyQuestionStatus(stat, carryover[word.id], now);
       });
       return {
         lesson: { ...summarizeLesson(lesson), ...(mode === "lesson" && lesson.classicalTexts?.length ? { classicalTexts: lesson.classicalTexts } : {}) },
         mode,
-        items: mode === "history" ? generateScreeningPractice(lessons, state, historyRoundWordLimit, 0, { carryover, inheritedMasteredChars, now })
+        items: mode === "history" ? generateScreeningPractice(lessons, state, historyRoundWordLimit, 0, { carryover, now })
           : lesson.lessonKind === "classical_poetry" ? generatePoetryPractice(lesson) : generateCurrentLessonPractice(lessons, state),
         stats: {
           historyTotal: previousStatuses.length,
           historyReviewed: previousStatuses.filter((status) => status === "mastered").length,
-          historyInherited: previousStatuses.filter((status) => status === "inherited").length,
           historyUnreviewed: previousStatuses.filter((status) => status === "unreviewed").length,
           pendingMistakes: previousStatuses.filter((status) => status === "due" || status === "waiting").length,
           waitingReview: previousStatuses.filter((status) => status === "waiting").length,

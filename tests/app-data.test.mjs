@@ -37,7 +37,6 @@ test("服务端出题保持所有课次原有的题词、拼音、目标字及�
       assert.deepEqual(actual.stats, {
         historyTotal: questions.length,
         historyReviewed: questions.filter(({ id }) => isMasteredQuestion(wordStats[id])).length,
-        historyInherited: 0,
         historyUnreviewed: questions.filter(({ id }) => !wordStats[id].attempts).length,
         pendingMistakes: questions.filter(({ id }) => isPendingQuestionMistake(wordStats[id])).length,
         waitingReview: questions.filter(({ id }) => isQuestionCoolingDown(wordStats[id])).length,
@@ -101,6 +100,12 @@ test("启动仅返回目录与当前题；历史记录延迟读取，增量保�
   const post = (url, body, method = "POST") => fetch(`${baseUrl}${url}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   try {
     const catalog = createCatalogService(catalogDb);
+    const [firstLesson] = catalog.summaries();
+    const firstPractice = await post("/api/practice", { progress: { lessonId: firstLesson.id, grade: firstLesson.grade }, mode: "lesson" });
+    assert.equal(firstPractice.status, 200);
+    assert.equal((await firstPractice.json()).lesson.id, firstLesson.id);
+    assert.equal(learningDb.prepare("SELECT COUNT(*) AS count FROM students").get().count, 0);
+
     let state = getState(learningDb, catalogDb);
     const practice = catalog.practice(state.progress, state.wordStats);
     const firstItem = practice.items[0];
@@ -141,13 +146,15 @@ test("启动仅返回目录与当前题；历史记录延迟读取，增量保�
     const pastQuestions = getScreeningQuestions(lessons, nextProgress);
     const wordStats = Object.fromEntries(pastQuestions.map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }]));
     wordStats[firstItem.word.id] = { attempts: 1, mistakes: 1, streak: 0, lastReviewedAt: "2020-01-01T00:00:00.000Z" };
-    const historical = await post("/api/practice", { progress: nextProgress, wordStats, mode: "history" });
+    saveState(learningDb, { ...state, wordStats });
+    const persistedStats = getState(learningDb, catalogDb).wordStats;
+    const historical = await post("/api/practice", { progress: nextProgress, mode: "history" });
     const currentHistory = await historical.json();
     assert.deepEqual(currentHistory.items.map(({ word }) => word.id), [firstItem.word.id]);
     assert.equal(currentHistory.stats.historyReviewed, pastQuestions.length - 1);
     assert.equal(currentHistory.stats.pendingMistakes, 1);
     assert.equal(currentHistory.stats.waitingReview, 0);
-    assert.deepEqual(getState(learningDb, catalogDb).wordStats, state.wordStats);
+    assert.deepEqual(getState(learningDb, catalogDb).wordStats, persistedStats);
     const invalid = await post("/api/practice", { progress: { lessonId: "does-not-exist" } });
     assert.equal(invalid.status, 404);
     assert.equal((await post("/api/practice", { progress: state.progress, mode: "invalid" })).status, 400);
@@ -180,7 +187,10 @@ test("启动仅返回目录与当前题；历史记录延迟读取，增量保�
   }
 });
 
-test("超过 120 场仍可查阅和补记最早场次，重试和切课保留历史", async (t) => {
+test("超过 120 场仍可查阅最早场次，并补记近期场次", async (t) => {
+  const now = Date.UTC(2025, 5, 1, 12);
+  const dayMs = 24 * 60 * 60 * 1000;
+  t.mock.timers.enable({ apis: ["Date"], now });
   const directory = mkdtempSync(path.join(os.tmpdir(), "ziqu-review-history-"));
   const filename = path.join(directory, "learning.sqlite");
   const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
@@ -192,13 +202,13 @@ test("超过 120 场仍可查阅和补记最早场次，重试和切课保留历
   const server = createAppServer({ catalogDb, learningDb });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  const request = async (url, method, state) => {
+  const request = async (url, method, state, expectedStatus = 200) => {
     const response = await fetch(baseUrl + url, {
       method,
       headers: { "content-type": "application/json" },
       body: JSON.stringify(state),
     });
-    assert.equal(response.status, 200);
+    assert.equal(response.status, expectedStatus);
     return response.json();
   };
   const roundCount = 125;
@@ -213,14 +223,15 @@ test("超过 120 场仍可查阅和补记最早场次，重试和切课保留历
     const context = { practiceMode: "lesson", lessons: [{ id: practice.lesson.id, title: practice.lesson.title }] };
     for (let index = 0; index < roundCount; index++) {
       state = applyReviewResult(state, [item], new Set(), context);
-      state.logs[0].date = new Date(Date.UTC(2025, 0, index + 1, 12)).toISOString();
+      state.logs[0].date = new Date(now - (roundCount - index - 1) * dayMs).toISOString();
     }
     assert.equal(state.logs.length, roundCount);
     const initialLogs = state.logs.slice(-120);
     const newLogs = state.logs.slice(0, roundCount - initialLogs.length);
     const earliest = initialLogs.at(-1);
+    const latest = newLogs[0];
     earliestId = earliest.id;
-    latestId = newLogs[0].id;
+    latestId = latest.id;
     wordId = item.word.id;
     correctedChar = item.word.chars[0];
     saveState(learningDb, { ...state, logs: initialLogs });
@@ -237,12 +248,15 @@ test("超过 120 场仍可查阅和补记最早场次，重试和切课保留历
     assert.equal(parent.logs.at(-1).id, earliestId);
     assert.deepEqual(parent.logs.at(-1).reviewedItems, earliest.reviewedItems);
 
+    const expired = { ...earliest, wrongWordIds: [wordId] };
+    await request("/api/state", "PUT", { ...state, logs: [expired] }, 409);
+
     const correction = { wordId, char: correctedChar };
-    const corrected = addMissedWrongChars({ ...state, logs: parent.logs }, earliestId, [correction], new Map([[wordId, item.word]]));
+    const corrected = addMissedWrongChars({ ...state, logs: parent.logs }, latestId, [correction], new Map([[wordId, item.word]]));
     assert.equal(corrected.wordStats[wordId].attempts, roundCount);
     assert.equal(corrected.wordStats[wordId].mistakes, 1);
-    await request("/api/state", "PUT", { ...corrected, logs: [corrected.logs.at(-1)] });
-    await request("/api/state", "PUT", { ...corrected, logs: [earliest] });
+    await request("/api/state", "PUT", { ...corrected, logs: [corrected.logs[0]] });
+    await request("/api/state", "PUT", { ...corrected, logs: [earliest, latest] });
 
     const nextLesson = getLessons(catalogDb).find(({ id }) => id !== state.progress.lessonId);
     await request("/api/state", "PUT", { ...corrected, progress: { grade: nextLesson.grade, lessonId: nextLesson.id }, logs: [] });
@@ -259,8 +273,9 @@ test("超过 120 场仍可查阅和补记最早场次，重试和切课保留历
     assert.equal(restored.logs.length, roundCount);
     assert.equal(restored.logs[0].id, latestId);
     assert.equal(restored.logs.at(-1).id, earliestId);
-    assert.deepEqual(restored.logs.at(-1).wrongWordIds, [wordId]);
-    assert.deepEqual(restored.logs.at(-1).wrongChars, [{ wordId, char: correctedChar }]);
+    assert.deepEqual(restored.logs.at(-1).wrongWordIds, []);
+    assert.deepEqual(restored.logs[0].wrongWordIds, [wordId]);
+    assert.deepEqual(restored.logs[0].wrongChars, [{ wordId, char: correctedChar }]);
     assert.equal(restored.wordStats[wordId].attempts, roundCount);
     assert.equal(restored.wordStats[wordId].mistakes, 1);
   } finally {
@@ -268,7 +283,60 @@ test("超过 120 场仍可查阅和补记最早场次，重试和切课保留历
   }
 });
 
-test("承接题和未落盘答题统计保持一致，复练前后都保留原成绩", async () => {
+test("补记按原场次时间计算 72 小时，过期更正全部回滚", async (t) => {
+  const deadline = Date.UTC(2025, 5, 1, 12);
+  const correctionWindowMs = 72 * 60 * 60 * 1000;
+  t.mock.timers.enable({ apis: ["Date"], now: deadline - correctionWindowMs });
+  const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
+  const learningDb = openLearningDatabase(":memory:");
+  const server = createAppServer({ catalogDb, learningDb });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const save = (state) => fetch(`http://127.0.0.1:${server.address().port}/api/state`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(state),
+  });
+  try {
+    const initial = getState(learningDb, catalogDb);
+    const practice = createCatalogService(catalogDb).practice(initial.progress);
+    const item = practice.items.find(({ word }) => word.chars.length >= 2);
+    const { id: wordId, chars: [firstChar, secondChar] } = item.word;
+    const context = { practiceMode: "lesson", lessons: [{ id: practice.lesson.id, title: practice.lesson.title }] };
+    const state = applyReviewResult(initial, [item], new Set(), context);
+    const [log] = state.logs;
+    saveState(learningDb, state);
+
+    t.mock.timers.setTime(deadline);
+    const words = new Map([[wordId, item.word]]);
+    const first = addMissedWrongChars(state, log.id, [{ wordId, char: firstChar }], words);
+    const second = addMissedWrongChars(first, log.id, [{ wordId, char: secondChar }], words);
+    assert.equal(first.wordStats[wordId].mistakes, 1);
+    assert.equal(second.charStats[secondChar].mistakes, 1);
+    const atDeadline = await save(first);
+    assert.equal(atDeadline.status, 200);
+    assert.deepEqual(await atDeadline.json(), { ok: true });
+    const saved = getState(learningDb, catalogDb);
+    assert.deepEqual(saved.logs[0].wrongChars, [{ wordId, char: firstChar }]);
+
+    t.mock.timers.setTime(deadline + 1);
+    const retry = await save(first);
+    assert.equal(retry.status, 200);
+    assert.deepEqual(await retry.json(), { ok: true });
+
+    const lateLog = { ...second.logs[0], date: new Date().toISOString() };
+    const late = await save({ ...second, logs: [lateLog] });
+    assert.equal(late.status, 409);
+    assert.match((await late.json()).error, /3 天补记期限/);
+    assert.deepEqual(getState(learningDb, catalogDb), saved);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+    await once(server, "close");
+    learningDb.close(); catalogDb.close();
+  }
+});
+
+test("承接题以已提交的答题次数为准，排题不修改成绩", async () => {
   const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
   const learningDb = openLearningDatabase(":memory:");
   const server = createAppServer({ catalogDb, learningDb });
@@ -286,27 +354,31 @@ test("承接题和未落盘答题统计保持一致，复练前后都保留原�
     const progress = { lessonId: nextLesson.id, grade: nextLesson.grade };
     const pastQuestions = getScreeningQuestions(lessons, progress);
     const [due, waiting] = pastQuestions;
-    const wordStats = Object.fromEntries(pastQuestions.map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }]));
+    const wordStats = Object.fromEntries(pastQuestions.slice(2).map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }]));
     saveState(learningDb, { ...initial, progress, wordStats });
     const persistedStats = getState(learningDb, catalogDb).wordStats;
     const insert = learningDb.prepare("INSERT INTO review_carryover (student_id, word_id, baseline_attempts, available_at) SELECT id, ?, ?, ? FROM students");
-    insert.run(due.id, 1, null);
-    insert.run(waiting.id, 1, "2999-01-01T00:00:00.000Z");
+    insert.run(due.id, 0, null);
+    insert.run(waiting.id, 0, "2999-01-01T00:00:00.000Z");
 
     const parent = await post("/api/parent-data", {});
-    assert.deepEqual(parent.reviewCarryover[due.id], { baselineAttempts: 1, availableAt: null });
-    const historical = await post("/api/practice", { progress, wordStats, mode: "history" });
+    assert.deepEqual(parent.reviewCarryover[due.id], { baselineAttempts: 0, availableAt: null });
+    const historical = await post("/api/practice", { progress, mode: "history" });
     assert.deepEqual(historical.items.map(({ word }) => word.id), [due.id]);
     assert.equal(historical.stats.pendingMistakes, 2);
     assert.equal(historical.stats.waitingReview, 1);
     assert.equal(historical.stats.historyReviewed, pastQuestions.length - 2);
 
-    const next = { ...wordStats, [due.id]: { attempts: 2, mistakes: 0, streak: 2 } };
-    const afterAttempt = await post("/api/practice", { progress, wordStats: next, mode: "history" });
+    const next = { ...wordStats, [due.id]: { attempts: 1, mistakes: 0, streak: 1 } };
+    assert.deepEqual(await post("/api/practice", { progress, mode: "history", wordStats: next }), historical);
+    assert.deepEqual(getState(learningDb, catalogDb).wordStats, persistedStats);
+
+    saveState(learningDb, { ...initial, progress, wordStats: next });
+    const afterAttempt = await post("/api/practice", { progress, mode: "history" });
     assert.deepEqual(afterAttempt.items, []);
     assert.equal(afterAttempt.stats.pendingMistakes, 1);
     assert.equal(afterAttempt.stats.historyReviewed, pastQuestions.length - 1);
-    assert.deepEqual(getState(learningDb, catalogDb).wordStats, persistedStats);
+    assert.equal(getState(learningDb, catalogDb).wordStats[due.id].attempts, 1);
   } finally {
     server.closeAllConnections();
     server.close();
@@ -315,7 +387,7 @@ test("承接题和未落盘答题统计保持一致，复练前后都保留原�
   }
 });
 
-test("旧掌握字跨词继承，但整题成绩、待巩固和课次练习独立", async () => {
+test("船身按本题的已提交成绩安排，龙船的错字只影响本题和逐字统计", async () => {
   const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
   const learningDb = openLearningDatabase(":memory:");
   const server = createAppServer({ catalogDb, learningDb });
@@ -329,52 +401,63 @@ test("旧掌握字跨词继承，但整题成绩、待巩固和课次练习独�
   try {
     const initial = getState(learningDb, catalogDb);
     const lessons = getLessons(catalogDb);
-    const fullLesson = lessons.find(({ title }) => title === "曹冲称象");
-    const partialLesson = lessons.find(({ title }) => title === "难忘的泼水节");
-    const inherited = fullLesson.dictationWords.find(({ text }) => text === "船身");
-    const partial = partialLesson.dictationWords.find(({ text }) => text === "龙船");
-    const nextLesson = lessons[lessons.indexOf(partialLesson) + 1];
+    const hullLesson = lessons.find(({ title }) => title === "曹冲称象");
+    const dragonBoatLesson = lessons.find(({ title }) => title === "难忘的泼水节");
+    const hull = hullLesson.dictationWords.find(({ text }) => text === "船身");
+    const dragonBoat = dragonBoatLesson.dictationWords.find(({ text }) => text === "龙船");
+    const nextLesson = lessons[lessons.indexOf(dragonBoatLesson) + 1];
     const progress = { lessonId: nextLesson.id, grade: nextLesson.grade };
     const pastQuestions = getScreeningQuestions(lessons, progress);
     const mastered = { attempts: 1, mistakes: 0, streak: 1 };
-    const missed = { attempts: 1, mistakes: 1, streak: 0, lastReviewedAt: "2020-01-01T00:00:00.000Z" };
-    const wordStats = Object.fromEntries(pastQuestions.filter(({ id }) => id !== inherited.id && id !== partial.id).map(({ id }) => [id, mastered]));
-    // 模拟龙字后来学会，历史排题以学习库中已经标记为继承掌握的船、身为准。
+    const wordStats = Object.fromEntries(pastQuestions.filter(({ id }) => id !== hull.id && id !== dragonBoat.id).map(({ id }) => [id, mastered]));
     const charStats = { 船: mastered, 身: mastered, 龙: mastered };
-    saveState(learningDb, { ...initial, progress, charStats, wordStats });
-    const insert = learningDb.prepare("INSERT INTO inherited_char_mastery (student_id, char) SELECT id, ? FROM students");
-    insert.run("船");
-    insert.run("身");
-    assert.deepEqual((await post("/api/parent-data", {})).inheritedMasteredChars, ["船", "身"]);
+    const state = { ...initial, progress, charStats, wordStats };
+    saveState(learningDb, state);
+    const recordInheritedChar = learningDb.prepare("INSERT INTO inherited_char_mastery (student_id, char) SELECT id, ? FROM students");
+    recordInheritedChar.run("船");
+    recordInheritedChar.run("身");
 
-    const history = await post("/api/practice", { progress, wordStats, mode: "history" });
-    assert.deepEqual(history.items.map(({ word }) => word.id), [partial.id]);
-    assert.equal(history.stats.historyInherited, 1);
-    assert.equal(history.stats.historyReviewed, pastQuestions.length - 2);
+    const historyRequest = { progress, mode: "history" };
+    const firstRound = await post("/api/practice", historyRequest);
+    assert.deepEqual(new Set(firstRound.items.map(({ word }) => word.id)), new Set([hull.id, dragonBoat.id]));
+    assert.equal(firstRound.stats.historyUnreviewed, 2);
+    assert.equal(firstRound.stats.historyReviewed, pastQuestions.length - 2);
 
-    const current = await post("/api/practice", { progress: { lessonId: fullLesson.id, grade: fullLesson.grade }, wordStats, mode: "lesson" });
-    assert.ok(current.items.some(({ word }) => word.id === inherited.id));
+    const current = await post("/api/practice", { progress: { lessonId: hullLesson.id, grade: hullLesson.grade }, mode: "lesson" });
+    assert.ok(current.items.some(({ word }) => word.id === hull.id));
 
-    const due = await post("/api/practice", { progress, wordStats: { ...wordStats, [inherited.id]: missed }, mode: "history" });
-    assert.deepEqual(due.items.map(({ word }) => word.id), [inherited.id, partial.id]);
-    assert.equal(due.stats.historyInherited, 0);
-    assert.equal(due.stats.pendingMistakes, 1);
+    const hullMastered = { ...state, wordStats: { ...wordStats, [hull.id]: mastered } };
+    saveState(learningDb, hullMastered);
+    learningDb.prepare("INSERT INTO review_carryover (student_id, word_id, baseline_attempts, available_at) SELECT id, ?, 1, NULL FROM students").run(hull.id);
+    const history = await post("/api/practice", historyRequest);
+    assert.deepEqual(history.items.map(({ word }) => word.id), [dragonBoat.id]);
 
-    const carryover = learningDb.prepare("INSERT INTO review_carryover (student_id, word_id, baseline_attempts, available_at) SELECT id, ?, 0, NULL FROM students");
-    carryover.run(inherited.id);
-    const carried = await post("/api/practice", { progress, wordStats, mode: "history" });
-    assert.deepEqual(carried.items.map(({ word }) => word.id), [inherited.id, partial.id]);
-    assert.equal(carried.stats.historyInherited, 0);
-    assert.equal(carried.stats.pendingMistakes, 1);
-    learningDb.prepare("DELETE FROM review_carryover WHERE word_id = ?").run(inherited.id);
+    const wrong = new Set([charReviewKey(dragonBoat.id, "船")]);
+    const graded = applyReviewResult(hullMastered, history.items, wrong, {
+      practiceMode: "history",
+      lessons: [{ id: dragonBoatLesson.id, title: dragonBoatLesson.title }],
+    });
+    const beforeSave = await post("/api/practice", { ...historyRequest, wordStats: graded.wordStats });
+    assert.deepEqual(beforeSave, history);
 
-    saveState(learningDb, { ...initial, progress, charStats: { ...charStats, 船: missed }, wordStats });
-    assert.deepEqual((await post("/api/parent-data", {})).inheritedMasteredChars, ["身"]);
+    const saved = await fetch(`${baseUrl}/api/state`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(graded),
+    });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(await saved.json(), { ok: true });
+
+    const nextRound = await post("/api/practice", { ...historyRequest, wordStats: hullMastered.wordStats });
+    assert.deepEqual(nextRound.items, []);
+    assert.equal(nextRound.stats.historyReviewed, pastQuestions.length - 1);
+    assert.equal(nextRound.stats.waitingReview, 1);
+    assert.equal(nextRound.stats.pendingMistakes, 1);
+    const persisted = getState(learningDb, catalogDb);
+    assert.equal(persisted.wordStats[hull.id].mistakes, 0);
+    assert.equal(persisted.wordStats[dragonBoat.id].mistakes, 1);
+    assert.equal(persisted.charStats.船.mistakes, 1);
     assert.equal(learningDb.prepare("SELECT COUNT(*) AS count FROM inherited_char_mastery").get().count, 2);
-    assert.equal(getState(learningDb, catalogDb).wordStats[inherited.id], undefined);
-    const needsReview = await post("/api/practice", { progress, wordStats, mode: "history" });
-    assert.ok(needsReview.items.some(({ word }) => word.id === inherited.id));
-    assert.equal(needsReview.stats.historyInherited, 0);
   } finally {
     server.closeAllConnections();
     server.close();

@@ -9,22 +9,31 @@ import "./MistakeNotebook.css";
 
 const pageSize = 20;
 
-export function MistakeNotebook({ scoredQuestions, selectedLesson, wrongCharsById }: {
-  scoredQuestions: ReadonlyArray<{ question: DictationWord; lesson: LessonSummary; stat: WordStat }>;
+type NotebookQuestion = { question: DictationWord; lesson: LessonSummary };
+type NotebookRow = NotebookQuestion & { mastered: boolean; carried?: boolean };
+
+export function MistakeNotebook({ carriedQuestions, scoredQuestions, selectedLesson, wrongCharsById }: {
+  carriedQuestions: ReadonlyArray<NotebookQuestion>;
+  scoredQuestions: ReadonlyArray<NotebookQuestion & { stat: WordStat }>;
   selectedLesson: LessonSummary;
   wrongCharsById: ReadonlyMap<string, ReadonlySet<string>>;
 }) {
   const [filter, setFilter] = useState<"pending" | "history">("pending");
   const [visibleCount, setVisibleCount] = useState(pageSize);
   const courseOrder = lessonOrder(selectedLesson);
-  const history = scoredQuestions.filter(({ stat }) => stat.mistakes > 0)
+  const history: NotebookRow[] = scoredQuestions.filter(({ stat }) => stat.mistakes > 0)
     .map((item) => ({ ...item, mastered: isMasteredQuestion(item.stat) }))
     .sort((left, right) => Number(left.mastered) - Number(right.mastered)
       || (right.stat.lastMistakeAt ?? "").localeCompare(left.stat.lastMistakeAt ?? ""));
-  const pending = history.filter(({ lesson, mastered }) => !mastered && lessonOrder(lesson) <= courseOrder);
+  const pending = new Map(history.filter(({ lesson, mastered }) => !mastered && lessonOrder(lesson) <= courseOrder)
+    .map((row) => [row.question.id, row]));
+  for (const { question, lesson } of carriedQuestions) {
+    if (lessonOrder(lesson) > courseOrder || pending.has(question.id)) continue;
+    pending.set(question.id, { question, lesson, mastered: false, carried: true });
+  }
   const showHistory = filter === "history";
-  const rows = showHistory ? history : pending;
-  const listTitle = showHistory ? "历史错题" : "待巩固错题";
+  const rows = showHistory ? history : [...pending.values()];
+  const listTitle = showHistory ? "历史错题" : "待巩固题目";
 
   return (
     <section className="panel wide mistake-notebook printable-report" aria-label="错题本">
@@ -40,22 +49,22 @@ export function MistakeNotebook({ scoredQuestions, selectedLesson, wrongCharsByI
             setFilter(value);
             setVisibleCount(pageSize);
           }}>
-            {value === "pending" ? "待巩固" : "全部历史"} <b>{value === "pending" ? pending.length : history.length}</b>
+            {value === "pending" ? "待巩固" : "全部历史"} <b>{value === "pending" ? pending.size : history.length}</b>
           </button>
         ))}
       </div>
       <p className="print-metadata">{listTitle} · {rows.length} 题 · {new Date().toLocaleDateString("zh-CN")}</p>
-      {rows.length === 0 ? <p className="muted notebook-empty">{showHistory ? "还没有整题写错的记录。" : "当前学习进度内没有待巩固的错题。"}</p> : (
+      {rows.length === 0 ? <p className="muted notebook-empty">{showHistory ? "还没有整题写错的记录。" : "当前学习进度内没有待巩固的题目。"}</p> : (
         <>
           <p className="notebook-guide">
-            {showHistory ? `所有曾写错的整题中，${history.filter(({ mastered }) => mastered).length} 道现已掌握。` : "收录截至当前课仍需巩固的错题。"}
+            {showHistory ? `所有曾写错的整题中，${history.filter(({ mastered }) => mastered).length} 道现已掌握。` : "收录截至当前课仍需巩固的错题和历史错字复练题。"}
             <span className="notebook-target-key">下划线</span>标出考察字，<span className="notebook-error-key">红字</span>标出曾错字。
           </p>
           <table className="notebook-table" aria-label={listTitle}>
             <thead><tr><th scope="col">题目</th><th scope="col">课次</th>{showHistory && <th scope="col">状态</th>}</tr></thead>
             <tbody>
-              {rows.map(({ question, lesson, mastered }, index) => {
-                const wrongChars = wrongCharsById.get(question.id);
+              {rows.map(({ question, lesson, mastered, carried }, index) => {
+                const wrongChars = carried ? undefined : wrongCharsById.get(question.id);
                 const poem = lesson.lessonKind === "classical_poetry";
                 return (
                   <tr key={question.id} className={index >= visibleCount ? "notebook-print-row" : undefined}>
@@ -63,7 +72,7 @@ export function MistakeNotebook({ scoredQuestions, selectedLesson, wrongCharsByI
                       {poem ? <strong>《{question.lessonTitle}》全文</strong> : <strong
                         aria-label={wrongChars?.size ? `${question.text}，曾错字 ${[...wrongChars].join("、")}` : undefined}
                       ><MarkedQuestionText text={question.text} targets={question.chars} wrongChars={wrongChars} /></strong>}
-                      {!wrongChars?.size ? <small>未记录具体错字</small>
+                      {carried ? <small>历史错字复练</small> : !wrongChars?.size ? <small>未记录具体错字</small>
                         : poem && <small>曾错字 <b className="notebook-error-key">{[...wrongChars].join("、")}</b></small>}
                     </th>
                     <td className="notebook-source">{lessonLabel(lesson)}</td>

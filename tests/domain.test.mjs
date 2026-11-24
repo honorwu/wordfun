@@ -99,6 +99,7 @@ test("补记修改原场次且不增加作答次数，重复提交不会重复�
 test("补记已有部分计分场次只接收当时的计分字，整题错误只累计一次", () => {
   const id = "partial-review";
   const date = "2026-11-03T12:00:00.000Z";
+  const now = Date.parse("2026-11-04T12:00:00.000Z");
   const initial = createDefaultState(progress);
   initial.wordStats.mountains = { attempts: 0, mistakes: 0, streak: 0, lastReviewedAt: date };
   initial.charStats.山 = { attempts: 1, mistakes: 0, streak: 1, lastReviewedAt: date, correctWordTexts: ["山河"] };
@@ -107,15 +108,25 @@ test("补记已有部分计分场次只接收当时的计分字，整题错误�
     reviewedItems: [{ wordId: "mountains", wordText: "山河", reviewedChars: ["山"] }],
   }];
   const words = new Map([["mountains", items[0].word]]);
-  assert.equal(addMissedWrongChars(initial, id, [{ wordId: "mountains", char: "河" }], words), initial);
+  assert.equal(addMissedWrongChars(initial, id, [{ wordId: "mountains", char: "河" }], words, now), initial);
   const corrections = [{ wordId: "mountains", char: "山" }];
-  const next = addMissedWrongChars(initial, id, corrections, words);
+  const next = addMissedWrongChars(initial, id, corrections, words, now);
   assert.equal(next.wordStats.mountains.attempts, 1);
   assert.equal(next.wordStats.mountains.mistakes, 1);
   assert.equal(next.charStats.山.attempts, 1);
   assert.equal(next.charStats.山.mistakes, 1);
   assert.equal(next.logs.length, 1);
-  assert.equal(addMissedWrongChars(next, id, corrections, words), next);
+  assert.equal(addMissedWrongChars(next, id, corrections, words, now), next);
+});
+
+test("补记窗口包含完成后的第 72 小时，之后保持原记录", () => {
+  const state = applyReviewResult(createDefaultState(progress), items, new Set(), context);
+  const log = state.logs[0];
+  const words = new Map(items.map(({ word }) => [word.id, word]));
+  const corrections = [{ wordId: "mountains", char: "山" }];
+  const deadline = Date.parse(log.date) + 72 * 60 * 60 * 1000;
+  assert.equal(addMissedWrongChars(state, log.id, corrections, words, deadline).wordStats.mountains.mistakes, 1);
+  assert.equal(addMissedWrongChars(state, log.id, corrections, words, deadline + 1), state);
 });
 
 test("历史错题满五天后才再练，已掌握题退出历史复习", (t) => {
@@ -156,10 +167,9 @@ test("旧错字按新题到期复练，承接和题级错题共用配额", (t) =
     { id: "current", grade: 3, unit: 1, number: 2, title: "本课", words: [{ ...word("current-question", "本课", ["本"]), lessonId: "current" }] },
   ]);
   const state = createDefaultState(progress);
-  state.wordStats.mountains = { attempts: 1, mistakes: 0, streak: 1 };
   for (const id of dueIds) state.wordStats[id] = { attempts: 1, mistakes: 1, streak: 0 };
   const carryover = {
-    mountains: { baselineAttempts: 1, availableAt: new Date(available).toISOString() },
+    mountains: { baselineAttempts: 0, availableAt: new Date(available).toISOString() },
     older: { baselineAttempts: 0, availableAt: null },
     甲: { baselineAttempts: 1, availableAt: null },
     "current-question": { baselineAttempts: 0, availableAt: null },
@@ -174,8 +184,11 @@ test("旧错字按新题到期复练，承接和题级错题共用配额", (t) =
 
   const historyContext = { ...context, practiceMode: "history" };
   const finished = applyReviewResult(state, [atDue[0]], new Set(), historyContext);
-  assert.equal(finished.wordStats.mountains.attempts, 2);
+  assert.equal(finished.wordStats.mountains.attempts, 1);
   assert.ok(!getItems(finished).some(({ word }) => word.id === "mountains"));
+  assert.ok(!generateScreeningPractice(lessons, finished, 20, 0, {
+    carryover: { ...carryover, mountains: { ...carryover.mountains, baselineAttempts: 1 } },
+  }).some(({ word }) => word.id === "mountains"));
 
   const missed = applyReviewResult(state, [atDue[0]], new Set([charReviewKey("mountains", "河")]), historyContext);
   assert.equal(missed.wordStats.mountains.mistakes, 1);

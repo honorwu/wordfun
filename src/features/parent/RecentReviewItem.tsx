@@ -1,16 +1,19 @@
 import { ClipboardCheck } from "lucide-react";
 import type { DictationWord, LessonSummary, ReviewLog } from "../../../shared/types.ts";
+import { isWithinReviewCorrectionWindow } from "../../../shared/domain/reviewPolicy.ts";
 import { lessonLabel } from "../../lib/lessonPresentation";
 import { formatDate } from "../../lib/dates";
 
 export function RecentReviewItem({
   lessons,
   log,
+  correctionNow,
   onOpenCorrection,
   wordById,
 }: {
   lessons: LessonSummary[];
   log: ReviewLog;
+  correctionNow: number;
   onOpenCorrection: () => void;
   wordById: Map<string, DictationWord>;
 }) {
@@ -37,7 +40,8 @@ export function RecentReviewItem({
           : "",
       ].filter(Boolean).join("；");
   const modeText = log.practiceMode === "lesson" ? "当课复习" : log.practiceMode === "history" ? "历史复习" : "旧记录";
-  const canSupplementMistakes = log.practiceMode === "lesson" || log.practiceMode === "history";
+  const canSupplementMistakes = (log.practiceMode === "lesson" || log.practiceMode === "history")
+    && isWithinReviewCorrectionWindow(log.date, correctionNow);
 
   return (
     <div className="recent-item">
