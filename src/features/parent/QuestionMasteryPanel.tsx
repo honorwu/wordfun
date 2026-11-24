@@ -1,3 +1,4 @@
+import { BookOpenCheck } from "lucide-react";
 import { useState } from "react";
 import type { AppState, DictationWord, LessonSummary, QuestionCarryover } from "../../../shared/types.ts";
 import { lessonOrder } from "../../../shared/domain/catalog.ts";
@@ -7,14 +8,15 @@ import { lessonLabel } from "../../lib/lessonPresentation";
 const labels = {
   mastered: "整题已掌握",
   inherited: "考察字已继承",
-  pending: "待巩固",
-  carryover: "旧错字待复练",
+  pending: "已练待掌握",
+  carryover: "错字待复练",
   unreviewed: "还没练过",
   future: "后续课",
 };
 const statuses = Object.keys(labels) as Array<keyof typeof labels>;
 const bookKey = ({ grade, unit }: LessonSummary) => `${grade}-${unit}`;
 const gradeNames = ["", "一", "二", "三", "四", "五", "六"];
+const previewSize = 6;
 const pageSize = 48;
 
 export function MarkedQuestionText({ text, targets, wrongChars }: {
@@ -41,8 +43,8 @@ export function QuestionMasteryPanel({ charStats, inheritedMasteredChars, questi
   wrongCharsById: ReadonlyMap<string, ReadonlySet<string>>;
 }) {
   const [selectedBook, setSelectedBook] = useState("all");
-  const [status, setStatus] = useState<keyof typeof labels>("pending");
-  const [visibleQuestionCount, setVisibleQuestionCount] = useState(pageSize);
+  const [selectedStatus, setSelectedStatus] = useState<keyof typeof labels>();
+  const [visibleQuestionCount, setVisibleQuestionCount] = useState(previewSize);
   const lessonsById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
   const books = new Map<string, LessonSummary>();
   const inherited = new Set(inheritedMasteredChars.filter((char) => isMasteredChar(charStats[char])));
@@ -87,16 +89,20 @@ export function QuestionMasteryPanel({ charStats, inheritedMasteredChars, questi
   const masteryPercent = masteredTotal === learnedTotal ? 100 : Math.min(99.9, Math.round(masteredTotal / learnedTotal * 1000) / 10);
   const visibleStatuses = statuses.filter((key) => (key !== "carryover" || Object.keys(reviewCarryover).length > 0)
     && (key !== "inherited" || inheritedMasteredChars.length > 0));
+  const status = selectedStatus ?? visibleStatuses.find((key) => groups[key].length > 0) ?? "unreviewed";
   const visibleQuestions = groups[status].slice(0, visibleQuestionCount);
 
   return (
     <section className="panel wide question-mastery-panel">
-      <div className="panel-title-row">
-        <div className="panel-heading"><h2>字词题掌握进度</h2></div>
-        <label>查看范围{" "}
+      <div className="mastery-heading">
+        <div>
+          <div className="panel-heading"><BookOpenCheck size={20} aria-hidden="true" /><h2>字词掌握进度</h2></div>
+          <p>统计到当前课（含本课）。考察字按字去重，古诗按整篇另计。</p>
+        </div>
+        <label>教材范围
           <select value={selectedBook} onChange={(event) => {
             setSelectedBook(event.target.value);
-            setVisibleQuestionCount(pageSize);
+            setVisibleQuestionCount(previewSize);
           }}>
             <option value="all">全部教材</option>
             {[...books.entries()].sort(([, left], [, right]) => lessonOrder(left) - lessonOrder(right)).map(([key, book]) => (
@@ -105,24 +111,29 @@ export function QuestionMasteryPanel({ charStats, inheritedMasteredChars, questi
           </select>
         </label>
       </div>
-      <p className="muted">统计到{lessonLabel(progress)}（含本课）。古诗另按整篇练习统计。</p>
-      <div className="mastery-summary">
-        <div className="mastery-summary-count">
-          <strong>已掌握 {masteredCharTotal} / {learnedTargets.size} 个已学考察字</strong>
-        </div>
-        <div className="mastery-summary-count">
-          <strong>整题已掌握 {masteredTotal} / {learnedTotal} 道已学题</strong>
-          <span>{learnedTotal ? `${masteryPercent}%` : "—"}</span>
-        </div>
-        <progress aria-label="字词题掌握进度" value={masteredTotal} max={Math.max(1, learnedTotal)} />
-        <p>已练 <strong>{attemptedTotal}</strong> 题，覆盖 <strong>{attemptedTargets.size} / {learnedTargets.size}</strong> 个已学考察字。</p>
-        <p>所选教材共有 <strong>{allTargets.size}</strong> 个考察字，按字去重。</p>
-      </div>
-      <div className="mastery-statuses" aria-label="题目掌握状态">
+      <dl className="mastery-summary">
+        {[
+          { label: "已掌握整题", value: masteredTotal, total: learnedTotal, unit: "题",
+            note: learnedTotal ? `占已学字词题的 ${masteryPercent}%` : "当前范围暂无已学题" },
+          { label: "已掌握考察字", value: masteredCharTotal, total: learnedTargets.size, unit: "字",
+            note: `所选教材共 ${allTargets.size} 个考察字` },
+          { label: "已练题覆盖的字", value: attemptedTargets.size, total: learnedTargets.size, unit: "字",
+            note: `来自 ${attemptedTotal} 道已练题` },
+        ].map(({ label, value, total, unit, note }) => (
+          <div className="mastery-metric" key={label}>
+            <dt>{label}</dt>
+            <dd className="mastery-metric-value"><strong>{value}</strong> / {total} {unit}</dd>
+            <dd className="mastery-metric-bar"><progress aria-hidden="true" value={value} max={Math.max(1, total)} /></dd>
+            <dd className="mastery-metric-note">{note}</dd>
+          </div>
+        ))}
+      </dl>
+      <h3 className="mastery-list-heading">按状态查看题目</h3>
+      <div className="mastery-statuses" role="group" aria-label="题目掌握状态">
         {visibleStatuses.map((key) => (
           <button key={key} type="button" aria-pressed={status === key} onClick={() => {
-            setStatus(key);
-            setVisibleQuestionCount(pageSize);
+            setSelectedStatus(key);
+            setVisibleQuestionCount(previewSize);
           }}>{labels[key]} <strong>{groups[key].length}</strong></button>
         ))}
       </div>
