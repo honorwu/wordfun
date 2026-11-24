@@ -133,12 +133,15 @@ export function useAppController() {
         .map((item) => charReviewKey(item.wordId, item.char))
         .filter((key) => requestedKeys.has(key) && !previousKeys.has(key)),
     );
-    if (appliedKeys.size === 0) {
+    if (!nextLog || appliedKeys.size === 0) {
       setSavedMessage("没有可写入的更正，请重新打开记录核对");
       window.setTimeout(() => setSavedMessage(""), 2200);
       return 0;
     }
-    setState(nextState);
+    setState((current) => ({
+      ...nextState,
+      logs: [nextLog, ...current.logs.filter((log) => log.id !== logId)],
+    }));
     setSavedMessage(appliedKeys.size === requestedKeys.size
       ? `已在原默写记录中补记 ${appliedKeys.size} 处错字`
       : `已补记 ${appliedKeys.size} 处，另有 ${requestedKeys.size - appliedKeys.size} 处未写入，请刷新核对`);

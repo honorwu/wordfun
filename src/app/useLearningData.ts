@@ -57,8 +57,13 @@ export function useLearningData({ viewMode, practiceMode, onSaveError }: {
     const timeout = window.setTimeout(() => {
       saveQueueRef.current = saveQueueRef.current
         .catch(() => undefined)
-        .then(() => saveRemoteState(state))
-        .then(() => { savedStateRef.current = state; })
+        .then(async () => {
+          // 以队列中最近一次写入成功的状态为准，未确认的场次随下一次保存重发。
+          const savedLogs = new Map(savedStateRef.current?.logs.map((log) => [log.id, log]));
+          const logs = state.logs.filter((log) => savedLogs.get(log.id) !== log);
+          await saveRemoteState({ ...state, logs });
+          savedStateRef.current = state;
+        })
         .catch((error: unknown) => {
           onSaveError(error instanceof Error ? `保存失败：${error.message}` : "保存失败");
         });
@@ -123,14 +128,16 @@ export function useLearningData({ viewMode, practiceMode, onSaveError }: {
   const parentState = useMemo(() => {
     const logs = new Map(historicalLogs.map((log) => [log.id, log]));
     for (const log of state.logs) logs.set(log.id, log);
-    return { ...state, logs: [...logs.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 120) };
+    return { ...state, logs: [...logs.values()].sort((a, b) => b.date.localeCompare(a.date)) };
   }, [state, historicalLogs]);
   const stats = useMemo(() => {
     const activity = new Map(reviewActivity.map((item) => [item.id, item]));
     for (const log of state.logs) activity.set(log.id, { id: log.id, date: log.date, count: log.wordIds.length });
     const today = new Date().toDateString();
-    const todayCount = [...activity.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 120)
-      .filter((item) => new Date(item.date).toDateString() === today).reduce((sum, item) => sum + item.count, 0);
+    let todayCount = 0;
+    for (const item of activity.values()) {
+      if (new Date(item.date).toDateString() === today) todayCount += item.count;
+    }
     return { ...(practiceData?.stats ?? { historyTotal: 0, historyReviewed: 0, historyInherited: 0, historyUnreviewed: 0, pendingMistakes: 0, waitingReview: 0 }), todayCount };
   }, [practiceData, reviewActivity, state.logs]);
 

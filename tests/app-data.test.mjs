@@ -11,7 +11,7 @@ import { defaultCatalogDatabasePath, getLessons, getState, openLearningDatabase,
 import { charReviewKey } from "../shared/domain/characters.ts";
 import { generateCurrentLessonPractice, generatePoetryPractice, generateScreeningPractice, getScreeningQuestions } from "../shared/domain/practice.ts";
 import { isMasteredQuestion, isPendingQuestionMistake, isQuestionCoolingDown } from "../shared/domain/reviewPolicy.ts";
-import { applyReviewResult } from "../shared/domain/reviews.ts";
+import { addMissedWrongChars, applyReviewResult } from "../shared/domain/reviews.ts";
 
 test("服务端出题保持所有课次原有的题词、拼音、目标字及顺序", () => {
   const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
@@ -65,7 +65,7 @@ test("词库缓存复用查询结果，外部更新词库后失效", () => {
   } finally { writer.close(); db.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test("启动仅返回目录与当前题；历史记录延迟读取，合并保存不丢旧记录", async () => {
+test("启动仅返回目录与当前题；历史记录延迟读取，增量保存保留旧记录", async () => {
   const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
   const learningDb = openLearningDatabase(":memory:");
   const server = createAppServer({ catalogDb, learningDb });
@@ -150,6 +150,94 @@ test("启动仅返回目录与当前题；历史记录延迟读取，合并保�
     server.close();
     await once(server, "close");
     learningDb.close(); catalogDb.close();
+  }
+});
+
+test("超过 120 场仍可查阅和补记最早场次，重试和切课保留历史", async (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "ziqu-review-history-"));
+  const filename = path.join(directory, "learning.sqlite");
+  const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
+  t.after(() => {
+    catalogDb.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const learningDb = openLearningDatabase(filename);
+  const server = createAppServer({ catalogDb, learningDb });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const request = async (url, method, state) => {
+    const response = await fetch(baseUrl + url, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(state),
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const roundCount = 125;
+  let earliestId;
+  let latestId;
+  let correctedChar;
+  let wordId;
+  try {
+    let state = getState(learningDb, catalogDb);
+    const practice = createCatalogService(catalogDb).practice(state.progress, state.wordStats);
+    const [item] = practice.items;
+    const context = { practiceMode: "lesson", lessons: [{ id: practice.lesson.id, title: practice.lesson.title }] };
+    for (let index = 0; index < roundCount; index++) {
+      state = applyReviewResult(state, [item], new Set(), undefined, context);
+      state.logs[0].date = new Date(Date.UTC(2025, 0, index + 1, 12)).toISOString();
+    }
+    assert.equal(state.logs.length, roundCount);
+    const initialLogs = state.logs.slice(-120);
+    const newLogs = state.logs.slice(0, roundCount - initialLogs.length);
+    const earliest = initialLogs.at(-1);
+    earliestId = earliest.id;
+    latestId = newLogs[0].id;
+    wordId = item.word.id;
+    correctedChar = item.word.chars[0];
+    saveState(learningDb, { ...state, logs: initialLogs });
+
+    const submission = { ...state, logs: newLogs };
+    await request("/api/state", "PUT", submission);
+    await request("/api/state", "PUT", submission);
+    const startup = await (await fetch(`${baseUrl}/api/app-data`)).json();
+    assert.equal(startup.activity.length, roundCount);
+    assert.ok(startup.activity.some(({ id, count }) => id === earliestId && count === 1));
+    const parent = await request("/api/parent-data", "POST");
+    assert.equal(parent.logs.length, roundCount);
+    assert.equal(parent.logs[0].id, latestId);
+    assert.equal(parent.logs.at(-1).id, earliestId);
+    assert.deepEqual(parent.logs.at(-1).reviewedItems, earliest.reviewedItems);
+
+    const correction = { wordId, char: correctedChar };
+    const corrected = addMissedWrongChars({ ...state, logs: parent.logs }, earliestId, [correction], new Map([[wordId, item.word]]));
+    assert.equal(corrected.wordStats[wordId].attempts, roundCount);
+    assert.equal(corrected.wordStats[wordId].mistakes, 1);
+    await request("/api/state", "PUT", { ...corrected, logs: [corrected.logs.at(-1)] });
+    await request("/api/state", "PUT", { ...corrected, logs: [earliest], mergeLogs: true });
+
+    const nextLesson = getLessons(catalogDb).find(({ id }) => id !== state.progress.lessonId);
+    await request("/api/state", "PUT", { ...corrected, progress: { grade: nextLesson.grade, lessonId: nextLesson.id }, logs: [] });
+  } finally {
+    server.closeAllConnections();
+    server.close();
+    await once(server, "close");
+    learningDb.close();
+  }
+
+  const reopened = openLearningDatabase(filename);
+  try {
+    const restored = getState(reopened, catalogDb);
+    assert.equal(restored.logs.length, roundCount);
+    assert.equal(restored.logs[0].id, latestId);
+    assert.equal(restored.logs.at(-1).id, earliestId);
+    assert.deepEqual(restored.logs.at(-1).wrongWordIds, [wordId]);
+    assert.deepEqual(restored.logs.at(-1).wrongChars, [{ wordId, char: correctedChar }]);
+    assert.equal(restored.wordStats[wordId].attempts, roundCount);
+    assert.equal(restored.wordStats[wordId].mistakes, 1);
+  } finally {
+    reopened.close();
   }
 });
 

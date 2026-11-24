@@ -47,9 +47,9 @@ export const fetchPractice = (progress: Progress, wordStats: AppState["wordStats
 export const fetchParentData = (signal: AbortSignal) =>
   requestJson<ParentDataResponse>("/api/parent-data", { method: "POST", signal });
 
-export const saveRemoteState = async (state: AppState) => {
+export const saveRemoteState = async (state: SaveStateRequest) => {
   await requestJson<SaveStateResponse>("/api/state", {
     method: "PUT",
-    body: JSON.stringify({ ...state, mergeLogs: true } satisfies SaveStateRequest),
+    body: JSON.stringify(state),
   });
 };

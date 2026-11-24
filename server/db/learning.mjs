@@ -63,6 +63,68 @@ export const getInheritedMasteredChars = (learningDb, studentId = defaultStudent
   studentId, masteryNetCorrect,
 ).map(({ char }) => char);
 
+export const getReviewLogs = (learningDb, catalogDb, studentId = defaultStudentId) => {
+  const logRows = allRows(learningDb, "SELECT id, date, practice_mode FROM review_logs WHERE student_id = ? ORDER BY date DESC", studentId);
+  if (logRows.length === 0) return [];
+
+  const wordsByLog = Map.groupBy(allRows(learningDb,
+    `SELECT item.log_id, item.word_id, item.prompt_text, item.is_wrong
+     FROM review_logs log JOIN review_log_words item ON item.log_id = log.id
+     WHERE log.student_id = ? ORDER BY item.log_id, item.item_order`, studentId), (item) => item.log_id);
+  const wrongCharsByLog = Map.groupBy(allRows(learningDb,
+    `SELECT item.log_id, item.word_id, item.char
+     FROM review_logs log JOIN review_log_chars item ON item.log_id = log.id
+     WHERE log.student_id = ? ORDER BY item.log_id, item.item_order, item.char_order`, studentId), (item) => item.log_id);
+  const reviewedCharsByLog = Map.groupBy(allRows(learningDb,
+    `SELECT item.log_id, item.word_id, item.char
+     FROM review_logs log JOIN review_log_reviewed_chars item ON item.log_id = log.id
+     WHERE log.student_id = ? ORDER BY item.log_id, item.item_order, item.char_order`, studentId), (item) => item.log_id);
+  const lessonsByLog = Map.groupBy(allRows(learningDb,
+    `SELECT item.log_id, item.lesson_id, item.lesson_title
+     FROM review_logs log JOIN review_log_lessons item ON item.log_id = log.id
+     WHERE log.student_id = ? ORDER BY item.log_id, item.lesson_order`, studentId), (item) => item.log_id);
+
+  const questionLessons = new Map(logRows.some((log) => !lessonsByLog.has(log.id)) ? allRows(
+    catalogDb,
+    `SELECT q.id AS question_id, l.id AS lesson_id, l.title
+     FROM questions q JOIN lessons l ON l.id = q.lesson_id`,
+  ).map((row) => [row.question_id, { id: row.lesson_id, title: row.title }]) : []);
+  const inferLessons = (items) => {
+    const inferred = new Map();
+    for (const item of items) {
+      const lesson = questionLessons.get(item.word_id);
+      if (lesson) inferred.set(lesson.id, lesson);
+    }
+    return [...inferred.values()];
+  };
+  return logRows.map((log) => {
+    const items = wordsByLog.get(log.id) ?? [];
+    const wrongChars = wrongCharsByLog.get(log.id) ?? [];
+    const reviewedChars = reviewedCharsByLog.get(log.id);
+    const reviewedCharsByWord = Map.groupBy(reviewedChars ?? [], (item) => item.word_id);
+    const lessons = lessonsByLog.get(log.id)?.map((item) => ({ id: item.lesson_id, title: item.lesson_title })) ?? inferLessons(items);
+    const practiceMode = log.practice_mode === "lesson" || log.practice_mode === "history"
+      ? log.practice_mode
+      : lessons.length === 1 ? "lesson" : lessons.length > 1 ? "history" : undefined;
+    return {
+      id: log.id,
+      date: log.date,
+      practiceMode,
+      lessons,
+      wordIds: items.map((item) => item.word_id),
+      wrongWordIds: items.filter((item) => item.is_wrong).map((item) => item.word_id),
+      wrongChars: wrongChars.map((item) => ({ wordId: item.word_id, char: item.char })),
+      reviewedItems: reviewedChars || items.some((item) => item.prompt_text)
+        ? items.map((item) => ({
+            wordId: item.word_id,
+            wordText: item.prompt_text || "",
+            reviewedChars: (reviewedCharsByWord.get(item.word_id) ?? []).map((row) => row.char),
+          }))
+        : undefined,
+    };
+  });
+};
+
 export const getState = (learningDb, catalogDb, studentId = defaultStudentId, { includeLogs = true } = {}) => {
   ensureDefaultStudent(learningDb, catalogDb, studentId);
   const progress = oneRow(learningDb, "SELECT grade, lesson_id FROM progress WHERE student_id = ?", studentId) || defaultProgress(catalogDb);
@@ -105,88 +167,11 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId, { 
       stat.wrongWordTexts.push(row.word_text);
     }
   }
-  const logRows = includeLogs ? allRows(learningDb, "SELECT id, date, practice_mode FROM review_logs WHERE student_id = ? ORDER BY date DESC LIMIT 120", studentId) : [];
-  const wordsByLog = new Map();
-  const wrongCharsByLog = new Map();
-  const reviewedCharsByLog = new Map();
-  const lessonsByLog = new Map();
-  if (logRows.length > 0) {
-    const placeholders = logRows.map(() => "?").join(", ");
-    const logIds = logRows.map((log) => log.id);
-    for (const item of allRows(
-      learningDb,
-      `SELECT log_id, word_id, prompt_text, is_wrong FROM review_log_words WHERE log_id IN (${placeholders}) ORDER BY log_id, item_order`,
-      ...logIds,
-    )) {
-      wordsByLog.set(item.log_id, [...(wordsByLog.get(item.log_id) || []), item]);
-    }
-    for (const item of allRows(
-      learningDb,
-      `SELECT log_id, word_id, char FROM review_log_chars WHERE log_id IN (${placeholders}) ORDER BY log_id, item_order, char_order`,
-      ...logIds,
-    )) {
-      wrongCharsByLog.set(item.log_id, [...(wrongCharsByLog.get(item.log_id) || []), item]);
-    }
-    for (const item of allRows(
-      learningDb,
-      `SELECT log_id, word_id, char FROM review_log_reviewed_chars WHERE log_id IN (${placeholders}) ORDER BY log_id, item_order, char_order`,
-      ...logIds,
-    )) {
-      const byWord = reviewedCharsByLog.get(item.log_id) || new Map();
-      byWord.set(item.word_id, [...(byWord.get(item.word_id) || []), item.char]);
-      reviewedCharsByLog.set(item.log_id, byWord);
-    }
-    for (const item of allRows(
-      learningDb,
-      `SELECT log_id, lesson_id, lesson_title FROM review_log_lessons WHERE log_id IN (${placeholders}) ORDER BY log_id, lesson_order`,
-      ...logIds,
-    )) {
-      lessonsByLog.set(item.log_id, [...(lessonsByLog.get(item.log_id) || []), { id: item.lesson_id, title: item.lesson_title }]);
-    }
-  }
-  const questionLessons = new Map(logRows.some((log) => !lessonsByLog.has(log.id)) ? allRows(
-    catalogDb,
-    `SELECT q.id AS question_id, l.id AS lesson_id, l.title
-     FROM questions q JOIN lessons l ON l.id = q.lesson_id`,
-  ).map((row) => [row.question_id, { id: row.lesson_id, title: row.title }]) : []);
-  const inferLessons = (items) => {
-    const inferred = new Map();
-    for (const item of items) {
-      const lesson = questionLessons.get(item.word_id);
-      if (lesson) inferred.set(lesson.id, { id: lesson.id, title: lesson.title });
-    }
-    return [...inferred.values()];
-  };
-  const logs = logRows.map((log) => {
-    const items = wordsByLog.get(log.id) || [];
-    const wrongChars = wrongCharsByLog.get(log.id) || [];
-    const reviewedChars = reviewedCharsByLog.get(log.id);
-    const lessons = lessonsByLog.get(log.id) || inferLessons(items);
-    const practiceMode = log.practice_mode === "lesson" || log.practice_mode === "history"
-      ? log.practice_mode
-      : lessons.length === 1 ? "lesson" : lessons.length > 1 ? "history" : undefined;
-    return {
-      id: log.id,
-      date: log.date,
-      practiceMode,
-      lessons,
-      wordIds: items.map((item) => item.word_id),
-      wrongWordIds: items.filter((item) => item.is_wrong).map((item) => item.word_id),
-      wrongChars: wrongChars.map((item) => ({ wordId: item.word_id, char: item.char })),
-      reviewedItems: reviewedChars || items.some((item) => item.prompt_text)
-        ? items.map((item) => ({
-            wordId: item.word_id,
-            wordText: item.prompt_text || "",
-            reviewedChars: reviewedChars?.get(item.word_id) || [],
-          }))
-        : undefined,
-    };
-  });
   return {
     progress: { grade: progress?.grade || 3, lessonId: progress?.lesson_id || "" },
     wordStats,
     charStats,
-    logs,
+    logs: includeLogs ? getReviewLogs(learningDb, catalogDb, studentId) : [],
     wordIssues: allRows(learningDb, "SELECT * FROM word_issues WHERE student_id = ? ORDER BY created_at DESC, id", studentId).map((row) => ({
       id: row.id,
       word: JSON.parse(row.word_snapshot),
@@ -202,11 +187,71 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId, { 
 export const getReviewActivity = (learningDb, studentId = defaultStudentId) => allRows(
   learningDb,
   `SELECT rl.id, rl.date, COUNT(rw.word_id) AS count
-   FROM (SELECT id, date FROM review_logs WHERE student_id = ? ORDER BY date DESC LIMIT 120) rl
+   FROM review_logs rl
    LEFT JOIN review_log_words rw ON rw.log_id = rl.id
+   WHERE rl.student_id = ?
    GROUP BY rl.id ORDER BY rl.date DESC`,
   studentId,
 );
+
+const appendReviewLogs = (learningDb, studentId, logs) => {
+  if (logs.length === 0) return;
+
+  const findLog = learningDb.prepare("SELECT student_id FROM review_logs WHERE id = ?");
+  const insertLog = learningDb.prepare("INSERT INTO review_logs (id, student_id, date, practice_mode) VALUES (?, ?, ?, ?)");
+  const insertLogLesson = learningDb.prepare(
+    "INSERT INTO review_log_lessons (log_id, lesson_id, lesson_title, lesson_order) VALUES (?, ?, ?, ?)",
+  );
+  const insertLogWord = learningDb.prepare(
+    "INSERT INTO review_log_words (log_id, word_id, prompt_text, is_wrong, item_order) VALUES (?, ?, ?, ?, ?)",
+  );
+  const insertReviewedChar = learningDb.prepare(
+    "INSERT INTO review_log_reviewed_chars (log_id, word_id, char, item_order, char_order) VALUES (?, ?, ?, ?, ?)",
+  );
+  const markWordWrong = learningDb.prepare(
+    "UPDATE review_log_words SET is_wrong = 1 WHERE log_id = ? AND word_id = ? AND is_wrong = 0",
+  );
+  const insertWrongChar = learningDb.prepare(
+    `INSERT INTO review_log_chars (log_id, word_id, char, item_order, char_order)
+     SELECT word.log_id, word.word_id, ?, word.item_order,
+       COALESCE((SELECT MAX(char_order) + 1 FROM review_log_chars
+                 WHERE log_id = word.log_id AND word_id = word.word_id), 0)
+     FROM review_log_words word WHERE word.log_id = ? AND word.word_id = ?
+     ON CONFLICT(log_id, word_id, char) DO NOTHING`,
+  );
+
+  for (const log of logs) {
+    const existing = findLog.get(log.id);
+    if (existing && existing.student_id !== studentId) throw new Error("默写记录 ID 已被使用");
+
+    const wrongChars = log.wrongChars ?? [];
+    const wrongWordIds = new Set(log.wrongWordIds ?? []);
+    for (const { wordId } of wrongChars) wrongWordIds.add(wordId);
+
+    if (existing) {
+      // 同一场次只补充错误，保留首次保存的题目和计分快照。
+      for (const wordId of wrongWordIds) markWordWrong.run(log.id, wordId);
+    } else {
+      const practiceMode = log.practiceMode === "lesson" || log.practiceMode === "history" ? log.practiceMode : null;
+      insertLog.run(log.id, studentId, log.date, practiceMode);
+      const seenLessonIds = new Set();
+      for (const [index, lesson] of (log.lessons ?? []).entries()) {
+        if (!lesson?.id || seenLessonIds.has(lesson.id)) continue;
+        seenLessonIds.add(lesson.id);
+        insertLogLesson.run(log.id, lesson.id, lesson.title || "", index);
+      }
+      const reviewedItemByWordId = new Map((log.reviewedItems ?? []).map((item) => [item.wordId, item]));
+      for (const [index, wordId] of (log.wordIds ?? []).entries()) {
+        const reviewedItem = reviewedItemByWordId.get(wordId);
+        insertLogWord.run(log.id, wordId, reviewedItem?.wordText || null, Number(wrongWordIds.has(wordId)), index);
+        for (const [charIndex, char] of (reviewedItem?.reviewedChars ?? []).entries()) {
+          insertReviewedChar.run(log.id, wordId, char, index, charIndex);
+        }
+      }
+    }
+    for (const { wordId, char } of wrongChars) insertWrongChar.run(char, log.id, wordId);
+  }
+};
 
 export const saveState = (learningDb, state, studentId = defaultStudentId) => {
   runTransaction(learningDb, () => {
@@ -256,38 +301,7 @@ export const saveState = (learningDb, state, studentId = defaultStudentId) => {
       }
     }
 
-    learningDb.prepare("DELETE FROM review_logs WHERE student_id = ?").run(studentId);
-    const insertLog = learningDb.prepare("INSERT INTO review_logs (id, student_id, date, practice_mode) VALUES (?, ?, ?, ?)");
-    const insertLogLesson = learningDb.prepare(
-      "INSERT INTO review_log_lessons (log_id, lesson_id, lesson_title, lesson_order) VALUES (?, ?, ?, ?)",
-    );
-    const insertLogWord = learningDb.prepare("INSERT INTO review_log_words (log_id, word_id, prompt_text, is_wrong, item_order) VALUES (?, ?, ?, ?, ?)");
-    const insertLogChar = learningDb.prepare("INSERT INTO review_log_chars (log_id, word_id, char, item_order, char_order) VALUES (?, ?, ?, ?, ?)");
-    const insertReviewedChar = learningDb.prepare("INSERT INTO review_log_reviewed_chars (log_id, word_id, char, item_order, char_order) VALUES (?, ?, ?, ?, ?)");
-    for (const log of (state.logs || []).slice(0, 120)) {
-      const wrongIds = new Set(log.wrongWordIds || []);
-      const wrongChars = log.wrongChars || [];
-      const wrongCharWordIds = new Set(wrongChars.map((item) => item.wordId));
-      const practiceMode = log.practiceMode === "lesson" || log.practiceMode === "history" ? log.practiceMode : null;
-      insertLog.run(log.id, studentId, log.date, practiceMode);
-      const seenLessonIds = new Set();
-      for (const [index, lesson] of (log.lessons || []).entries()) {
-        if (!lesson?.id || seenLessonIds.has(lesson.id)) continue;
-        seenLessonIds.add(lesson.id);
-        insertLogLesson.run(log.id, lesson.id, lesson.title || "", index);
-      }
-      const reviewedItemByWordId = new Map((log.reviewedItems || []).map((item) => [item.wordId, item]));
-      for (const [index, wordId] of (log.wordIds || []).entries()) {
-        const reviewedItem = reviewedItemByWordId.get(wordId);
-        insertLogWord.run(log.id, wordId, reviewedItem?.wordText || null, wrongIds.has(wordId) || wrongCharWordIds.has(wordId) ? 1 : 0, index);
-        for (const [charIndex, char] of (reviewedItem?.reviewedChars || []).entries()) {
-          insertReviewedChar.run(log.id, wordId, char, index, charIndex);
-        }
-      }
-      for (const [index, item] of wrongChars.entries()) {
-        insertLogChar.run(log.id, item.wordId, item.char, Math.max(0, (log.wordIds || []).indexOf(item.wordId)), index);
-      }
-    }
+    appendReviewLogs(learningDb, studentId, state.logs ?? []);
 
     // 旧客户端未带此字段时保留已有标记；空数组表示明确取消全部标记。
     if (Array.isArray(state.wordIssues)) {

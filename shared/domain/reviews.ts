@@ -41,7 +41,7 @@ export const applyReviewResult = (
     ...state,
     wordStats: { ...state.wordStats },
     charStats: { ...state.charStats },
-    logs: [...reviewLogs, ...state.logs].slice(0, 120),
+    logs: [...reviewLogs, ...state.logs],
   };
   const sessionCharReviews = new Map<string, { isWrong: boolean; correctWordTexts: Set<string>; wrongWordTexts: Set<string> }>();
 
