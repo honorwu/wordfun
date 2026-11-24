@@ -33,6 +33,7 @@ export interface BookCharacterIndex {
 export interface Lesson {
   id: string;
   grade: Grade;
+  // 兼容现有接口字段名。1 为上册，2 为下册。
   unit: number;
   number: number;
   sortOrder?: number;

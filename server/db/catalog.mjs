@@ -1,6 +1,7 @@
 import { allRows } from "./query.mjs";
 
 export const getLessons = (catalogDb) => {
+  // 接口的 unit 对应数据库的 term。教材单元使用 unit_index 和 unit_name。
   const lessons = allRows(catalogDb,
     `SELECT id, grade, term AS unit, lesson_number AS number, sort_order, title, lesson_kind
      FROM lessons

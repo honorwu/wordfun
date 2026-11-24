@@ -77,11 +77,12 @@ shared/
     characters.ts          目标字与整词字集、逐字批改键
     catalog.ts             课次范围、词语表与补充组词
     reviewPolicy.ts        掌握标准、历史错字复习间隔
-    practice.ts            当课、历史、古诗等题目生成
+    practice.ts            当课、历史与古诗题目生成
     reviews.ts             批改结果与原记录补记
     state.ts / wordIssues.ts  状态归一化、词库问题标记
 src/
   App.tsx                  页面装配与加载状态
+   styles.css               全局样式与共用布局
   app/
     useLearningData.ts     加载、请求取消、延迟保存、页面数据合并
     useAppController.ts    页面切换、练习阶段、批改草稿与操作衔接
@@ -100,9 +101,11 @@ server/
 
 依赖方向：`src → shared`，`server → shared`；`shared` 不依赖 React、HTTP、SQLite 或前后端目录。后端路由调用服务，服务调用数据库模块；界面组件通过回调触发操作，不直接请求接口。`src/lib/api.ts` 按 `shared/contracts.ts` 构造请求、读取响应；这些类型描述现有协议，运行时校验规则沿用原实现。
 
-题目生成和完整词库缓存由后端负责，语音播放、提示、逐字选择和练习阶段由浏览器负责。批改与补记在浏览器调用共享规则后保存状态。
+当课复习、历史复习和古诗默写的题目由后端生成，完整词库也在后端缓存。语音播放、提示、逐字选择和练习阶段由浏览器负责。批改与补记在浏览器调用共享规则后保存状态。
 
-新增业务规则放到 `shared/domain` 的相应模块，新增页面放到对应 `features`，新增接口先更新 `shared/contracts.ts`。`src/lib/scheduler.ts`、`storage.ts`、`wordIssues.ts`、`src/types.ts` 和 `server/db.mjs`、`catalog.mjs` 保留为旧脚本的兼容导出入口，新代码优先引用具体模块。
+`Lesson.unit` 对应 SQLite 的 `lessons.term`，其中 1 为上册，2 为下册。教材单元另存在 `lessons.unit_index` 和 `lessons.unit_name`。新增按单元复习时，按年级、册别和单元编号确定范围。
+
+新增业务规则放到 `shared/domain` 的相应模块，新增页面放到对应 `features`，专用于某个功能的样式与组件放在一起。新增接口先更新 `shared/contracts.ts`。`src/lib/scheduler.ts`、`storage.ts`、`wordIssues.ts`、`src/types.ts` 和 `server/db.mjs`、`catalog.mjs` 保留为旧脚本的兼容导出入口，新代码优先引用具体模块。
 
 验证命令：
 

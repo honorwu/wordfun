@@ -7,5 +7,3 @@ export const gradeNames: Record<Grade, string> = {
   4: "四年级",
   5: "五年级",
 };
-
-export { categoryWeights } from "../../shared/domain/reviewPolicy.ts";

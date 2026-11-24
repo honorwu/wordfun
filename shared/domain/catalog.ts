@@ -11,12 +11,4 @@ export const progressOrder = (progress: Progress, lessons: Lesson[]) => {
   return selected ? lessonOrder(selected) : progress.grade * 1000;
 };
 
-export const getEligibleLessons = (lessons: Lesson[], progress: Progress) => {
-  const selectedOrder = progressOrder(progress, lessons);
-  return lessons.filter((lesson) => lessonOrder(lesson) <= selectedOrder);
-};
-
 export const getDictationWords = (lessons: Lesson[]) => lessons.flatMap((lesson) => lesson.dictationWords ?? []);
-
-export const getEligibleWords = (lessons: Lesson[], progress: Progress) =>
-  getDictationWords(getEligibleLessons(lessons, progress).filter(isVocabularyLesson));

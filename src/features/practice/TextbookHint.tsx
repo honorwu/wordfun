@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import "./TextbookHint.css";
 
 export function TextbookHint({ text }: { text?: string }) {
   if (!text) return null;

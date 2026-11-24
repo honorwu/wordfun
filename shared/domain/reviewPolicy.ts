@@ -1,4 +1,4 @@
-import type { CharacterCategory, CharacterStat, QuestionCarryover, WordStat } from "../types.ts";
+import type { CharacterStat, QuestionCarryover, WordStat } from "../types.ts";
 
 const dayMs = 24 * 60 * 60 * 1000;
 export const masteryNetCorrect = 1;
@@ -10,22 +10,6 @@ export const reviewCorrectionWindowMs = 3 * dayMs;
 export const isWithinReviewCorrectionWindow = (date: string, now = Date.now()) => {
   const elapsed = now - Date.parse(date);
   return elapsed >= 0 && elapsed <= reviewCorrectionWindowMs;
-};
-
-export const categoryWeights: Record<CharacterCategory, number> = { "一类": 9, "二类": 7 };
-
-const localDayStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-
-export const daysSince = (date?: string) => {
-  if (!date) {
-    return 999;
-  }
-  const parsed = new Date(date);
-  if (Number.isNaN(parsed.getTime())) {
-    return 999;
-  }
-  const elapsed = localDayStart(new Date()) - localDayStart(parsed);
-  return Math.max(0, Math.floor(elapsed / dayMs));
 };
 
 export const uniqueTexts = (texts?: string[]) => Array.from(new Set(texts ?? []));

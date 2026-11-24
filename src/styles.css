@@ -2939,34 +2939,10 @@ select:focus-visible {
   text-underline-offset: 3px;
 }
 
-.textbook-hint {
-  margin: 7px 0 0;
-  padding: 6px 9px;
-  border-inline-start: 2px solid var(--practice-line, var(--line));
-  border-radius: 6px;
-  color: #293044;
-  background: var(--practice-soft, var(--purple-soft));
-  font-size: 15px;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-
-.textbook-hint-label {
-  margin-inline-end: 8px;
-  color: var(--practice-dark, var(--purple-dark));
-  font-size: 12px;
-  white-space: nowrap;
-}
-
 .sentence-guide {
   margin: 0 2px 8px;
   color: #606779;
   font-size: 12px;
-}
-
-.textbook-hint-blank {
-  color: #b42318;
-  white-space: nowrap;
 }
 
 @media print {
