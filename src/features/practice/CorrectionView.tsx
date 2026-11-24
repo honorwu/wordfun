@@ -4,6 +4,7 @@ import type { CorrectionItem } from "./types";
 import { mistakeReviewLabels } from "./types";
 import { hanCharacterCount } from "./titleMask";
 import { TextbookHint } from "./TextbookHint";
+import "./CorrectionView.css";
 
 export function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; onFinish: () => void }) {
   const [finishArmed, setFinishArmed] = useState(false);

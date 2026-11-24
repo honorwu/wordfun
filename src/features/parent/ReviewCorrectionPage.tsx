@@ -5,6 +5,7 @@ import { charReviewKey, fullDictationCharsForWord, reviewCharsForWord } from "..
 import { isWithinReviewCorrectionWindow } from "../../../shared/domain/reviewPolicy.ts";
 import type { MissedWrongCharCorrection } from "../../../shared/domain/reviews.ts";
 import { lessonLabel } from "../../lib/lessonPresentation";
+import "./ReviewCorrectionPage.css";
 
 export function ReviewCorrectionPage({
   correctionNow,
