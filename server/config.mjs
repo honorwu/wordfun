@@ -11,6 +11,9 @@ export const defaultCatalogDatabasePath = process.env.ZIQU_CATALOG_DB_PATH
 export const defaultLearningDatabasePath = process.env.ZIQU_LEARNING_DB_PATH
   ? path.resolve(process.env.ZIQU_LEARNING_DB_PATH)
   : path.join(dataDir, "ziqu-learning.sqlite");
+export const legacyLearningDatabasePath = process.env.ZIQU_LEGACY_LEARNING_DB_PATH
+  ? path.resolve(process.env.ZIQU_LEGACY_LEARNING_DB_PATH)
+  : undefined;
 export const defaultStudentId = process.env.ZIQU_STUDENT_ID || "default-student";
 
 export const readJson = (relativePath) => JSON.parse(readFileSync(path.join(projectRoot, relativePath), "utf8"));

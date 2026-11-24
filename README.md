@@ -31,7 +31,7 @@ npm run rebuild:catalog
 教材库包含 `catalog_meta`、`source_files`、`lessons`、`lesson_characters` 和 `questions` 五张表。每道册末词、生字补充题或整篇古诗在 `questions` 中占一行，保存题目 ID、题词、拼音、提示、考察字和教材出处。当课和历史复习引用同一题目 ID。
 
 - `data/ziqu-catalog.sqlite` 是从教材重建的只读词库，重建时先校验临时库再替换。
-- `ZIQU_LEARNING_DB_PATH` 指向独立的学习库，保存默写记录、题目成绩和具体错字。旧线上学习库通过离线导入重建学习数据。
+- `ZIQU_LEARNING_DB_PATH` 指向独立的学习库，保存默写记录、题目成绩和具体错字。旧库可在服务首次启动时迁移。
 
 ## 从逐字状态开始
 
@@ -129,3 +129,7 @@ docker compose up -d --build
 ```
 
 默认访问端口是 `5174`。学习记录保存在 Docker 数据卷 `ziqu-data` 中，更新容器不会丢失；课本词库会随镜像一起更新。播音仍由访问网页的浏览器提供，因此服务器不需要部署语音模型，也没有语音接口费用。
+
+升级时继续挂载线上已有的 `ziqu-data` 卷。服务仅在新学习库缺失时查看旧库。旧库存在就只读迁移并校验，在提供服务前发布新库。新库已存在即直接使用。全新安装中两份库都缺失时，服务初始化一个空的新学习库。
+
+Compose 的 `ZIQU_LEGACY_LEARNING_DB_PATH` 是 `/var/lib/ziqu/ziqu-learning.sqlite`，`ZIQU_LEARNING_DB_PATH` 是 `/var/lib/ziqu/ziqu-learning-inherited-mastery.sqlite`。确认迁移后，后续版本可移除旧库路径及一次性迁移入口，部署继续使用同一个 `ZIQU_LEARNING_DB_PATH` 和数据卷。

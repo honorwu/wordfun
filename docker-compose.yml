@@ -7,7 +7,8 @@ services:
       HOST: "0.0.0.0"
       PORT: "5174"
       ZIQU_CATALOG_DB_PATH: /app/data/ziqu-catalog.sqlite
-      ZIQU_LEARNING_DB_PATH: /var/lib/ziqu/ziqu-learning.sqlite
+      ZIQU_LEARNING_DB_PATH: /var/lib/ziqu/ziqu-learning-inherited-mastery.sqlite
+      ZIQU_LEGACY_LEARNING_DB_PATH: /var/lib/ziqu/ziqu-learning.sqlite
     ports:
       - "${PORT:-5174}:5174"
     volumes:
