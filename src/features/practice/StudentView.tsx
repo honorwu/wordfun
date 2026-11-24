@@ -2,7 +2,7 @@ import { BookOpen, Check, ChevronRight, ClipboardCheck, History, Sparkles } from
 import { useEffect, useMemo, useState } from "react";
 import type { DictationWord, Grade, LessonSummary, PracticeItem, PracticeLesson, PracticeStats, WordIssue, WordIssueKind } from "../../../shared/types.ts";
 import type { PracticeMode, PracticePhase, CorrectionItem } from "./types";
-import { fullDictationCharsForWord, historyMistakeCooldownDays, historyMistakeWordLimit, reviewCharsForWord } from "../../../shared/domain/index.ts";
+import { fullDictationCharsForWord, historyMistakeCooldownDays, historyMistakeWordLimit } from "../../../shared/domain/index.ts";
 import { findWordIssue } from "../../../shared/domain/wordIssues.ts";
 import { gradeNames } from "../../data/metadata";
 import { termLabel, lessonNumberLabel, shortBookLabel, availableGrades } from "../../lib/lessonPresentation";
@@ -18,7 +18,7 @@ export interface StudentViewProps {
   loadError: string;
   onRetry: () => void;
   correctionItems: CorrectionItem[];
-  hintedWordIds: ReadonlySet<string>;
+  pinyinShownWordIds: ReadonlySet<string>;
   items: PracticeItem[];
   lastResult: { total: number; wrongQuestions: number; wrongChars: number };
   lesson: PracticeLesson;
@@ -26,7 +26,7 @@ export interface StudentViewProps {
   mode: PracticeMode;
   onFinish: () => void;
   onFinishCorrection: () => void;
-  onRevealHint: (wordId: string) => void;
+  onShowPinyin: (wordId: string) => void;
   onRestart: () => void;
   onSave: () => void;
   onSelectLesson: (lesson: LessonSummary) => void;
@@ -44,7 +44,7 @@ export function StudentView({
   loadError,
   onRetry,
   correctionItems,
-  hintedWordIds,
+  pinyinShownWordIds,
   items,
   lastResult,
   lesson,
@@ -52,7 +52,7 @@ export function StudentView({
   mode,
   onFinish,
   onFinishCorrection,
-  onRevealHint,
+  onShowPinyin,
   onRestart,
   onSave,
   onSelectLesson,
@@ -92,10 +92,6 @@ export function StudentView({
       ]),
     );
   }, [items]);
-  const protectedChars = useMemo(
-    () => new Set(items.flatMap((item) => reviewCharsForWord(item.word))),
-    [items],
-  );
   const sentenceProtectedChars = useMemo(
     () => new Set(items.flatMap((item) => fullDictationCharsForWord(item.word))),
     [items],
@@ -336,15 +332,13 @@ export function StudentView({
                   index={globalIndex}
                   item={item}
                   key={`${item.word.id}-${globalIndex}`}
-                  hintRevealed={hintedWordIds.has(item.word.id)}
+                  pinyinShown={pinyinShownWordIds.has(item.word.id)}
                   onActivate={() => activateItem(globalIndex)}
                   onTogglePlayback={() => void startDoublePlayback(globalIndex)}
-                  onRevealHint={() => onRevealHint(item.word.id)}
+                  onShowPinyin={() => onShowPinyin(item.word.id)}
                   playback={speechPlayback.index === globalIndex ? speechPlayback : idleSpeechPlayback}
-                  protectedChars={protectedChars}
                   maskedSentence={item.word.textbookHint && maskSentence(item.word.textbookHint)}
                   reviewing={phase === "reviewing"}
-                  wholeWord={mode === "history"}
                   onToggleWrong={onToggleWrong}
                   wrongCharKeys={wrongCharKeys}
                   issue={findWordIssue(wordIssues, item.word)}

@@ -105,7 +105,7 @@ test("启动仅返回目录与当前题；历史记录延迟读取，增量保�
     const practice = catalog.practice(state.progress, state.wordStats);
     const firstItem = practice.items[0];
     const wrong = new Set([charReviewKey(firstItem.word.id, firstItem.word.chars[0])]);
-    state = applyReviewResult(state, practice.items, wrong, undefined, { practiceMode: "lesson", lessons: [{ id: practice.lesson.id, title: practice.lesson.title }] });
+    state = applyReviewResult(state, practice.items, wrong, { practiceMode: "lesson", lessons: [{ id: practice.lesson.id, title: practice.lesson.title }] });
     const originalLog = state.logs[0];
     // 当前学习库也可能包含没有完整计分快照的历史场次。
     state.logs.push({ id: "imported-log", date: "2020-01-01T00:00:00.000Z", wordIds: [firstItem.word.id], wrongWordIds: [firstItem.word.id] });
@@ -155,7 +155,7 @@ test("启动仅返回目录与当前题；历史记录延迟读取，增量保�
     // 未打开家长看板就切课、保存，旧记录必须保留。
     assert.equal((await post("/api/state", startup.state, "PUT")).status, 200);
     assert.deepEqual(getState(learningDb, catalogDb).logs, savedLogs);
-    const nextState = applyReviewResult(startup.state, practice.items, new Set(), undefined, { practiceMode: "lesson", lessons: [] });
+    const nextState = applyReviewResult(startup.state, practice.items, new Set(), { practiceMode: "lesson", lessons: [] });
     assert.equal((await post("/api/state", nextState, "PUT")).status, 200);
     assert.equal(getState(learningDb, catalogDb).logs.length, 3);
 
@@ -212,7 +212,7 @@ test("超过 120 场仍可查阅和补记最早场次，重试和切课保留历
     const [item] = practice.items;
     const context = { practiceMode: "lesson", lessons: [{ id: practice.lesson.id, title: practice.lesson.title }] };
     for (let index = 0; index < roundCount; index++) {
-      state = applyReviewResult(state, [item], new Set(), undefined, context);
+      state = applyReviewResult(state, [item], new Set(), context);
       state.logs[0].date = new Date(Date.UTC(2025, 0, index + 1, 12)).toISOString();
     }
     assert.equal(state.logs.length, roundCount);

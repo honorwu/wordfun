@@ -16,7 +16,7 @@ const context = { practiceMode: "lesson", lessons: [{ id: "previous", title: "�
 
 test("同场重复生字只累计一次，任一词写错则本场计错，保留逐题计分快照", () => {
   const initial = createDefaultState(progress);
-  const next = applyReviewResult(initial, items, new Set([charReviewKey("mountains", "山")]), undefined, context);
+  const next = applyReviewResult(initial, items, new Set([charReviewKey("mountains", "山")]), context);
   assert.equal(next.charStats["山"].attempts, 1);
   assert.equal(next.charStats["山"].mistakes, 1);
   assert.deepEqual(next.charStats["山"].correctWordTexts, ["青山"]);
@@ -30,35 +30,35 @@ test("同场重复生字只累计一次，任一词写错则本场计错，保�
   assert.deepEqual(initial, createDefaultState(progress));
 });
 
-test("显式计分范围区分提示字与独立默写字", () => {
-  const reviewed = new Map([["mountains", ["山"]], ["green", ["青", "山"]]]);
-  const next = applyReviewResult(createDefaultState(progress), items, new Set(), reviewed, context);
-  assert.equal(next.charStats["河"], undefined);
+test("当课所有题词汉字参加计分，整题全对累计一次", () => {
+  const next = applyReviewResult(createDefaultState(progress), items, new Set(), context);
+  assert.equal(next.charStats["河"].attempts, 1);
   assert.equal(next.charStats["青"].attempts, 1);
   assert.equal(next.charStats["山"].attempts, 1);
   assert.equal(isMasteredChar(next.charStats["山"]), true);
   assert.equal(hasQuestionAttempt(next.wordStats.mountains), true);
-  assert.equal(next.wordStats.mountains.attempts, 0);
-  assert.equal(isMasteredQuestion(next.wordStats.mountains), false);
+  assert.equal(next.wordStats.mountains.attempts, 1);
+  assert.equal(next.wordStats.mountains.streak, 1);
+  assert.equal(isMasteredQuestion(next.wordStats.mountains), true);
   assert.equal(isMasteredQuestion(next.wordStats.green), true);
   const questions = items.map(({ word }) => word);
   assert.deepEqual(summarizeCoverage([...questions, word("health", "健康", ["健", "康"])], next), {
-    totalWords: 3, totalChars: 3, reviewedChars: 1, wrongWords: 0, masteredWords: 1,
+    totalWords: 3, totalChars: 3, reviewedChars: 1, wrongWords: 0, masteredWords: 2,
   });
   const lessons = withStoredQuestions([
     { id: "previous", grade: 3, unit: 1, number: 1, title: "前课", words: questions },
     { id: "current", grade: 3, unit: 1, number: 2, title: "本课", words: [] },
   ]);
-  assert.deepEqual(generateScreeningPractice(lessons, next).map(({ word }) => word.id), ["mountains"]);
+  assert.deepEqual(generateScreeningPractice(lessons, next), []);
 });
 
 test("同题的两个考察字都错或单独搭配字写错，均只计一道错题", () => {
   const health = { word: word("health", "健康", ["健", "康"]), score: 1, reasons: [] };
-  const reviewed = new Map([["mountains", ["山"]]]);
   const wrong = new Set([charReviewKey("health", "健"), charReviewKey("health", "康"), charReviewKey("mountains", "河")]);
-  const next = applyReviewResult(createDefaultState(progress), [health, items[0], health], wrong, reviewed, context);
+  const next = applyReviewResult(createDefaultState(progress), [health, items[0], health], wrong, context);
   assert.equal(next.wordStats.health.attempts, 1);
   assert.equal(next.wordStats.health.mistakes, 1);
+  assert.equal(next.wordStats.mountains.attempts, 1);
   assert.equal(next.wordStats.mountains.mistakes, 1);
   assert.deepEqual(next.logs[0].wrongWordIds, ["health", "mountains"]);
   assert.deepEqual(next.logs[0].wrongChars, [
@@ -69,9 +69,8 @@ test("同题的两个考察字都错或单独搭配字写错，均只计一道�
 test("历史复习整词计分，即使同词中的字已掌握也能重新判错", () => {
   const initial = createDefaultState(progress);
   initial.charStats.河 = { attempts: 1, mistakes: 0, streak: 1 };
-  const reviewed = new Map([["mountains", ["山"]]]);
   const wrong = new Set([charReviewKey("mountains", "河")]);
-  const next = applyReviewResult(initial, items.slice(0, 1), wrong, reviewed, { ...context, practiceMode: "history" });
+  const next = applyReviewResult(initial, items.slice(0, 1), wrong, { ...context, practiceMode: "history" });
   assert.equal(next.charStats.河.attempts, 2);
   assert.equal(next.charStats.河.mistakes, 1);
   assert.equal(isMasteredChar(next.charStats.河), false);
@@ -81,7 +80,7 @@ test("历史复习整词计分，即使同词中的字已掌握也能重新判�
 });
 
 test("补记修改原场次且不增加作答次数，重复提交不会重复累计错误", () => {
-  const state = applyReviewResult(createDefaultState(progress), items, new Set(), undefined, context);
+  const state = applyReviewResult(createDefaultState(progress), items, new Set(), context);
   const id = state.logs[0].id;
   const corrections = [{ wordId: "mountains", char: "山" }, { wordId: "green", char: "山" }];
   const words = new Map(items.map((item) => [item.word.id, item.word]));
@@ -97,17 +96,24 @@ test("补记修改原场次且不增加作答次数，重复提交不会重复�
   assert.equal(state.charStats["山"].mistakes, 0);
 });
 
-test("带提示且未评完整题的练习，补记实际计分字后只增加一次可判定错题", () => {
-  const reviewed = new Map([["mountains", ["山"]]]);
-  const initial = applyReviewResult(createDefaultState(progress), items.slice(0, 1), new Set(), reviewed, context);
-  assert.equal(initial.wordStats.mountains.attempts, 0);
-  const id = initial.logs[0].id;
+test("补记已有部分计分场次只接收当时的计分字，整题错误只累计一次", () => {
+  const id = "partial-review";
+  const date = "2026-11-03T12:00:00.000Z";
+  const initial = createDefaultState(progress);
+  initial.wordStats.mountains = { attempts: 0, mistakes: 0, streak: 0, lastReviewedAt: date };
+  initial.charStats.山 = { attempts: 1, mistakes: 0, streak: 1, lastReviewedAt: date, correctWordTexts: ["山河"] };
+  initial.logs = [{
+    ...context, id, date, wordIds: ["mountains"], wrongWordIds: [], wrongChars: [],
+    reviewedItems: [{ wordId: "mountains", wordText: "山河", reviewedChars: ["山"] }],
+  }];
   const words = new Map([["mountains", items[0].word]]);
   assert.equal(addMissedWrongChars(initial, id, [{ wordId: "mountains", char: "河" }], words), initial);
   const corrections = [{ wordId: "mountains", char: "山" }];
   const next = addMissedWrongChars(initial, id, corrections, words);
   assert.equal(next.wordStats.mountains.attempts, 1);
   assert.equal(next.wordStats.mountains.mistakes, 1);
+  assert.equal(next.charStats.山.attempts, 1);
+  assert.equal(next.charStats.山.mistakes, 1);
   assert.equal(next.logs.length, 1);
   assert.equal(addMissedWrongChars(next, id, corrections, words), next);
 });
@@ -126,7 +132,7 @@ test("历史错题满五天后才再练，已掌握题退出历史复习", (t) =
   t.mock.timers.setTime(firstMistake + fiveDays);
   const first = generateScreeningPractice(lessons, state);
   assert.deepEqual(first.map((item) => item.word), lessons[0].dictationWords);
-  const afterFirst = applyReviewResult(state, first, new Set(), undefined, { ...context, practiceMode: "history" });
+  const afterFirst = applyReviewResult(state, first, new Set(), { ...context, practiceMode: "history" });
   assert.equal(isMasteredQuestion(afterFirst.wordStats.mountains), false);
   assert.deepEqual(generateScreeningPractice(lessons, afterFirst), []);
   t.mock.timers.setTime(firstMistake + 2 * fiveDays - 1);
@@ -134,7 +140,7 @@ test("历史错题满五天后才再练，已掌握题退出历史复习", (t) =
   t.mock.timers.setTime(firstMistake + 2 * fiveDays);
   const second = generateScreeningPractice(lessons, afterFirst);
   assert.deepEqual(second.map((item) => item.word), lessons[0].dictationWords);
-  const mastered = applyReviewResult(afterFirst, second, new Set(), undefined, { ...context, practiceMode: "history" });
+  const mastered = applyReviewResult(afterFirst, second, new Set(), { ...context, practiceMode: "history" });
   t.mock.timers.setTime(firstMistake + 3 * fiveDays);
   assert.equal(isMasteredQuestion(mastered.wordStats.mountains), true);
   assert.deepEqual(generateScreeningPractice(lessons, mastered), []);
@@ -166,15 +172,12 @@ test("旧错字按新题到期复练，承接和题级错题共用配额", (t) =
   assert.equal(atDue.filter(({ reasons }) => reasons.includes("错题再练")).length, 5);
   assert.deepEqual(atDue.map(({ mistakeReview }) => mistakeReview), ["character", "word", "word", "word", "word", undefined]);
 
-  const hinted = applyReviewResult(state, [atDue[0]], new Set(), new Map([["mountains", ["山"]]]), context);
-  assert.equal(hinted.wordStats.mountains.attempts, 1);
-  assert.equal(getItems(hinted)[0].word.id, "mountains");
-
-  const finished = applyReviewResult(hinted, [atDue[0]], new Set(), undefined, context);
+  const historyContext = { ...context, practiceMode: "history" };
+  const finished = applyReviewResult(state, [atDue[0]], new Set(), historyContext);
   assert.equal(finished.wordStats.mountains.attempts, 2);
   assert.ok(!getItems(finished).some(({ word }) => word.id === "mountains"));
 
-  const missed = applyReviewResult(hinted, [atDue[0]], new Set([charReviewKey("mountains", "河")]), undefined, context);
+  const missed = applyReviewResult(state, [atDue[0]], new Set([charReviewKey("mountains", "河")]), historyContext);
   assert.equal(missed.wordStats.mountains.mistakes, 1);
   assert.ok(!getItems(missed).some(({ word }) => word.id === "mountains"));
   t.mock.timers.setTime(available + 120 * 60 * 60 * 1000);
@@ -300,7 +303,7 @@ test("历史复习先练到期错题，等待期间继续练新题，再复测�
     const items = nextItems();
     assert.deepEqual(items.map(({ word }) => word.chars), [[expectedChar]]);
     const wrongKeys = wrong ? [charReviewKey(items[0].word.id, expectedChar)] : [];
-    state = applyReviewResult(state, items, new Set(wrongKeys), undefined, { ...context, practiceMode: "history" });
+    state = applyReviewResult(state, items, new Set(wrongKeys), { ...context, practiceMode: "history" });
   };
   practice("山");
   practice("新", true);

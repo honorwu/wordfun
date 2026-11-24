@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { DictationWord, LessonSummary, WordIssueKind } from "../../shared/types.ts";
 import { addMissedWrongChars, applyReviewResult } from "../../shared/domain/reviews.ts";
 import type { MissedWrongCharCorrection } from "../../shared/domain/reviews.ts";
-import { charReviewKey, fullDictationCharsForWord, reviewCharsForWord } from "../../shared/domain/characters.ts";
+import { charReviewKey, fullDictationCharsForWord } from "../../shared/domain/characters.ts";
 import { toggleWordIssue } from "../../shared/domain/wordIssues.ts";
 import type { CorrectionItem, PracticeMode, PracticePhase } from "../features/practice/types";
 import type { StudentViewProps } from "../features/practice/StudentView";
@@ -16,7 +16,7 @@ export function useAppController() {
   const [practiceMode, setPracticeMode] = useState<PracticeMode>("lesson");
   const [phase, setPhase] = useState<PracticePhase>("dictating");
   const [wrongCharKeys, setWrongCharKeys] = useState<Set<string>>(() => new Set());
-  const [hintedWordIds, setHintedWordIds] = useState<Set<string>>(() => new Set());
+  const [pinyinShownWordIds, setPinyinShownWordIds] = useState<Set<string>>(() => new Set());
   const [correctionItems, setCorrectionItems] = useState<CorrectionItem[]>([]);
   const [savedMessage, setSavedMessage] = useState("");
   const [lastResult, setLastResult] = useState({ total: 0, wrongQuestions: 0, wrongChars: 0 });
@@ -31,7 +31,7 @@ export function useAppController() {
     setPracticeMode(nextMode);
     setPhase("dictating");
     setWrongCharKeys(new Set());
-    setHintedWordIds(new Set());
+    setPinyinShownWordIds(new Set());
     setCorrectionItems([]);
     setLastResult({ total: 0, wrongQuestions: 0, wrongChars: 0 });
   };
@@ -73,18 +73,6 @@ export function useAppController() {
   };
 
   const saveReview = () => {
-    const reviewedCharsByWord = new Map(
-      practiceItems.map((item) => {
-        if (practiceMode === "history") return [item.word.id, fullDictationCharsForWord(item.word)] as const;
-        const baseReviewChars = hintedWordIds.has(item.word.id)
-          ? reviewCharsForWord(item.word)
-          : fullDictationCharsForWord(item.word);
-        const explicitlyWrongChars = fullDictationCharsForWord(item.word).filter((char) =>
-          wrongCharKeys.has(charReviewKey(item.word.id, char)),
-        );
-        return [item.word.id, Array.from(new Set([...baseReviewChars, ...explicitlyWrongChars]))] as const;
-      }),
-    );
     const reviewedLessons = practiceMode === "lesson"
       ? [{ id: selectedLesson.id, title: selectedLesson.title }]
       : Array.from(
@@ -95,12 +83,12 @@ export function useAppController() {
             }),
           ).values(),
         );
-    const nextState = applyReviewResult(state, practiceItems, wrongCharKeys, reviewedCharsByWord, {
+    const nextState = applyReviewResult(state, practiceItems, wrongCharKeys, {
       practiceMode,
       lessons: reviewedLessons,
     });
     const nextCorrectionItems = practiceItems.flatMap(({ word, mistakeReview }) => {
-      const wrongChars = (reviewedCharsByWord.get(word.id) ?? [])
+      const wrongChars = fullDictationCharsForWord(word)
         .filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)))
         .map((char) => ({ char, mistakeCount: nextState.charStats[char]?.mistakes ?? 1 }));
       if (wrongChars.length === 0) return [];
@@ -115,7 +103,7 @@ export function useAppController() {
       wrongChars: new Set(nextCorrectionItems.flatMap((item) => item.wrongChars.map(({ char }) => char))).size,
     });
     setWrongCharKeys(new Set());
-    setHintedWordIds(new Set());
+    setPinyinShownWordIds(new Set());
     setPhase(nextCorrectionItems.length > 0 ? "correcting" : "done");
     setSavedMessage(nextCorrectionItems.length > 0 ? "批改结果已记录，请完成订正" : "批改结果已记录");
     window.setTimeout(() => setSavedMessage(""), 1800);
@@ -156,7 +144,7 @@ export function useAppController() {
       loading: practiceLoading && !practiceError,
       loadError: practiceError,
       onRetry: retryLoad,
-      correctionItems, hintedWordIds, lastResult,
+      correctionItems, pinyinShownWordIds, lastResult,
       lesson: selectedLesson,
       lessons: allLessons,
       mode: practiceMode,
@@ -165,7 +153,7 @@ export function useAppController() {
         setPhase("done");
         window.scrollTo({ top: 0, behavior: "smooth" });
       },
-      onRevealHint: (wordId) => setHintedWordIds((current) => new Set(current).add(wordId)),
+      onShowPinyin: (wordId) => setPinyinShownWordIds((current) => new Set(current).add(wordId)),
       onRestart: () => resetPractice(practiceMode),
       onSave: saveReview,
       onSelectLesson: setProgress,

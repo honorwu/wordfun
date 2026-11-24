@@ -6,17 +6,14 @@ export const applyReviewResult = (
   state: AppState,
   items: PracticeItem[],
   wrongCharKeys: Set<string>,
-  reviewedCharsByWord?: ReadonlyMap<string, readonly string[]>,
   context?: { practiceMode: "lesson" | "history"; lessons: Array<{ id: string; title: string }> },
 ): AppState => {
   const now = new Date().toISOString();
   const words = new Map(items.map(({ word }) => [word.id, word]));
   const reviewedItems = [...words.values()].map((word) => {
-    const allChars = fullDictationCharsForWord(word);
-    const wrongChars = allChars.filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)));
-    const reviewed = context?.practiceMode === "history" ? undefined : reviewedCharsByWord?.get(word.id);
-    const reviewedChars = reviewed ? allChars.filter((char) => reviewed.includes(char) || wrongChars.includes(char)) : allChars;
-    return { word, wrongChars, reviewedChars, isFullReview: reviewedChars.length === allChars.length };
+    const reviewedChars = fullDictationCharsForWord(word);
+    const wrongChars = reviewedChars.filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)));
+    return { word, wrongChars, reviewedChars };
   });
   const reviewLogs =
     reviewedItems.length > 0
@@ -45,14 +42,13 @@ export const applyReviewResult = (
   };
   const sessionCharReviews = new Map<string, { isWrong: boolean; correctWordTexts: Set<string>; wrongWordTexts: Set<string> }>();
 
-  for (const { word, wrongChars, reviewedChars, isFullReview } of reviewedItems) {
+  for (const { word, wrongChars, reviewedChars } of reviewedItems) {
     const isWrong = wrongChars.length > 0;
     const previous = next.wordStats[word.id] ?? { attempts: 0, mistakes: 0, streak: 0 };
-    // 部分提示且没有标错时，只有练习记录，没有整题做对的证据。
     next.wordStats[word.id] = {
-      attempts: previous.attempts + Number(isWrong || isFullReview),
+      attempts: previous.attempts + 1,
       mistakes: previous.mistakes + (isWrong ? 1 : 0),
-      streak: isWrong ? 0 : previous.streak + Number(isFullReview),
+      streak: isWrong ? 0 : previous.streak + 1,
       lastReviewedAt: now,
       lastMistakeAt: isWrong ? now : previous.lastMistakeAt,
     };

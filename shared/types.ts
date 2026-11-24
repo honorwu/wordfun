@@ -78,7 +78,7 @@ export interface ReviewActivity {
 }
 
 export interface WordStat {
-  // 仅累计可判定整题正误的作答。部分提示且无错的练习仍记录 lastReviewedAt。
+  // 新练习每题累计一次作答。旧练习的部分计分只累计已判定整题正误的作答。
   attempts: number;
   mistakes: number;
   streak: number;
@@ -112,6 +112,7 @@ export interface ReviewLog {
   reviewedItems?: Array<{
     wordId: string;
     wordText: string;
+    // 新练习记录题词的全部汉字，已有场次保留当时的计分范围。
     reviewedChars: string[];
   }>;
 }
