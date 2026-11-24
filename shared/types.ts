@@ -140,6 +140,7 @@ export interface PracticeItem {
   word: DictationWord;
   score: number;
   reasons: string[];
+  mistakeReview?: "word" | "character";
 }
 
 export interface DictationCompanion {

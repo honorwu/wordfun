@@ -37,9 +37,6 @@ export const learnedTextbookChars = (books: readonly BookCharacterIndex[], progr
     .map(([char]) => char)));
 };
 
-export const textbookCharacterSet = (books: readonly BookCharacterIndex[]) =>
-  new Set(books.flatMap((book) => Object.keys(book.characters)));
-
 export const groupCharacterMastery = (
   books: readonly BookCharacterIndex[],
   progress: LessonSummary,

@@ -129,7 +129,7 @@ export function QuestionMasteryPanel({ charStats, inheritedMasteredChars, questi
       {visibleQuestions.length ? (
         <>
           <p className="muted">{status === "inherited"
-            ? "这些题的考察字沿用旧库逐字成绩。整题评出对错后，按实际结果计分。"
+            ? "以往的逐字记录显示，这些题的考察字都已掌握。完成整题默写后，按整题结果计分。"
             : "下划线标出考察字，红字标出有记录的错字。"}</p>
           <ul className="mastery-question-list" aria-label={labels[status]}>
             {visibleQuestions.map(({ question, lesson }) => {

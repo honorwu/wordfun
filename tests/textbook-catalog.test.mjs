@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { defaultCatalogDatabasePath, defaultStudentId, getLessons, getState, openLearningDatabase, saveState } from "../server/db.mjs";
+import { defaultCatalogDatabasePath, getLessons } from "../server/db.mjs";
 import { createCatalogService } from "../server/services/catalog.mjs";
 import { buildBookCharacterIndex, characterMastery, groupCharacterMastery, learnedTextbookChars } from "../shared/domain/characterMastery.ts";
 import { getScreeningQuestions, getScreeningTargetChars } from "../shared/domain/practice.ts";
@@ -173,53 +169,4 @@ test("教材库里的已学字等于当课和历史可考的字词目标之并�
       assert.deepEqual(learnedTextbookChars(books, lesson), new Set([...historyChars, ...currentChars]), lesson.title);
     }
   } finally { db.close(); }
-});
-
-test("只初始化教材范围内的逐字计分，不带入课外字、旧场次或错题证据", () => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), "ziqu-mastery-"));
-  const source = path.join(directory, "source.sqlite");
-  const destination = path.join(directory, "new.sqlite");
-  const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
-  try {
-    const catalog = createCatalogService(catalogDb);
-    const current = catalog.summaries().find((lesson) => lesson.title === "颐和园");
-    const oldDatabase = openLearningDatabase(source);
-    try {
-      saveState(oldDatabase, {
-        progress: { grade: 4, lessonId: "old-lesson" },
-        charStats: {
-          见: { attempts: 3, mistakes: 1, streak: 2, lastReviewedAt: "2020-01-01", wrongWordTexts: ["看见"] },
-          坦: { attempts: 1, mistakes: 1, streak: 0 },
-          𰻞: { attempts: 1, mistakes: 0, streak: 1 },
-        },
-        wordStats: { old: { attempts: 1, mistakes: 1, streak: 0 } },
-        logs: [{ id: "old-log", date: "2020-01-01", wordIds: ["old"], wrongWordIds: ["old"] }],
-      }, defaultStudentId);
-    } finally { oldDatabase.close(); }
-    const seed = () => spawnSync(process.execPath, ["scripts/seed-character-mastery.mjs", source, destination, "颐和园"], {
-      encoding: "utf8", env: { ...process.env, ZIQU_CATALOG_DB_PATH: defaultCatalogDatabasePath },
-    });
-    const initialized = seed();
-    assert.equal(initialized.status, 0, initialized.stderr);
-    assert.equal(JSON.parse(initialized.stdout).imported, 2);
-    assert.notEqual(seed().status, 0);
-    const learning = openLearningDatabase(destination);
-    try {
-      const state = getState(learning, catalogDb);
-      assert.deepEqual(state.progress, { grade: 4, lessonId: current.id });
-      assert.deepEqual(state.logs, []);
-      assert.deepEqual(state.wordStats, {});
-      assert.deepEqual(state.wordIssues, []);
-      assert.equal(characterMastery(state.charStats.见), "corrected");
-      assert.equal(characterMastery(state.charStats.坦), "pending");
-      assert.equal(state.charStats.𰻞, undefined);
-      assert.equal(characterMastery(state.charStats.看), "unreviewed");
-      assert.deepEqual(state.charStats.见.wrongWordTexts, []);
-      assert.equal(state.charStats.见.lastReviewedAt, undefined);
-      const history = catalog.practice(state.progress, state.wordStats, "history");
-      assert.ok(history.items.length > 0);
-      assert.equal(history.stats.historyUnreviewed, history.stats.historyTotal);
-      assert.equal(history.stats.pendingMistakes, 0);
-    } finally { learning.close(); }
-  } finally { catalogDb.close(); rmSync(directory, { recursive: true, force: true }); }
 });

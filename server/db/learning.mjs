@@ -81,7 +81,7 @@ export const getState = (learningDb, catalogDb, studentId = defaultStudentId, { 
     charStats[row.char] = {
       attempts: row.attempts,
       mistakes: row.mistakes,
-      streak: row.streak ?? (row.mistakes === 0 ? row.attempts : 0),
+      streak: row.streak,
       correctWordTexts: [],
       wrongWordTexts: [],
       lastReviewedAt: row.last_reviewed_at || undefined,

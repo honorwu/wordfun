@@ -771,6 +771,7 @@ select:focus-visible {
 .card-meta {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 9px;
   color: #606779;
   font-size: 12px;
@@ -789,6 +790,16 @@ select:focus-visible {
   border-radius: 8px;
   color: var(--practice-dark, var(--purple-dark));
   background: var(--practice-soft, var(--purple-soft));
+  white-space: nowrap;
+}
+
+.mistake-review-label {
+  padding: 2px 7px;
+  border-radius: 8px;
+  color: #854514;
+  background: #fff0da;
+  font-size: 12px;
+  font-weight: 700;
   white-space: nowrap;
 }
 

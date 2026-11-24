@@ -164,6 +164,7 @@ test("旧错字按新题到期复练，承接和题级错题共用配额", (t) =
   const atDue = getItems(state);
   assert.deepEqual(atDue.map(({ word }) => word.id), ["mountains", ...dueIds, "fresh"]);
   assert.equal(atDue.filter(({ reasons }) => reasons.includes("错题再练")).length, 5);
+  assert.deepEqual(atDue.map(({ mistakeReview }) => mistakeReview), ["character", "word", "word", "word", "word", undefined]);
 
   const hinted = applyReviewResult(state, [atDue[0]], new Set(), new Map([["mountains", ["山"]]]), context);
   assert.equal(hinted.wordStats.mountains.attempts, 1);
@@ -260,7 +261,9 @@ test("历史复习按原题保留语境，同字或同词的另一课题目独�
   assert.equal(items[0].word.textbookHint, "这个〔　〕很坚固。");
   assert.equal(items[0].word.lessonId, "recent");
   delete state.wordStats["textbook-later"];
-  assert.deepEqual(generateScreeningPractice(lessons, state).map(({ word }) => word.id), ["base", "textbook", "textbook-later"]);
+  assert.deepEqual(generateScreeningPractice(lessons, state).map(({ word, mistakeReview }) => [word.id, mistakeReview]), [
+    ["base", "word"], ["textbook", "word"], ["textbook-later", undefined],
+  ]);
 });
 
 test("历史整词不借组词引入教材范围外的字", () => {

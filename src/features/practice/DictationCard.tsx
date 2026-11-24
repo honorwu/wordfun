@@ -2,6 +2,7 @@ import { Check, Eye, Volume2, X } from "lucide-react";
 import { Fragment } from "react";
 import type { PracticeItem, WordIssue, WordIssueKind } from "../../../shared/types.ts";
 import type { SpeechPlayback } from "./types";
+import { mistakeReviewLabels } from "./types";
 import { charReviewKey, fullDictationCharsForWord, reviewCharsForWord } from "../../../shared/domain/index.ts";
 import { WordIssueControls } from "../../components/WordIssues";
 
@@ -68,6 +69,7 @@ export function DictationCard({
     >
       <div className="card-meta">
         <span className="question-number">{String(index + 1).padStart(2, "0")}</span>
+        {item.mistakeReview && <span className="mistake-review-label">{mistakeReviewLabels[item.mistakeReview]}</span>}
         <span>{lessonSource}</span>
         {item.reasons.includes("课文取词") ? <span className="card-source-label">课文取词</span> : null}
         {reviewing ? <b>{hasWrong ? "有错字" : "待批改"}</b> : active ? <b className="current-item-badge">当前题</b> : null}

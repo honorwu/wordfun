@@ -66,7 +66,7 @@ export function StudentView({
 }: StudentViewProps) {
   const [finishArmed, setFinishArmed] = useState(false);
   const [activeItemIndex, setActiveItemIndex] = useState(0);
-  const mistakeWordCount = mode === "history" ? items.filter((item) => item.reasons.includes("错题再练")).length : 0;
+  const mistakeWordCount = items.filter((item) => item.mistakeReview).length;
   const safeActiveItemIndex = Math.max(0, Math.min(activeItemIndex, Math.max(0, items.length - 1)));
   const isPoetryMode = mode === "lesson" && lesson.lessonKind === "classical_poetry";
   const { speechPlayback, stopPlayback, startDoublePlayback } = useSpeechPlayback({ items, isPoetryMode, phase, onActivate: setActiveItemIndex });
@@ -294,7 +294,7 @@ export function StudentView({
             {phase === "dictating" && (
               <div className="practice-details">
                 <p>{isPoetryMode ? "按题目拼音默写整篇" : mode === "history"
-                  ? `整词默写 · 原题复测 ${mistakeWordCount} 题 · 待完成 ${items.length - mistakeWordCount} 题`
+                  ? `整词默写 · 错题复练 ${mistakeWordCount} 题 · 待完成 ${items.length - mistakeWordCount} 题`
                   : "听词语，写下每个字和拼音"}</p>
                 {!isPoetryMode && (
                   <div className="keyboard-guide" aria-label="键盘快捷操作">

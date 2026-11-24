@@ -272,11 +272,15 @@ export const generateScreeningPractice = (
   const newOffset = rotationSeed * newLimit;
   const needsFirstResult = unreviewed.slice(newOffset, newOffset + newLimit);
 
-  return [...mistakes, ...needsFirstResult].map((word, index) => ({
-    word,
-    score: targetCount - index,
-    reasons: [index < mistakes.length ? "错题再练" : "待完成整题", textbookWordIds.has(word.id) ? "词语表" : "课文取词"],
-  }));
+  return [...mistakes, ...needsFirstResult].map((word, index) => {
+    const isMistakeReview = index < mistakes.length;
+    return {
+      word,
+      score: targetCount - index,
+      reasons: [isMistakeReview ? "错题再练" : "待完成整题", textbookWordIds.has(word.id) ? "词语表" : "课文取词"],
+      ...(isMistakeReview && { mistakeReview: state.wordStats[word.id]?.mistakes ? "word" : "character" }),
+    };
+  });
 };
 
 export const summarizeCoverage = (words: DictationWord[], state: AppState) => {

@@ -1,6 +1,7 @@
 import { Check } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { CorrectionItem } from "./types";
+import { mistakeReviewLabels } from "./types";
 import { hanCharacterCount } from "./titleMask";
 
 export function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; onFinish: () => void }) {
@@ -44,6 +45,7 @@ export function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; o
           return <article className={`correction-card ${isLongText ? "long-text" : ""}`} key={item.wordId}>
             <div className="correction-card-heading">
               <span className="correction-number">{String(index + 1).padStart(2, "0")}</span>
+              {item.mistakeReview && <span className="mistake-review-label">{mistakeReviewLabels[item.mistakeReview]}</span>}
               <span>{item.wrongChars.length > 1 ? `${item.wrongChars.length} 个错字` : "1 个错字"}</span>
             </div>
             <div className="correction-answer">

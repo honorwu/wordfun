@@ -3,7 +3,6 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dataDir, defaultCatalogDatabasePath, defaultLearningDatabasePath } from "../config.mjs";
 import { CATALOG_FORMAT, catalogSchemaSql, learningSchemaSql } from "./schema.mjs";
-import { migrateLearningDatabase } from "./migrations.mjs";
 import { hasTable, oneRow } from "./query.mjs";
 
 export const ensureDataDir = () => {
@@ -22,8 +21,7 @@ export const openCatalogDatabase = (databasePath = defaultCatalogDatabasePath) =
 
 export const openLearningDatabase = (databasePath = defaultLearningDatabasePath) => {
   const db = openDatabaseWithSchema(databasePath, learningSchemaSql);
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
-  migrateLearningDatabase(db);
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA optimize;");
   return db;
 };
 

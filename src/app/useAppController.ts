@@ -99,12 +99,12 @@ export function useAppController() {
       practiceMode,
       lessons: reviewedLessons,
     });
-    const nextCorrectionItems = practiceItems.flatMap(({ word }) => {
+    const nextCorrectionItems = practiceItems.flatMap(({ word, mistakeReview }) => {
       const wrongChars = (reviewedCharsByWord.get(word.id) ?? [])
         .filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)))
         .map((char) => ({ char, mistakeCount: nextState.charStats[char]?.mistakes ?? 1 }));
       if (wrongChars.length === 0) return [];
-      return [{ wordId: word.id, text: word.text, pinyin: word.pinyin, wrongChars, mistakeCount: nextState.wordStats[word.id].mistakes }];
+      return [{ wordId: word.id, text: word.text, pinyin: word.pinyin, mistakeReview, wrongChars, mistakeCount: nextState.wordStats[word.id].mistakes }];
     });
     setState(nextState);
     invalidateParentData();
