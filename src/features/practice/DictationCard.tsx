@@ -12,6 +12,7 @@ export function DictationCard({
   pinyinShown,
   index,
   item,
+  maskedHint,
   onActivate,
   onShowPinyin,
   onTogglePlayback,
@@ -27,6 +28,7 @@ export function DictationCard({
   pinyinShown: boolean;
   index: number;
   item: PracticeItem;
+  maskedHint?: string;
   onActivate: () => void;
   onShowPinyin: () => void;
   onTogglePlayback: () => void;
@@ -93,7 +95,7 @@ export function DictationCard({
           <Eye size={17} />{pinyinShown ? "拼音已显示" : "显示拼音"}
         </button>
       </div> : null}
-      <TextbookHint text={item.word.textbookHint} />
+      <TextbookHint text={maskedHint ?? item.word.textbookHint} />
       <div className="word-cells" aria-label={`第 ${index + 1} 题`}>
         {chars.map((char, charIndex) => {
           const isWrong = wrongCharKeys.has(charReviewKey(item.word.id, char));

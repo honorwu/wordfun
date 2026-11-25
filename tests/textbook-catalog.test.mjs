@@ -5,6 +5,7 @@ import { defaultCatalogDatabasePath, getLessons } from "../server/db.mjs";
 import { createCatalogService } from "../server/services/catalog.mjs";
 import { buildBookCharacterIndex, characterMastery, groupCharacterMastery, learnedTextbookChars } from "../shared/domain/characterMastery.ts";
 import { getScreeningQuestions, getScreeningTargetChars } from "../shared/domain/practice.ts";
+import { maskedRoundHints } from "../src/features/practice/hintMask.ts";
 
 test("新词库仅包含五册材料，课次、册末词和可用提示完整对应", () => {
   const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
@@ -67,7 +68,7 @@ test("新词库仅包含五册材料，课次、册末词和可用提示完整�
   } finally { db.close(); }
 });
 
-test("同一道题在不同题目组合中沿用 SQLite 保存的挖空语境", () => {
+test("当课和历史用拼音显示语境中的本轮题词，保留 SQLite 保存的原提示", () => {
   const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
   try {
     const catalog = createCatalogService(db);
@@ -77,18 +78,83 @@ test("同一道题在不同题目组合中沿用 SQLite 保存的挖空语境", 
     const next = lessons[lessonIndex + 1];
     const currentItems = catalog.practice({ grade: current.grade, lessonId: current.id }, {}).items;
     const eyes = currentItems.find(({ word }) => word.text === "眼睛").word;
+    const head = currentItems.find(({ word }) => word.text === "头顶").word;
     const stored = db.prepare("SELECT hint_text FROM questions WHERE id = ?").get(eyes.id).hint_text;
+    const storedHead = db.prepare("SELECT hint_text FROM questions WHERE id = ?").get(head.id).hint_text;
     assert.equal(stored, "你们的妈妈头顶上有两只大〔　〕");
-    assert.ok(currentItems.some(({ word }) => word.text === "头顶"));
+    assert.equal(storedHead, "你们的妈妈〔　〕上有两只大眼睛");
+
+    const maskedCurrent = maskedRoundHints(currentItems);
+    assert.equal(maskedCurrent.get(eyes.id), "你们的妈妈 tóu dǐng 上有两只大〔　〕");
+    assert.equal(maskedCurrent.get(head.id), "你们的妈妈〔　〕上有两只大 yǎn jing");
     assert.equal(eyes.textbookHint, stored);
+    assert.equal(head.textbookHint, storedHead);
 
     const progress = { grade: next.grade, lessonId: next.id };
     const mastered = Object.fromEntries(getScreeningQuestions(getLessons(db), progress)
-      .filter(({ id }) => id !== eyes.id)
+      .filter(({ id }) => id !== eyes.id && id !== head.id)
       .map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }]));
-    const historyItems = catalog.practice(progress, mastered, "history").items;
-    assert.deepEqual(historyItems.map(({ word }) => [word.id, word.textbookHint]), [[eyes.id, stored]]);
-    assert.ok(historyItems.every(({ historyGroup }) => historyGroup === "recent" || historyGroup === "basic"));
+    const pair = catalog.practice(progress, mastered, "history").items;
+    assert.deepEqual(new Map(pair.map(({ word }) => [word.id, word.textbookHint])), new Map([[eyes.id, stored], [head.id, storedHead]]));
+    assert.deepEqual(maskedRoundHints(pair), new Map([
+      [eyes.id, "你们的妈妈 tóu dǐng 上有两只大〔　〕"],
+      [head.id, "你们的妈妈〔　〕上有两只大 yǎn jing"],
+    ]));
+    assert.ok(pair.every(({ historyGroup }) => historyGroup === "recent" || historyGroup === "basic"));
+
+    const single = catalog.practice(progress, { ...mastered, [head.id]: { attempts: 1, mistakes: 0, streak: 1 } }, "history").items;
+    assert.deepEqual(single.map(({ word }) => [word.id, word.textbookHint]), [[eyes.id, stored]]);
+    assert.equal(maskedRoundHints(single).size, 0);
+    assert.equal(db.prepare("SELECT hint_text FROM questions WHERE id = ?").get(eyes.id).hint_text, stored);
+  } finally { db.close(); }
+});
+
+test("重叠和反复出现的题词都转成拼音，保留原挖空、标点和空白", () => {
+  const item = (text, pinyin, textbookHint, lessonId = "other-lesson") => ({
+    word: { id: text, text, pinyin, textbookHint, lessonId },
+    score: 0,
+    reasons: [],
+  });
+  const hint = "看山河流向远方，　山河流  经村边。云掠过云彩，𠮷，哈哈哈。山坡和河边。山〔　〕河，另一处〔　〕。";
+  const items = [
+    item("纸鸢", "zhǐ yuān", hint, "current-lesson"),
+    item("山河", "shān hé"),
+    item("河流", "hé liú"),
+    item("云", "yún", "天上飘着一朵〔　〕。"),
+    item("𠮷", "jí"),
+    item("哈哈", "hā hā"),
+  ];
+
+  assert.deepEqual(maskedRoundHints(items), new Map([
+    ["纸鸢", "看 shān hé liú 向远方，　shān hé liú  经村边。yún 掠过 yún 彩，jí，hā hā hā。山坡和河边。山〔　〕河，另一处〔　〕。"],
+  ]));
+  assert.equal(items[0].word.textbookHint, hint);
+});
+
+test("历史同卷出现同形异音的题词，语境优先使用本课读音", () => {
+  const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
+  try {
+    const catalog = createCatalogService(db);
+    const lessons = catalog.summaries();
+    const selected = lessons.find((lesson) => lesson.title === "铺满金色巴掌的水泥道");
+    const progress = { grade: selected.grade, lessonId: selected.id };
+    const previous = getScreeningQuestions(getLessons(db), progress);
+    const mark = previous.find(({ lessonTitle, text }) => lessonTitle === "不懂就要问" && text === "圈");
+    const pen = previous.find(({ lessonTitle, text }) => lessonTitle === "寓言二则" && text === "圈");
+    const plug = previous.find(({ lessonTitle, text }) => lessonTitle === "寓言二则" && text === "堵上");
+    assert.equal(mark.pinyin, "quān");
+    assert.equal(pen.pinyin, "juàn");
+    const selectedIds = new Set([mark.id, pen.id, plug.id]);
+    const mastered = Object.fromEntries(previous
+      .filter(({ id }) => !selectedIds.has(id))
+      .map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }]));
+    const { items } = catalog.practice(progress, mastered, "history");
+    assert.deepEqual(new Set(items.map(({ word }) => word.id)), selectedIds);
+
+    const expectedHint = "他赶紧〔　〕那个窟窿，把羊 juàn 修得结结实实的。";
+    assert.equal(maskedRoundHints(items).get(plug.id), expectedHint);
+    assert.equal(maskedRoundHints([...items].reverse()).get(plug.id), expectedHint);
+    assert.equal(plug.textbookHint, "他赶紧〔　〕那个窟窿，把羊圈修得结结实实的。");
   } finally { db.close(); }
 });
 

@@ -7,6 +7,7 @@ import { findWordIssue } from "../../../shared/domain/wordIssues.ts";
 import { gradeNames } from "../../data/metadata";
 import { termLabel, lessonNumberLabel, shortBookLabel, availableGrades } from "../../lib/lessonPresentation";
 import { maskLessonTitle } from "./titleMask";
+import { maskedRoundHints } from "./hintMask";
 import { CorrectionView } from "./CorrectionView";
 import { PoetryCard } from "./PoetryCard";
 import { DictationCard } from "./DictationCard";
@@ -79,6 +80,7 @@ export function StudentView({
   const terms = Array.from(new Set(lessons.filter((item) => item.grade === lesson.grade).map((item) => item.unit))).sort();
   const scopedLessons = lessons.filter((item) => item.grade === lesson.grade && item.unit === lesson.unit);
   const bookLabelsByLesson = useMemo(() => new Map(lessons.map((item) => [item.id, shortBookLabel(item)])), [lessons]);
+  const maskedHints = useMemo(() => maskedRoundHints(items), [items]);
   const titleMaskWords = isPoetryMode
     ? (lesson.classicalTexts ?? []).map((poem) => ({ text: poem.title, pinyin: poem.titlePinyin }))
     : items.map((item) => item.word);
@@ -316,7 +318,9 @@ export function StudentView({
           ) : null}
 
           {phase === "dictating" && !isPoetryMode && items.some((item) => item.word.textbookHint) ? (
-            <p className="muted sentence-guide">默写<span className="textbook-hint-blank">（　）</span>里的词语。</p>
+            <p className="muted sentence-guide">
+              默写<span className="textbook-hint-blank">（　）</span>里的词语。{maskedHints.size > 0 && "句中其他要默写的词用拼音显示。"}
+            </p>
           ) : null}
 
           <div className={`dictation-grid ${isPoetryMode ? "poetry-grid" : ""}`}>
@@ -341,6 +345,7 @@ export function StudentView({
                   index={globalIndex}
                   item={item}
                   key={`${item.word.id}-${globalIndex}`}
+                  maskedHint={phase === "dictating" ? maskedHints.get(item.word.id) : undefined}
                   pinyinShown={pinyinShownWordIds.has(item.word.id)}
                   onActivate={() => activateItem(globalIndex)}
                   onTogglePlayback={() => void startDoublePlayback(globalIndex)}
