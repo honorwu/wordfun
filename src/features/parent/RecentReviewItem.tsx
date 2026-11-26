@@ -1,36 +1,28 @@
-import { ClipboardCheck } from "lucide-react";
+import { ClipboardCheck, Eye } from "lucide-react";
 import type { DictationWord, LessonSummary, ReviewLog } from "../../../shared/types.ts";
-import { isWithinReviewCorrectionWindow } from "../../../shared/domain/reviewPolicy.ts";
-import { lessonLabel } from "../../lib/lessonPresentation";
+import { canSupplementReview } from "../../../shared/domain/reviewPolicy.ts";
 import { formatDate } from "../../lib/dates";
+import { reviewRecordLessonText, reviewRecordModeLabel } from "./reviewRecord";
 
 export function RecentReviewItem({
   lessons,
   log,
   correctionNow,
-  onOpenCorrection,
+  onOpenReview,
   wordById,
 }: {
   lessons: LessonSummary[];
   log: ReviewLog;
   correctionNow: number;
-  onOpenCorrection: () => void;
+  onOpenReview: () => void;
   wordById: Map<string, DictationWord>;
 }) {
   const wrongWordsWithCharDetails = new Set((log.wrongChars ?? []).map((item) => item.wordId));
-  const reviewedLessons = (log.lessons ?? []).map((reference) => ({
-    reference,
-    lesson: lessons.find((lesson) => lesson.id === reference.id),
-  }));
-  const lessonText = reviewedLessons.length === 0
-    ? "课文信息未记录"
-    : reviewedLessons
-        .slice(0, 2)
-        .map(({ reference, lesson }) => lesson ? lessonLabel(lesson) : reference.title)
-        .join("、") + (reviewedLessons.length > 2 ? ` 等 ${reviewedLessons.length} 课` : "");
   const wrongChars = Array.from(new Set((log.wrongChars ?? []).map((item) => item.char)));
   const undetailedWrongWordIds = log.wrongWordIds.filter((wordId) => !wrongWordsWithCharDetails.has(wordId));
-  const undetailedWrongWordText = undetailedWrongWordIds.map((id) => wordById.get(id)?.text).filter(Boolean).join("、");
+  const undetailedWrongWordText = undetailedWrongWordIds.map((id) =>
+    log.reviewedItems?.find(({ wordId }) => wordId === id)?.wordText ?? wordById.get(id)?.text,
+  ).filter(Boolean).join("、");
   const wrongSummary = wrongChars.length === 0 && undetailedWrongWordIds.length === 0
     ? "全部正确"
     : [
@@ -39,28 +31,28 @@ export function RecentReviewItem({
           ? `另有 ${undetailedWrongWordIds.length} 题旧版整词错误${undetailedWrongWordText ? `：${undetailedWrongWordText}` : ""}`
           : "",
       ].filter(Boolean).join("；");
-  const modeText = log.practiceMode === "lesson" ? "当课复习" : log.practiceMode === "history" ? "历史复习" : "旧记录";
-  const canSupplementMistakes = (log.practiceMode === "lesson" || log.practiceMode === "history")
-    && isWithinReviewCorrectionWindow(log.date, correctionNow);
+  const modeText = reviewRecordModeLabel(log);
+  const date = formatDate(log.date);
+  const canSupplement = canSupplementReview(log, correctionNow);
+  const actionLabel = canSupplement ? "补记错字" : "查看默写";
+  const ActionIcon = canSupplement ? ClipboardCheck : Eye;
 
   return (
     <div className="recent-item">
-      <div className="recent-item-heading"><time dateTime={log.date}>{formatDate(log.date)}</time><b className={`review-mode ${log.practiceMode ?? "legacy"}`}>{modeText}</b></div>
-      <strong className="recent-lesson">{lessonText}</strong>
+      <div className="recent-item-heading"><time dateTime={log.date}>{date}</time><b className={`review-mode ${log.practiceMode ?? "legacy"}`}>{modeText}</b></div>
+      <strong className="recent-lesson">{reviewRecordLessonText(log, lessons)}</strong>
       <small>{log.wordIds.length} 项 · {wrongSummary}</small>
-      {canSupplementMistakes ? (
-        <div className="recent-item-actions">
-          <button
-            aria-label={`打开${modeText}错字补记页面，${formatDate(log.date)}`}
-            className="supplement-mistakes-button"
-            id={`review-correction-open-${log.id}`}
-            type="button"
-            onClick={onOpenCorrection}
-          >
-            <ClipboardCheck size={15} />补记错字
-          </button>
-        </div>
-      ) : null}
+      <div className="recent-item-actions">
+        <button
+          aria-label={`${actionLabel}，${modeText}，${date}`}
+          className="review-open-button"
+          id={`review-open-${log.id}`}
+          type="button"
+          onClick={onOpenReview}
+        >
+          <ActionIcon size={15} />{actionLabel}
+        </button>
+      </div>
     </div>
   );
 }

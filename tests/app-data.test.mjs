@@ -93,6 +93,63 @@ test("启动拒绝格式不符的学习库，保留原文件", (t) => {
   assert.deepEqual(readFileSync(filename), original);
 });
 
+test("旧学习库可保存新题面，词库更新和补记后仍可看到当场的词语与古诗", (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "ziqu-review-presentation-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const catalogPath = path.join(directory, "catalog.sqlite");
+  const learningPath = path.join(directory, "learning.sqlite");
+  copyFileSync(defaultCatalogDatabasePath, catalogPath);
+  const catalogDb = new DatabaseSync(catalogPath);
+  const previousLearningDb = new DatabaseSync(learningPath);
+  try {
+    previousLearningDb.exec(learningSchemaSql);
+    previousLearningDb.exec("DROP TABLE review_log_word_presentations");
+  } finally { previousLearningDb.close(); }
+
+  const learningDb = openLearningDatabase(learningPath);
+  try {
+    const initial = getState(learningDb, catalogDb);
+    const lessons = getLessons(catalogDb);
+    const vocabulary = lessons.find((lesson) => lesson.dictationWords.some((word) => word.textbookHint && !lesson.textbookWords.includes(word)));
+    const regularItem = generateCurrentLessonPractice(lessons, { progress: { lessonId: vocabulary.id } })
+      .find(({ word, reasons }) => word.textbookHint && reasons.includes("课文取词"));
+    const poetry = lessons.find((lesson) => lesson.classicalTexts.length > 0);
+    const [poetryItem] = generatePoetryPractice(poetry);
+    assert.deepEqual(poetryItem.word.poem, poetry.classicalTexts[0]);
+    const gradedWords = applyReviewResult(initial, [{ ...regularItem, mistakeReview: "word" }], new Set(), {
+      practiceMode: "history", lessons: [{ id: vocabulary.id, title: vocabulary.title }],
+    });
+    const graded = applyReviewResult(gradedWords, [poetryItem], new Set(), {
+      practiceMode: "lesson", lessons: [{ id: poetry.id, title: poetry.title }],
+    });
+    const [poetryLog, vocabularyLog] = graded.logs;
+    const [regularSnapshot] = vocabularyLog.reviewedItems;
+    assert.equal(regularSnapshot.presentation.pinyin, regularItem.word.pinyin);
+    assert.equal(regularSnapshot.presentation.textbookHint, regularItem.word.textbookHint);
+    assert.equal(regularSnapshot.presentation.textbookExcerpt, true);
+    assert.equal(regularSnapshot.presentation.mistakeReview, "word");
+    assert.deepEqual(poetryLog.reviewedItems[0].presentation.poem, poetry.classicalTexts[0]);
+    saveState(learningDb, graded);
+
+    catalogDb.prepare("UPDATE questions SET text = ?, pinyin = ?, hint_text = ? WHERE id = ?")
+      .run("新词", "xīn cí", "更新后的语境", regularItem.word.id);
+    catalogDb.prepare("UPDATE questions SET pinyin = ? WHERE id = ?").run("新拼音", poetryItem.word.id);
+    const stored = getState(learningDb, catalogDb);
+    assert.deepEqual(stored.logs.find(({ id }) => id === vocabularyLog.id).reviewedItems, vocabularyLog.reviewedItems);
+    assert.deepEqual(stored.logs.find(({ id }) => id === poetryLog.id).reviewedItems, poetryLog.reviewedItems);
+
+    const currentWords = new Map(getLessons(catalogDb).flatMap(({ dictationWords }) => dictationWords).map((word) => [word.id, word]));
+    const missingMistake = { wordId: regularItem.word.id, char: regularSnapshot.reviewedChars[0] };
+    const corrected = addMissedWrongChars(stored, vocabularyLog.id, [missingMistake], currentWords);
+    const correctedLog = corrected.logs.find(({ id }) => id === vocabularyLog.id);
+    const changedSnapshot = { ...regularSnapshot, presentation: { ...regularSnapshot.presentation, pinyin: "xīn cí" } };
+    saveState(learningDb, { ...corrected, logs: [{ ...correctedLog, reviewedItems: [changedSnapshot] }] });
+    const replayed = getState(learningDb, catalogDb).logs.find(({ id }) => id === vocabularyLog.id);
+    assert.deepEqual(replayed.wrongChars, [missingMistake]);
+    assert.deepEqual(replayed.reviewedItems, vocabularyLog.reviewedItems);
+  } finally { learningDb.close(); catalogDb.close(); }
+});
+
 test("启动仅返回目录与当前题；历史记录延迟读取，增量保存保留已入库的场次", async () => {
   const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
   const learningDb = openLearningDatabase(":memory:");
@@ -171,6 +228,8 @@ test("启动仅返回目录与当前题；历史记录延迟读取，增量保�
 
     const parent = await (await post("/api/parent-data", {})).json();
     assert.equal(parent.logs.length, 3);
+    assert.deepEqual(parent.logs.find(({ id }) => id === originalLog.id).reviewedItems, originalLog.reviewedItems);
+    assert.equal(parent.logs.find(({ id }) => id === "imported-log").reviewedItems, undefined);
     assert.deepEqual(parent.questions, lessons.flatMap((lesson) => lesson.dictationWords));
     const loggedIds = new Set(parent.logs.flatMap((log) => log.wordIds));
     assert.ok(parent.questions.some(({ id }) => !loggedIds.has(id)));

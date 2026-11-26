@@ -445,7 +445,7 @@ select:focus-visible {
   gap: 4px 10px;
 }
 
-.practice-heading h2 {
+.practice-heading :is(h1, h2) {
   margin: 0;
   font-size: 18px;
 }
@@ -475,6 +475,18 @@ select:focus-visible {
 .practice-mode-history .sticky-actions .primary-button {
   background: linear-gradient(135deg, #2e846e, #1f6455);
   box-shadow: 0 8px 18px rgba(31, 100, 85, 0.24);
+}
+
+.review-record .sticky-actions button:disabled {
+  opacity: 0.55;
+  filter: none;
+  transform: none;
+}
+
+.review-save-error {
+  margin: 0;
+  color: var(--red);
+  font-size: 12px;
 }
 
 .keyboard-guide {
@@ -618,8 +630,8 @@ select:focus-visible {
   font-size: 12px;
 }
 
-.poetry-title h3 button:hover,
-.poetry-byline button:hover {
+.poetry-title h3 button:not(:disabled):hover,
+.poetry-byline button:not(:disabled):hover {
   border-color: #c8bce9;
   background: #f7f4ff;
 }
@@ -737,7 +749,7 @@ select:focus-visible {
   font-size: 29px;
 }
 
-.poetry-chars button:hover {
+.poetry-chars button:not(:disabled):hover {
   border-color: #c7eadf;
   background: #eff9f6;
 }
@@ -1023,6 +1035,20 @@ select:focus-visible {
 
 .word-cell.wrong button svg {
   background: var(--red);
+}
+
+.review-record button:disabled {
+  cursor: default;
+}
+
+.review-record .word-cell:not(.wrong) button:disabled {
+  border-color: var(--practice-line);
+  color: var(--ink);
+  background: var(--practice-card);
+}
+
+.review-record button.pending-wrong {
+  border-style: dashed;
 }
 
 .sticky-actions {
@@ -1552,7 +1578,7 @@ select:focus-visible {
   align-self: center;
 }
 
-.supplement-mistakes-button,
+.review-open-button,
 .show-more-logs {
   display: inline-flex;
   align-items: center;
@@ -1569,7 +1595,7 @@ select:focus-visible {
   font-weight: 700;
 }
 
-.supplement-mistakes-button:hover,
+.review-open-button:hover,
 .show-more-logs:hover {
   border-color: #b8a8df;
   background: #f5f1ff;
@@ -2261,11 +2287,14 @@ select:focus-visible {
   .toast,
   .print-report-button,
   .recent-item-actions,
+  .review-record > .secondary-button,
+  .review-record .sticky-actions,
   .show-more-logs {
     display: none !important;
   }
 
-  .parent-main {
+  .parent-main,
+  .review-record {
     width: 100%;
     margin: 0;
     padding: 0;

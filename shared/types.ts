@@ -21,6 +21,7 @@ export interface DictationWord {
   lessonTitle: string;
   category: CharacterCategory;
   textbookHint?: string;
+  poem?: ClassicalText;
 }
 
 export interface BookCharacterIndex {
@@ -101,6 +102,16 @@ export interface CharacterStat {
   lastMistakeAt?: string;
 }
 
+export interface ReviewItemPresentation {
+  pinyin: string;
+  lessonId: string;
+  lessonTitle: string;
+  textbookHint?: string;
+  textbookExcerpt?: boolean;
+  mistakeReview?: PracticeItem["mistakeReview"];
+  poem?: ClassicalText;
+}
+
 export interface ReviewLog {
   id: string;
   date: string;
@@ -114,6 +125,7 @@ export interface ReviewLog {
     wordText: string;
     // 新练习记录题词的全部汉字，已有场次保留当时的计分范围。
     reviewedChars: string[];
+    presentation?: ReviewItemPresentation;
   }>;
 }
 

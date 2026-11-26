@@ -3,7 +3,7 @@ import type { DictationWord, LessonSummary, WordIssueKind } from "../../shared/t
 import { addMissedWrongChars, applyReviewResult } from "../../shared/domain/reviews.ts";
 import type { MissedWrongCharCorrection } from "../../shared/domain/reviews.ts";
 import { charReviewKey, fullDictationCharsForWord } from "../../shared/domain/characters.ts";
-import { isWithinReviewCorrectionWindow } from "../../shared/domain/reviewPolicy.ts";
+import { canSupplementReview } from "../../shared/domain/reviewPolicy.ts";
 import { toggleWordIssue } from "../../shared/domain/wordIssues.ts";
 import type { CorrectionItem, PracticeMode, PracticePhase } from "../features/practice/types";
 import type { StudentViewProps } from "../features/practice/StudentView";
@@ -122,7 +122,7 @@ export function useAppController() {
 
   const supplementReviewMistakes = async (logId: string, corrections: MissedWrongCharCorrection[]) => {
     const previousLog = parentState.logs.find((log) => log.id === logId);
-    if (!previousLog || !isWithinReviewCorrectionWindow(previousLog.date)) {
+    if (!previousLog || !canSupplementReview(previousLog)) {
       throw new Error("只能补记完成后 3 天内的默写记录");
     }
     const nextState = addMissedWrongChars(parentState, logId, corrections, allKnownWords);

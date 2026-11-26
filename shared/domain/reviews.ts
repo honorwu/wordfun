@@ -1,6 +1,6 @@
 import type { AppState, DictationWord, PracticeItem, ReviewLog } from "../types.ts";
 import { fullDictationCharsForWord, hanChars, reviewCharsForWord, charReviewKey } from "./characters.ts";
-import { isWithinReviewCorrectionWindow, uniqueTexts } from "./reviewPolicy.ts";
+import { canSupplementReview, uniqueTexts } from "./reviewPolicy.ts";
 
 export const applyReviewResult = (
   state: AppState,
@@ -9,11 +9,20 @@ export const applyReviewResult = (
   context?: { practiceMode: "lesson" | "history"; lessons: Array<{ id: string; title: string }> },
 ): AppState => {
   const now = new Date().toISOString();
-  const words = new Map(items.map(({ word }) => [word.id, word]));
-  const reviewedItems = [...words.values()].map((word) => {
+  const itemsByWord = new Map(items.map((item) => [item.word.id, item]));
+  const reviewedItems = [...itemsByWord.values()].map(({ word, reasons, mistakeReview }) => {
     const reviewedChars = fullDictationCharsForWord(word);
     const wrongChars = reviewedChars.filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)));
-    return { word, wrongChars, reviewedChars };
+    const presentation = {
+      pinyin: word.pinyin,
+      lessonId: word.lessonId,
+      lessonTitle: word.lessonTitle,
+      ...(word.textbookHint && { textbookHint: word.textbookHint }),
+      ...(reasons.includes("课文取词") && { textbookExcerpt: true }),
+      ...(mistakeReview && { mistakeReview }),
+      ...(word.poem && { poem: { ...word.poem, lines: word.poem.lines.map((line) => ({ ...line })) } }),
+    };
+    return { word, wrongChars, reviewedChars, presentation };
   });
   const reviewLogs =
     reviewedItems.length > 0
@@ -26,10 +35,11 @@ export const applyReviewResult = (
             wordIds: reviewedItems.map(({ word }) => word.id),
             wrongWordIds: reviewedItems.filter(({ wrongChars }) => wrongChars.length > 0).map(({ word }) => word.id),
             wrongChars: reviewedItems.flatMap(({ word, wrongChars }) => wrongChars.map((char) => ({ wordId: word.id, char }))),
-            reviewedItems: reviewedItems.map(({ word, reviewedChars }) => ({
+            reviewedItems: reviewedItems.map(({ word, reviewedChars, presentation }) => ({
               wordId: word.id,
               wordText: word.text,
               reviewedChars,
+              presentation,
             })),
           },
         ]
@@ -152,8 +162,7 @@ export const addMissedWrongChars = (
   now = Date.now(),
 ): AppState => {
   const targetLog = state.logs.find((log) => log.id === logId);
-  if (!targetLog || (targetLog.practiceMode !== "lesson" && targetLog.practiceMode !== "history")) return state;
-  if (!isWithinReviewCorrectionWindow(targetLog.date, now)) return state;
+  if (!targetLog || !canSupplementReview(targetLog, now)) return state;
 
   const hasReviewSnapshot = Boolean(targetLog.reviewedItems && targetLog.reviewedItems.length > 0);
   const loggedWordIds = new Set(targetLog.wordIds);

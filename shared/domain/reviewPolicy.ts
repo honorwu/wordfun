@@ -1,4 +1,4 @@
-import type { CharacterStat, QuestionCarryover, WordStat } from "../types.ts";
+import type { CharacterStat, QuestionCarryover, ReviewLog, WordStat } from "../types.ts";
 
 const dayMs = 24 * 60 * 60 * 1000;
 export const masteryNetCorrect = 1;
@@ -12,6 +12,9 @@ export const isWithinReviewCorrectionWindow = (date: string, now = Date.now()) =
   const elapsed = now - Date.parse(date);
   return elapsed >= 0 && elapsed <= reviewCorrectionWindowMs;
 };
+
+export const canSupplementReview = (log: Pick<ReviewLog, "practiceMode" | "date">, now = Date.now()) =>
+  (log.practiceMode === "lesson" || log.practiceMode === "history") && isWithinReviewCorrectionWindow(log.date, now);
 
 export const uniqueTexts = (texts?: string[]) => Array.from(new Set(texts ?? []));
 

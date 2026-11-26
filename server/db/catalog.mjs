@@ -51,8 +51,9 @@ export const getLessons = (catalogDb) => {
       if (row.kind === "poem") {
         const { title, titlePinyin, author, dynasty } = JSON.parse(row.poem);
         const linePinyin = row.pinyin.split("\n");
-        const lines = row.text.split("\n").map((text, index) => ({ text, pinyin: linePinyin[index] }));
-        classicalTexts.push({ id: row.id.slice("poem-".length), title, titlePinyin, author: author ?? undefined, dynasty: dynasty ?? undefined, lines });
+        const lines = row.text.split("\n").map((text, index) => ({ text, pinyin: linePinyin[index] ?? "" }));
+        word.poem = { id: row.id.slice("poem-".length), title, titlePinyin, ...(author && { author }), ...(dynasty && { dynasty }), lines };
+        classicalTexts.push(word.poem);
         word.text = [title, dynasty, author, row.text].filter(Boolean).join("\n");
         word.pinyin = [titlePinyin, row.pinyin].filter(Boolean).join("\n");
         word.lessonTitle = title;

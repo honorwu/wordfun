@@ -11,6 +11,7 @@ import { maskedRoundHints } from "./hintMask";
 import { CorrectionView } from "./CorrectionView";
 import { PoetryCard } from "./PoetryCard";
 import { DictationCard } from "./DictationCard";
+import { ReviewCards } from "./ReviewCards";
 import { useSpeechPlayback } from "./useSpeechPlayback";
 import { idleSpeechPlayback } from "./types";
 
@@ -99,6 +100,17 @@ export function StudentView({
       ]),
     );
   }, [items]);
+  const questions = items.map(({ word, reasons, mistakeReview }, index) => {
+    const bookLabel = bookLabelsByLesson.get(word.lessonId);
+    const title = (phase === "dictating" && dictationLessonTitles.get(word.lessonId)) || word.lessonTitle;
+    return {
+      word,
+      lessonSource: bookLabel ? `${bookLabel} · ${title}` : title,
+      textbookExcerpt: reasons.includes("课文取词"),
+      mistakeReview,
+      poem: isPoetryMode ? word.poem ?? lesson.classicalTexts?.[index] : undefined,
+    };
+  });
 
   const pickFirstLesson = (grade: Grade, term?: number) => {
     const first = lessons.find((item) => item.grade === grade && (term ? item.unit === term : true));
@@ -323,43 +335,37 @@ export function StudentView({
             </p>
           ) : null}
 
-          <div className={`dictation-grid ${isPoetryMode ? "poetry-grid" : ""}`}>
-            {items.map((item, globalIndex) => {
-              const poem = lesson.classicalTexts?.[globalIndex];
-              const bookLabel = bookLabelsByLesson.get(item.word.lessonId);
-              const sourceTitle = phase === "reviewing" ? item.word.lessonTitle : dictationLessonTitles.get(item.word.lessonId) ?? item.word.lessonTitle;
-              return isPoetryMode && poem ? (
-                <PoetryCard
-                  index={globalIndex}
-                  item={item}
-                  key={poem.id}
-                  onToggleWrong={onToggleWrong}
-                  poem={poem}
-                  reviewing={phase === "reviewing"}
-                  wrongCharKeys={wrongCharKeys}
-                />
+          {phase === "reviewing" ? (
+            <ReviewCards
+              questions={questions.map((question) => ({
+                ...question,
+                issue: findWordIssue(wordIssues, question.word),
+                onToggleIssue: (kind) => onToggleIssue(question.word, kind),
+              }))}
+              marks={{ selectedKeys: wrongCharKeys, onToggle: onToggleWrong }}
+            />
+          ) : (
+            <div className={`dictation-grid ${isPoetryMode ? "poetry-grid" : ""}`}>
+              {questions.map((question, index) => question.poem ? (
+                <PoetryCard index={index} key={question.word.id} poem={question.poem} wordId={question.word.id} />
               ) : (
                 <DictationCard
-                  active={phase === "dictating" && globalIndex === safeActiveItemIndex}
-                  lessonSource={bookLabel ? `${bookLabel} · ${sourceTitle}` : sourceTitle}
-                  index={globalIndex}
-                  item={item}
-                  key={`${item.word.id}-${globalIndex}`}
-                  maskedHint={phase === "dictating" ? maskedHints.get(item.word.id) : undefined}
-                  pinyinShown={pinyinShownWordIds.has(item.word.id)}
-                  onActivate={() => activateItem(globalIndex)}
-                  onTogglePlayback={() => void startDoublePlayback(globalIndex)}
-                  onShowPinyin={() => onShowPinyin(item.word.id)}
-                  playback={speechPlayback.index === globalIndex ? speechPlayback : idleSpeechPlayback}
-                  reviewing={phase === "reviewing"}
-                  onToggleWrong={onToggleWrong}
-                  wrongCharKeys={wrongCharKeys}
-                  issue={findWordIssue(wordIssues, item.word)}
-                  onToggleIssue={(kind) => onToggleIssue(item.word, kind)}
+                  index={index}
+                  key={question.word.id}
+                  question={question}
+                  dictation={{
+                    active: index === safeActiveItemIndex,
+                    maskedHint: maskedHints.get(question.word.id),
+                    pinyinShown: pinyinShownWordIds.has(question.word.id),
+                    onActivate: () => activateItem(index),
+                    onTogglePlayback: () => void startDoublePlayback(index),
+                    onShowPinyin: () => onShowPinyin(question.word.id),
+                    playback: speechPlayback.index === index ? speechPlayback : idleSpeechPlayback,
+                  }}
                 />
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          )}
 
           <div className="sticky-actions">
             <div>

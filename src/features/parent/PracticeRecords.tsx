@@ -5,14 +5,14 @@ import { localDateKey } from "../../lib/dates";
 import { CheckinCalendar } from "./CheckinCalendar";
 import { RecentReviewItem } from "./RecentReviewItem";
 
-export function PracticeRecords({ logs, activityByDate, correctionNow, lessons, wordById, scoredQuestions, onOpenCorrection }: {
+export function PracticeRecords({ logs, activityByDate, correctionNow, lessons, wordById, scoredQuestions, onOpenReview }: {
   logs: ReviewLog[];
   activityByDate: ReadonlyMap<string, number>;
   correctionNow: number;
   lessons: LessonSummary[];
   wordById: Map<string, DictationWord>;
   scoredQuestions: { stat: WordStat }[];
-  onOpenCorrection: (id: string) => void;
+  onOpenReview: (id: string) => void;
 }) {
   const [showAllLogs, setShowAllLogs] = useState(false);
   const totalQuestionAttempts = scoredQuestions.reduce((total, { stat }) => total + stat.attempts, 0);
@@ -37,15 +37,15 @@ export function PracticeRecords({ logs, activityByDate, correctionNow, lessons, 
       <div className="records-grid">
         <section className="panel">
           <div className="panel-heading"><History size={20} /><h2 id="practice-records-heading" tabIndex={-1}>最近默写</h2></div>
-          {logs.length > 0 && <p className="muted">默写完成后 3 天（72 小时）内可补记错字。</p>}
+          {logs.length > 0 && <p className="muted">每场默写都可回看，完成后 72 小时内可补记错字。</p>}
           <div className="recent-list">
             {logs.length === 0 ? <p className="muted">还没有默写记录。</p> : (showAllLogs ? logs : logs.slice(0, 6)).map((log) => (
               <RecentReviewItem
                 key={log.id}
-              correctionNow={correctionNow}
+                correctionNow={correctionNow}
                 lessons={lessons}
                 log={log}
-                onOpenCorrection={() => onOpenCorrection(log.id)}
+                onOpenReview={() => onOpenReview(log.id)}
                 wordById={wordById}
               />
             ))}

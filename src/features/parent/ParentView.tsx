@@ -2,7 +2,7 @@ import { BookOpenCheck, ChartNoAxesCombined, Flag, History } from "lucide-react"
 import { useEffect, useState } from "react";
 import type { AppState, DictationWord, LessonSummary, QuestionCarryover } from "../../../shared/types.ts";
 import type { MissedWrongCharCorrection } from "../../../shared/domain/reviews.ts";
-import { isQuestionCarryoverActive, isWithinReviewCorrectionWindow, reviewCorrectionWindowMs } from "../../../shared/domain/reviewPolicy.ts";
+import { canSupplementReview, isQuestionCarryoverActive, reviewCorrectionWindowMs } from "../../../shared/domain/reviewPolicy.ts";
 import { WordIssuesPanel } from "../../components/WordIssues";
 import { lessonLabel } from "../../lib/lessonPresentation";
 import { localDateKey } from "../../lib/dates";
@@ -41,9 +41,9 @@ export function ParentView({
   wordById,
 }: ParentViewProps) {
   const [section, setSection] = useState<typeof sections[number]["id"]>("progress");
-  const [activeCorrectionLogId, setActiveCorrectionLogId] = useState<string | null>(null);
+  const [activeReviewId, setActiveReviewId] = useState<string | null>(null);
   const [correctionNow, setCorrectionNow] = useState(Date.now);
-  const activeCorrectionLog = state.logs.find((log) => log.id === activeCorrectionLogId);
+  const activeReview = state.logs.find((log) => log.id === activeReviewId);
   const lessonsById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
   const questionsById = new Map(questions.map((question) => [question.id, question]));
   const wrongCharsById = new Map<string, Set<string>>();
@@ -82,7 +82,7 @@ export function ParentView({
     const refreshCorrectionTime = () => setCorrectionNow(Date.now());
     let nextDeadline = Number.POSITIVE_INFINITY;
     for (const log of state.logs) {
-      if (!isWithinReviewCorrectionWindow(log.date, correctionNow)) continue;
+      if (!canSupplementReview(log, correctionNow)) continue;
       const deadline = Date.parse(log.date) + reviewCorrectionWindowMs;
       nextDeadline = Math.min(nextDeadline, deadline);
     }
@@ -100,17 +100,17 @@ export function ParentView({
 
   return (
     <>
-      {activeCorrectionLog && (
+      {activeReview && (
         <ReviewCorrectionPage
-          key={activeCorrectionLog.id}
+          key={activeReview.id}
           correctionNow={correctionNow}
           lessons={lessons}
-          log={activeCorrectionLog}
+          log={activeReview}
           onBack={() => {
             setCorrectionNow(Date.now());
-            setActiveCorrectionLogId(null);
+            setActiveReviewId(null);
             window.requestAnimationFrame(() => {
-              const focusTarget = document.getElementById(`review-correction-open-${activeCorrectionLog.id}`)
+              const focusTarget = document.getElementById(`review-open-${activeReview.id}`)
                 ?? document.getElementById("practice-records-heading");
               focusTarget?.focus();
             });
@@ -119,7 +119,7 @@ export function ParentView({
           wordById={wordById}
         />
       )}
-      <section className="parent-main" hidden={Boolean(activeCorrectionLog)}>
+      <section className="parent-main" hidden={Boolean(activeReview)}>
         <div className="parent-title">
           <h1>家长看板</h1>
           <div className="current-course"><span>当前课次</span><strong>{lessonLabel(selectedLesson)}</strong></div>
@@ -165,9 +165,9 @@ export function ParentView({
             lessons={lessons}
             wordById={wordById}
             scoredQuestions={scoredQuestions}
-            onOpenCorrection={(id) => {
+            onOpenReview={(id) => {
               setCorrectionNow(Date.now());
-              setActiveCorrectionLogId(id);
+              setActiveReviewId(id);
               window.scrollTo({ top: 0, behavior: "auto" });
             }}
           />
