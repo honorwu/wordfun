@@ -1,43 +1,71 @@
-import type { PracticeItem } from "../../../shared/types.ts";
+import { pinyin } from "pinyin-pro";
+import type { DictationWord, PracticeItem } from "../../../shared/types.ts";
+import { hanChars } from "../../../shared/domain/characters.ts";
 
-export function maskedRoundHints(items: readonly PracticeItem[]): Map<string, string> {
-  const answers = items.map(({ word }) => ({
-    word,
-    chars: Array.from(word.text),
-    syllables: word.pinyin.trim().split(/\s+/u),
-  })).filter(({ chars }) => chars.length > 0);
-  const hints = new Map<string, string>();
-  for (const { word } of items) {
-    const hint = word.textbookHint;
-    if (!hint) continue;
+type MaskWord = Pick<DictationWord, "text" | "pinyin"> & Partial<Pick<DictationWord, "id" | "lessonId" | "poem">>;
+const blank = "〔　〕";
+const syllablePattern = /^[\p{Script=Latin}\p{Mark}]+$/u;
 
-    // 较长词的读音优先。同形词在不同课可能读音不同，优先用语境所在课的题词。
-    const preferred = answers.filter(({ word: answer }) => hint.includes(answer.text)).sort((a, b) =>
-      b.chars.length - a.chars.length ||
-      Number(b.word.lessonId === word.lessonId) - Number(a.word.lessonId === word.lessonId) ||
-      a.word.id.localeCompare(b.word.id));
-    if (!preferred.length) continue;
+export function createRoundTextMask(words: readonly MaskWord[]) {
+  const answerChars = new Set(words.flatMap(({ text }) => hanChars(text)));
+  const phrases = words.flatMap((word) => {
+    const parts = word.poem
+      ? [{ text: word.poem.title, pinyin: word.poem.titlePinyin }, ...word.poem.lines]
+      : [word];
+    return parts.flatMap(({ text, pinyin: reading }) => {
+      const letters = [...text.matchAll(/\p{Script=Han}/gu)];
+      const syllables = reading.trim().split(/\s+/u);
+      if (!letters.length || letters.length !== syllables.length || !syllables.every((syllable) => syllablePattern.test(syllable))) return [];
+      const sounds = letters.map(({ index }, i) => ({ offset: index, syllable: syllables[i] }));
+      return [{ text, sounds, lessonId: word.lessonId, id: word.id ?? text }];
+    });
+  });
 
-    const readings = new Map<number, string>();
-    for (const { word: answer, chars, syllables } of preferred) {
-      for (let start = hint.indexOf(answer.text); start !== -1; start = hint.indexOf(answer.text, start + 1)) {
-        let offset = start;
-        for (const [index, char] of chars.entries()) {
-          if (!readings.has(offset)) readings.set(offset, syllables[index]);
-          offset += char.length;
+  return (text: string, lessonId?: string, blankAnswer = blank): string => {
+    if (!Array.from(text).some((char) => answerChars.has(char))) return text;
+
+    // 完整题词沿用教材读音，重叠时先取长词，同形词优先取语境所在课。
+    const matches = phrases.filter((phrase) => text.includes(phrase.text)).sort((a, b) =>
+      b.sounds.length - a.sounds.length ||
+      Number(b.lessonId === lessonId) - Number(a.lessonId === lessonId) || a.id.localeCompare(b.id));
+    const exactReadings = new Map<number, string>();
+    for (const phrase of matches) {
+      for (let start = text.indexOf(phrase.text); start >= 0; start = text.indexOf(phrase.text, start + 1)) {
+        for (const { offset, syllable } of phrase.sounds) {
+          if (!exactReadings.has(start + offset)) exactReadings.set(start + offset, syllable);
         }
       }
     }
 
-    // 只在连续汉字内分隔拼音，原有的标点、空白和本题的挖空原样保留。
-    hints.set(word.id, hint.replace(/\p{Script=Han}+/gu, (run, start: number) => {
-      let offset = start;
-      return Array.from(run, (char) => {
-        const syllable = readings.get(offset);
+    // 散落在别的词里的字按原句取音，例如“拳头”的“头”在“竖起头来”中读 tóu。
+    // 只在取读音时填回题词，显示时保留原挖空、标点和空白。
+    const readings = pinyin(text.replaceAll(blank, blankAnswer), { type: "array", nonZh: "spaced" });
+    let contextIndex = 0;
+    let offset = 0;
+    return text.split(/(〔　〕|\p{Script=Han}+)/u).map((part) => {
+      if (!part) return "";
+      const chars = Array.from(part);
+      if (!/^\p{Script=Han}/u.test(part)) {
+        contextIndex += part === blank ? Array.from(blankAnswer).length : chars.length;
+        offset += part.length;
+        return part;
+      }
+      return chars.map((char) => {
+        const contextual = readings[contextIndex++];
+        const reading = exactReadings.get(offset) ?? (syllablePattern.test(contextual ?? "") ? contextual : "□");
         offset += char.length;
-        return syllable ? ` ${syllable} ` : char;
+        return answerChars.has(char) ? ` ${reading} ` : char;
       }).join("").trim().replace(/ +/gu, " ");
-    }));
+    }).join("");
+  };
+}
+
+export function maskedRoundHints(items: readonly PracticeItem[], mask = createRoundTextMask(items.map(({ word }) => word))) {
+  const hints = new Map<string, string>();
+  for (const { word } of items) {
+    if (!word.textbookHint) continue;
+    const shown = mask(word.textbookHint, word.lessonId, word.text);
+    if (shown !== word.textbookHint) hints.set(word.id, shown);
   }
   return hints;
 }

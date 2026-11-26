@@ -4,8 +4,9 @@ import test from "node:test";
 import { defaultCatalogDatabasePath, getLessons } from "../server/db.mjs";
 import { createCatalogService } from "../server/services/catalog.mjs";
 import { buildBookCharacterIndex, characterMastery, groupCharacterMastery, learnedTextbookChars } from "../shared/domain/characterMastery.ts";
-import { getScreeningQuestions, getScreeningTargetChars } from "../shared/domain/practice.ts";
-import { maskedRoundHints } from "../src/features/practice/hintMask.ts";
+import { hanChars } from "../shared/domain/characters.ts";
+import { generateCurrentLessonPractice, generatePoetryPractice, getScreeningQuestions, getScreeningTargetChars } from "../shared/domain/practice.ts";
+import { createRoundTextMask, maskedRoundHints } from "../src/features/practice/hintMask.ts";
 
 test("新词库仅包含五册材料，课次、册末词和可用提示完整对应", () => {
   const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
@@ -68,7 +69,7 @@ test("新词库仅包含五册材料，课次、册末词和可用提示完整�
   } finally { db.close(); }
 });
 
-test("当课和历史用拼音显示语境中的本轮题词，保留 SQLite 保存的原提示", () => {
+test("当课和历史用拼音遮住语境中的本轮答案字，保留 SQLite 保存的原提示", () => {
   const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
   try {
     const catalog = createCatalogService(db);
@@ -85,8 +86,8 @@ test("当课和历史用拼音显示语境中的本轮题词，保留 SQLite 保
     assert.equal(storedHead, "你们的妈妈〔　〕上有两只大眼睛");
 
     const maskedCurrent = maskedRoundHints(currentItems);
-    assert.equal(maskedCurrent.get(eyes.id), "你们的妈妈 tóu dǐng 上有两只大〔　〕");
-    assert.equal(maskedCurrent.get(head.id), "你们的妈妈〔　〕上有两只大 yǎn jing");
+    assert.equal(maskedCurrent.get(eyes.id), "你们的妈妈 tóu dǐng shàng 有 liǎng 只大〔　〕");
+    assert.equal(maskedCurrent.get(head.id), "你们的妈妈〔　〕shàng 有 liǎng 只大 yǎn jing");
     assert.equal(eyes.textbookHint, stored);
     assert.equal(head.textbookHint, storedHead);
 
@@ -126,9 +127,89 @@ test("重叠和反复出现的题词都转成拼音，保留原挖空、标点�
   ];
 
   assert.deepEqual(maskedRoundHints(items), new Map([
-    ["纸鸢", "看 shān hé liú 向远方，　shān hé liú  经村边。yún 掠过 yún 彩，jí，hā hā hā。山坡和河边。山〔　〕河，另一处〔　〕。"],
+    ["纸鸢", "看 shān hé liú 向远方，　shān hé liú  经村边。yún 掠过 yún 彩，jí，hā hā hā。shān 坡和 hé 边。shān〔　〕hé，另一处〔　〕。"],
   ]));
   assert.equal(items[0].word.textbookHint, hint);
+});
+
+test("跨课题目共用遮字范围，散落字按语境读音，整词沿用题目读音", () => {
+  const words = [
+    { id: "great-wall", lessonId: "great-wall-lesson", text: "长城", pinyin: "cháng chéng" },
+    { id: "schoolbag", lessonId: "another-lesson", text: "书包", pinyin: "shū bāo", textbookHint: "长大后，我背着〔　〕去长城。" },
+  ];
+  const mask = createRoundTextMask(words);
+  assert.match(mask("长大以后的书包", "another-lesson"), /^zhǎng 大以后的 shū bāo$/u);
+  assert.equal(maskedRoundHints(words.map((word) => ({ word, score: 0, reasons: [] }))).get("schoolbag"),
+    "zhǎng 大后，我背着〔　〕去 cháng chéng。");
+  assert.equal(words[1].textbookHint, "长大后，我背着〔　〕去长城。");
+});
+
+test("缺少拼音的答案字仍隐藏，原挖空和标点保留", () => {
+  const mask = createRoundTextMask([{ id: "rare", lessonId: "lesson", text: "𠮷", pinyin: "" }]);
+  const shown = mask("见〔　〕𠮷，未见。", "lesson");
+  assert.ok(!shown.includes("𠮷"));
+  assert.match(shown, /^见〔　〕.*，未见。$/u);
+});
+
+test("牛和鹅的语境遮住所有本轮答案字，保留原挖空", () => {
+  const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
+  try {
+    const lessons = getLessons(db);
+    const lesson = lessons.find(({ grade, unit, title }) => grade === 4 && unit === 1 && title === "牛和鹅");
+    const items = generateCurrentLessonPractice(lessons, { progress: { lessonId: lesson.id } });
+    const words = items.map(({ word }) => word);
+    const byText = new Map(words.map((word) => [word.text, word]));
+    const hints = maskedRoundHints(items);
+    const answerChars = new Set(words.flatMap(({ text }) => hanChars(text)));
+    const goose = byText.get("大白鹅");
+    assert.deepEqual(goose.chars, ["鹅"]);
+    assert.equal(createRoundTextMask(words)(lesson.title, lesson.id), "牛和 é");
+    const gooseContexts = words.filter(({ textbookHint }) => textbookHint.includes("鹅"));
+    assert.deepEqual(gooseContexts.map(({ text }) => text), ["助威", "纷纷", "竖起", "竟", "胸", "把握住", "酒瓶"]);
+    assert.ok(gooseContexts.every(({ id }) => !hints.get(id).includes("鹅")));
+    assert.match(hints.get(byText.get("竖起").id), /〔　〕tóu 来/u);
+    assert.match(hints.get(byText.get("酒瓶").id), /〔　〕zi 一样/u);
+    for (const [question, chars] of [
+      ["助威", "鹅大"], ["故意", "子"], ["虽然", "可"], ["竖起", "鹅头到子大"],
+    ]) {
+      const { id, textbookHint } = byText.get(question);
+      for (const char of chars) {
+        assert.ok(textbookHint.includes(char), `${question}的原语境应包含${char}`);
+        assert.ok(!hints.get(id).includes(char), `${question}的默写提示应遮住${char}`);
+      }
+    }
+    for (const { id, text, textbookHint } of words) {
+      const shown = hints.get(id) ?? textbookHint;
+      assert.deepEqual(hanChars(shown).filter((char) => answerChars.has(char)), [], text);
+      assert.equal(shown.split("〔　〕").length, textbookHint.split("〔　〕").length, text);
+    }
+  } finally { db.close(); }
+});
+
+test("全词库各课的标题和语境不显示本轮答案字，古诗包含诗题、朝代和作者", () => {
+  const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
+  try {
+    const lessons = getLessons(db);
+    for (const lesson of lessons) {
+      const items = lesson.lessonKind === "classical_poetry"
+        ? generatePoetryPractice(lesson)
+        : generateCurrentLessonPractice(lessons, { progress: { lessonId: lesson.id } });
+      const words = items.map(({ word }) => word);
+      const answerChars = new Set(words.flatMap(({ text }) => hanChars(text)));
+      const mask = createRoundTextMask(words);
+      const assertMasked = (text, description) =>
+        assert.deepEqual(hanChars(text).filter((char) => answerChars.has(char)), [], description);
+      assertMasked(mask(lesson.title, lesson.id), lesson.title);
+      for (const poem of lesson.classicalTexts ?? []) {
+        assertMasked(mask(poem.title, lesson.id), poem.title);
+        const byline = [poem.dynasty, poem.author].filter(Boolean).join(" · ");
+        assert.deepEqual(hanChars(mask(byline, lesson.id)), [], byline);
+      }
+      for (const { word } of items) {
+        if (word.textbookHint) assertMasked(mask(word.textbookHint, word.lessonId), word.text);
+      }
+    }
+  } finally { db.close(); }
 });
 
 test("历史同卷出现同形异音的题词，语境优先使用本课读音", () => {

@@ -6,8 +6,7 @@ import { historyMistakeCooldownDays, historyRoundWordLimit } from "../../../shar
 import { findWordIssue } from "../../../shared/domain/wordIssues.ts";
 import { gradeNames } from "../../data/metadata";
 import { termLabel, lessonNumberLabel, shortBookLabel, availableGrades } from "../../lib/lessonPresentation";
-import { maskLessonTitle } from "./titleMask";
-import { maskedRoundHints } from "./hintMask";
+import { createRoundTextMask, maskedRoundHints } from "./hintMask";
 import { CorrectionView } from "./CorrectionView";
 import { PoetryCard } from "./PoetryCard";
 import { DictationCard } from "./DictationCard";
@@ -79,30 +78,23 @@ export function StudentView({
   const { speechPlayback, stopPlayback, startDoublePlayback } = useSpeechPlayback({ items, isPoetryMode, phase, onActivate: setActiveItemIndex });
   const grades = availableGrades(lessons);
   const terms = Array.from(new Set(lessons.filter((item) => item.grade === lesson.grade).map((item) => item.unit))).sort();
-  const scopedLessons = lessons.filter((item) => item.grade === lesson.grade && item.unit === lesson.unit);
   const bookLabelsByLesson = useMemo(() => new Map(lessons.map((item) => [item.id, shortBookLabel(item)])), [lessons]);
-  const maskedHints = useMemo(() => maskedRoundHints(items), [items]);
-  const titleMaskWords = isPoetryMode
-    ? (lesson.classicalTexts ?? []).map((poem) => ({ text: poem.title, pinyin: poem.titlePinyin }))
-    : items.map((item) => item.word);
-  const displayedLessonTitle = phase === "dictating" && mode === "lesson"
-    ? maskLessonTitle(lesson.title, titleMaskWords)
-    : lesson.title;
-  const dictationLessonTitles = useMemo(() => {
-    const wordsByLesson = new Map<string, DictationWord[]>();
-    for (const item of items) {
-      wordsByLesson.set(item.word.lessonId, [...(wordsByLesson.get(item.word.lessonId) ?? []), item.word]);
-    }
-    return new Map(
-      [...wordsByLesson].map(([lessonId, lessonWords]) => [
-        lessonId,
-        maskLessonTitle(lessonWords[0].lessonTitle, lessonWords),
-      ]),
-    );
-  }, [items]);
-  const questions = items.map(({ word, reasons, mistakeReview }, index) => {
+  const mask = useMemo(() => phase === "dictating" && items.length
+    ? createRoundTextMask(items.map(({ word }) => word))
+    : undefined, [items, phase]);
+  const maskedHints = useMemo(() => mask ? maskedRoundHints(items, mask) : new Map<string, string>(), [items, mask]);
+  const awaitingRound = loading || Boolean(loadError);
+  const lessonChoices = useMemo(() => lessons
+    .filter((entry) => entry.grade === lesson.grade && entry.unit === lesson.unit)
+    .map((entry) => {
+      const pendingLabel = entry.lessonKind === "classical_poetry" ? "古诗默写" : `第${entry.number}课`;
+      const label = awaitingRound ? pendingLabel : lessonNumberLabel(entry, mask ? mask(entry.title, entry.id) : entry.title);
+      return { id: entry.id, label };
+    }), [lessons, lesson.grade, lesson.unit, awaitingRound, mask]);
+  const displayedLessonLabel = lessonChoices.find((entry) => entry.id === lesson.id)?.label ?? "当前课次";
+  const questions = useMemo(() => items.map(({ word, reasons, mistakeReview }, index) => {
     const bookLabel = bookLabelsByLesson.get(word.lessonId);
-    const title = (phase === "dictating" && dictationLessonTitles.get(word.lessonId)) || word.lessonTitle;
+    const title = mask ? mask(word.lessonTitle, word.lessonId) : word.lessonTitle;
     return {
       word,
       lessonSource: bookLabel ? `${bookLabel} · ${title}` : title,
@@ -110,7 +102,7 @@ export function StudentView({
       mistakeReview,
       poem: isPoetryMode ? word.poem ?? lesson.classicalTexts?.[index] : undefined,
     };
-  });
+  }), [items, bookLabelsByLesson, mask, isPoetryMode, lesson.classicalTexts]);
 
   const pickFirstLesson = (grade: Grade, term?: number) => {
     const first = lessons.find((item) => item.grade === grade && (term ? item.unit === term : true));
@@ -222,7 +214,7 @@ export function StudentView({
           <p>当前课次 <strong>{gradeNames[lesson.grade]}{termLabel(lesson.unit)}</strong></p>
           <div className="today-pill">今天已默写 <strong>{stats.todayCount}</strong> 项</div>
         </div>
-        <h1>{lessonNumberLabel(lesson, displayedLessonTitle)}</h1>
+        <h1>{displayedLessonLabel}</h1>
         <div className="student-lesson-picker" aria-label="选择当前课次">
           <label>
             <span>年级</span>
@@ -242,9 +234,9 @@ export function StudentView({
               const nextLesson = lessons.find((item) => item.id === event.target.value);
               if (nextLesson) onSelectLesson(nextLesson);
             }}>
-              {scopedLessons.map((item) => (
+              {lessonChoices.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {lessonNumberLabel(item, item.id === lesson.id ? displayedLessonTitle : item.title)}
+                  {item.label}
                 </option>
               ))}
             </select>
@@ -331,7 +323,7 @@ export function StudentView({
 
           {phase === "dictating" && !isPoetryMode && items.some((item) => item.word.textbookHint) ? (
             <p className="muted sentence-guide">
-              默写<span className="textbook-hint-blank">（　）</span>里的词语。{maskedHints.size > 0 && "句中其他要默写的词用拼音显示。"}
+              默写<span className="textbook-hint-blank">（　）</span>里的词语。{maskedHints.size > 0 && "句中本轮要默写的字用拼音显示。"}
             </p>
           ) : null}
 
