@@ -9,20 +9,11 @@ export const applyReviewResult = (
   context?: { practiceMode: "lesson" | "history"; lessons: Array<{ id: string; title: string }> },
 ): AppState => {
   const now = new Date().toISOString();
-  const itemsByWord = new Map(items.map((item) => [item.word.id, item]));
-  const reviewedItems = [...itemsByWord.values()].map(({ word, reasons, mistakeReview }) => {
+  const words = new Map(items.map(({ word }) => [word.id, word]));
+  const reviewedItems = [...words.values()].map((word) => {
     const reviewedChars = fullDictationCharsForWord(word);
     const wrongChars = reviewedChars.filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)));
-    const presentation = {
-      pinyin: word.pinyin,
-      lessonId: word.lessonId,
-      lessonTitle: word.lessonTitle,
-      ...(word.textbookHint && { textbookHint: word.textbookHint }),
-      ...(reasons.includes("课文取词") && { textbookExcerpt: true }),
-      ...(mistakeReview && { mistakeReview }),
-      ...(word.poem && { poem: { ...word.poem, lines: word.poem.lines.map((line) => ({ ...line })) } }),
-    };
-    return { word, wrongChars, reviewedChars, presentation };
+    return { word, wrongChars, reviewedChars };
   });
   const reviewLogs =
     reviewedItems.length > 0
@@ -35,11 +26,10 @@ export const applyReviewResult = (
             wordIds: reviewedItems.map(({ word }) => word.id),
             wrongWordIds: reviewedItems.filter(({ wrongChars }) => wrongChars.length > 0).map(({ word }) => word.id),
             wrongChars: reviewedItems.flatMap(({ word, wrongChars }) => wrongChars.map((char) => ({ wordId: word.id, char }))),
-            reviewedItems: reviewedItems.map(({ word, reviewedChars, presentation }) => ({
+            reviewedItems: reviewedItems.map(({ word, reviewedChars }) => ({
               wordId: word.id,
               wordText: word.text,
               reviewedChars,
-              presentation,
             })),
           },
         ]

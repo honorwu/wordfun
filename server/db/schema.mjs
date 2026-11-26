@@ -146,14 +146,6 @@ CREATE TABLE IF NOT EXISTS review_log_words (
   PRIMARY KEY (log_id, word_id)
 );
 
-CREATE TABLE IF NOT EXISTS review_log_word_presentations (
-  log_id TEXT NOT NULL,
-  word_id TEXT NOT NULL,
-  presentation_json TEXT NOT NULL,
-  PRIMARY KEY (log_id, word_id),
-  FOREIGN KEY (log_id, word_id) REFERENCES review_log_words(log_id, word_id) ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS review_log_chars (
   log_id TEXT NOT NULL REFERENCES review_logs(id) ON DELETE CASCADE,
   word_id TEXT NOT NULL,

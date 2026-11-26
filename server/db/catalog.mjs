@@ -46,6 +46,7 @@ export const getLessons = (catalogDb) => {
         chars,
         category: chars.some((char) => writingChars.has(char)) ? "一类" : "二类",
         ...(row.hint_text ? { textbookHint: row.hint_text } : {}),
+        ...(row.kind === "supplement" && { textbookExcerpt: true }),
       };
       if (row.kind === "textbook") textbookWords.push(word);
       if (row.kind === "poem") {

@@ -1,5 +1,4 @@
 import { isWithinReviewCorrectionWindow } from "../../shared/domain/reviewPolicy.ts";
-import { normalizeReviewItemPresentation } from "../../shared/domain/state.ts";
 import { defaultStudentId } from "../config.mjs";
 import { allRows, oneRow, runTransaction } from "./query.mjs";
 
@@ -77,9 +76,8 @@ export const getReviewLogs = (learningDb, catalogDb, studentId = defaultStudentI
   if (logRows.length === 0) return [];
 
   const wordsByLog = Map.groupBy(allRows(learningDb,
-    `SELECT item.log_id, item.word_id, item.prompt_text, item.is_wrong, snapshot.presentation_json
+    `SELECT item.log_id, item.word_id, item.prompt_text, item.is_wrong
      FROM review_logs log JOIN review_log_words item ON item.log_id = log.id
-     LEFT JOIN review_log_word_presentations snapshot ON snapshot.log_id = item.log_id AND snapshot.word_id = item.word_id
      WHERE log.student_id = ? ORDER BY item.log_id, item.item_order`, studentId), (item) => item.log_id);
   const wrongCharsByLog = Map.groupBy(allRows(learningDb,
     `SELECT item.log_id, item.word_id, item.char
@@ -124,12 +122,11 @@ export const getReviewLogs = (learningDb, catalogDb, studentId = defaultStudentI
       wordIds: items.map((item) => item.word_id),
       wrongWordIds: items.filter((item) => item.is_wrong).map((item) => item.word_id),
       wrongChars: wrongChars.map((item) => ({ wordId: item.word_id, char: item.char })),
-      reviewedItems: reviewedChars || items.some((item) => item.prompt_text || item.presentation_json)
+      reviewedItems: reviewedChars || items.some((item) => item.prompt_text)
         ? items.map((item) => ({
             wordId: item.word_id,
             wordText: item.prompt_text || "",
             reviewedChars: (reviewedCharsByWord.get(item.word_id) ?? []).map((row) => row.char),
-            ...(item.presentation_json && { presentation: JSON.parse(item.presentation_json) }),
           }))
         : undefined,
     };
@@ -207,9 +204,6 @@ const appendReviewLogs = (learningDb, studentId, logs) => {
   const insertLogWord = learningDb.prepare(
     "INSERT INTO review_log_words (log_id, word_id, prompt_text, is_wrong, item_order) VALUES (?, ?, ?, ?, ?)",
   );
-  const insertPresentation = learningDb.prepare(
-    "INSERT INTO review_log_word_presentations (log_id, word_id, presentation_json) VALUES (?, ?, ?)",
-  );
   const insertReviewedChar = learningDb.prepare(
     "INSERT INTO review_log_reviewed_chars (log_id, word_id, char, item_order, char_order) VALUES (?, ?, ?, ?, ?)",
   );
@@ -236,7 +230,7 @@ const appendReviewLogs = (learningDb, studentId, logs) => {
 
     let changed = false;
     if (existing) {
-      // 同一场次只补充错误，保留首次保存的题目、题面和计分快照。
+      // 同一场次只补充错误，保留首次保存的题目和计分快照。
       for (const wordId of wrongWordIds) {
         if (markWordWrong.run(log.id, wordId).changes) changed = true;
       }
@@ -253,8 +247,6 @@ const appendReviewLogs = (learningDb, studentId, logs) => {
       for (const [index, wordId] of (log.wordIds ?? []).entries()) {
         const reviewedItem = reviewedItemByWordId.get(wordId);
         insertLogWord.run(log.id, wordId, reviewedItem?.wordText || null, Number(wrongWordIds.has(wordId)), index);
-        const presentation = normalizeReviewItemPresentation(reviewedItem?.presentation);
-        if (presentation) insertPresentation.run(log.id, wordId, JSON.stringify(presentation));
         for (const [charIndex, char] of (reviewedItem?.reviewedChars ?? []).entries()) {
           insertReviewedChar.run(log.id, wordId, char, index, charIndex);
         }

@@ -24,8 +24,8 @@ test("同场重复生字只累计一次，任一词写错则本场计错，保�
   assert.equal(next.wordStats.green.mistakes, 0);
   assert.deepEqual(next.logs[0].wrongChars, [{ wordId: "mountains", char: "山" }]);
   assert.deepEqual(next.logs[0].reviewedItems, [
-    { wordId: "mountains", wordText: "山河", reviewedChars: ["山", "河"], presentation: { pinyin: "", lessonId: "previous", lessonTitle: "前课" } },
-    { wordId: "green", wordText: "青山", reviewedChars: ["青", "山"], presentation: { pinyin: "", lessonId: "previous", lessonTitle: "前课" } },
+    { wordId: "mountains", wordText: "山河", reviewedChars: ["山", "河"] },
+    { wordId: "green", wordText: "青山", reviewedChars: ["青", "山"] },
   ]);
   assert.deepEqual(initial, createDefaultState(progress));
 });

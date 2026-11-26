@@ -1,12 +1,11 @@
 import { hanChars, reviewCharsForWord } from "../../../shared/domain/characters.ts";
-import type { ClassicalText, DictationWord, LessonSummary, PracticeItem, ReviewLog } from "../../../shared/types.ts";
+import type { ClassicalText, DictationWord, LessonSummary, ReviewLog } from "../../../shared/types.ts";
 import { lessonLabel, shortBookLabel } from "../../lib/lessonPresentation";
 
 interface ReviewRecordQuestion {
   word: Pick<DictationWord, "id" | "text" | "pinyin" | "textbookHint">;
   lessonSource: string;
   textbookExcerpt?: boolean;
-  mistakeReview?: PracticeItem["mistakeReview"];
   poem?: ClassicalText;
   editableChars: ReadonlySet<string>;
   result: string;
@@ -47,9 +46,7 @@ export function reviewRecordQuestions(
   return log.wordIds.map((wordId) => {
     const snapshot = snapshots.get(wordId);
     const currentWord = wordById.get(wordId);
-    const presentation = snapshot?.presentation;
     const matchingWord = !snapshot || snapshot.wordText === currentWord?.text ? currentWord : undefined;
-    const details = presentation ?? matchingWord;
     const text = snapshot?.wordText ?? currentWord?.text ?? "";
     const textChars = new Set(hanChars(text));
     const legacyTargets = snapshots.size === 0 && currentWord ? reviewCharsForWord(currentWord) : [];
@@ -61,16 +58,15 @@ export function reviewRecordQuestions(
     if (hasDetailedMistake) result = "有错字";
     if (hasUndetailedMistake) result = "已有整题错误";
 
-    const reference = lessonReferences.get(details?.lessonId ?? currentWord?.lessonId ?? "") ?? onlyLesson;
-    const lesson = lessonsById.get(details?.lessonId ?? reference?.id ?? "");
-    const sourceTitle = details?.lessonTitle ?? reference?.title ?? "课次信息缺失";
+    const reference = lessonReferences.get(currentWord?.lessonId ?? "") ?? onlyLesson;
+    const lesson = lessonsById.get(reference?.id ?? currentWord?.lessonId ?? "");
+    const sourceTitle = matchingWord?.lessonTitle ?? reference?.title ?? lesson?.title ?? "课次信息缺失";
 
     return {
-      word: { id: wordId, text, pinyin: details?.pinyin ?? "", textbookHint: details?.textbookHint },
+      word: { id: wordId, text, pinyin: matchingWord?.pinyin ?? "", textbookHint: matchingWord?.textbookHint },
       lessonSource: lesson ? `${shortBookLabel(lesson)} · ${sourceTitle}` : sourceTitle,
-      textbookExcerpt: presentation?.textbookExcerpt,
-      mistakeReview: presentation?.mistakeReview,
-      poem: details?.poem ?? archivedPoem(wordId, text),
+      textbookExcerpt: matchingWord?.textbookExcerpt,
+      poem: matchingWord?.poem ?? archivedPoem(wordId, text),
       editableChars: isLegacyWholeWordMistake ? new Set() : reviewedChars,
       result,
       unavailableLabel: isLegacyWholeWordMistake ? "无逐字记录" : snapshot && reviewedChars.size > 0 ? "未计分" : "无法确认",

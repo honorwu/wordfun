@@ -1,4 +1,4 @@
-import type { AppState, CharacterStat, Progress, ReviewItemPresentation, ReviewLog, WordStat } from "../types.ts";
+import type { AppState, CharacterStat, Progress, ReviewLog, WordStat } from "../types.ts";
 import { normalizeWordIssues } from "./wordIssues.ts";
 
 const fallbackProgress: Progress = {
@@ -46,29 +46,6 @@ const normalizeCharStats = (stats: AppState["charStats"] | undefined): AppState[
     ]),
   );
 
-export const normalizeReviewItemPresentation = (presentation?: ReviewItemPresentation): ReviewItemPresentation | undefined => {
-  if (typeof presentation?.pinyin !== "string" || typeof presentation.lessonId !== "string" || typeof presentation.lessonTitle !== "string") {
-    return undefined;
-  }
-  const { pinyin, lessonId, lessonTitle, textbookHint, textbookExcerpt, mistakeReview, poem } = presentation;
-  const hasPoem = typeof poem?.id === "string" && typeof poem.title === "string" && typeof poem.titlePinyin === "string"
-    && Array.isArray(poem.lines) && poem.lines.every((line) => typeof line?.text === "string" && typeof line.pinyin === "string");
-  return {
-    pinyin, lessonId, lessonTitle,
-    ...(typeof textbookHint === "string" && { textbookHint }),
-    ...(typeof textbookExcerpt === "boolean" && { textbookExcerpt }),
-    ...(mistakeReview === "word" || mistakeReview === "character" ? { mistakeReview } : {}),
-    ...(hasPoem && { poem: {
-      id: poem.id,
-      title: poem.title,
-      titlePinyin: poem.titlePinyin,
-      ...(typeof poem.author === "string" && { author: poem.author }),
-      ...(typeof poem.dynasty === "string" && { dynasty: poem.dynasty }),
-      lines: poem.lines.map(({ text, pinyin }) => ({ text, pinyin })),
-    } }),
-  };
-};
-
 const normalizeLogs = (logs: AppState["logs"] | undefined): AppState["logs"] =>
   (logs ?? []).map(
     (log) =>
@@ -93,15 +70,11 @@ const normalizeLogs = (logs: AppState["logs"] | undefined): AppState["logs"] =>
         reviewedItems: Array.isArray(log.reviewedItems)
           ? log.reviewedItems
               .filter((item) => typeof item?.wordId === "string" && item.wordId.length > 0)
-              .map((item) => {
-                const presentation = normalizeReviewItemPresentation(item.presentation);
-                return {
-                  wordId: item.wordId,
-                  wordText: typeof item.wordText === "string" ? item.wordText : "",
-                  reviewedChars: uniqueStrings(item.reviewedChars),
-                  ...(presentation && { presentation }),
-                };
-              })
+              .map((item) => ({
+                wordId: item.wordId,
+                wordText: typeof item.wordText === "string" ? item.wordText : "",
+                reviewedChars: uniqueStrings(item.reviewedChars),
+              }))
           : undefined,
       }) satisfies ReviewLog,
   );
