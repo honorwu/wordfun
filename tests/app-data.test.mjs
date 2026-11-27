@@ -487,9 +487,9 @@ test("船身按本题的已提交成绩安排，龙船的错字只影响本题�
   }
 });
 
-test("整题必须对多于错才从历史复习退出，错两次后两对仍待巩固", async (t) => {
+test("整题必须对多于错且按 2/5/10 天阶梯复测才从历史复习退出，错两次后两对仍待巩固", async (t) => {
   const firstReviewTime = Date.UTC(2025, 5, 1, 12);
-  const fiveDays = 5 * 24 * 60 * 60 * 1000;
+  const dayMs = 24 * 60 * 60 * 1000;
   t.mock.timers.enable({ apis: ["Date"], now: firstReviewTime });
 
   const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
@@ -527,8 +527,11 @@ test("整题必须对多于错才从历史复习退出，错两次后两对仍�
     assert.deepEqual(await request("/api/state", "PUT", { ...graded, logs: [graded.logs[0]] }), { ok: true });
   };
 
-  for (const [index, wrong] of [true, true, false, false].entries()) {
-    t.mock.timers.setTime(firstReviewTime + index * fiveDays);
+  // 第 0 天错 -> +2 天再错 -> +2 天写对(streak=1) -> +5 天写对(streak=2)
+  let now = firstReviewTime;
+  for (const [index, [waitDays, wrong]] of [[0, true], [2, true], [2, false], [5, false]].entries()) {
+    now += waitDays * dayMs;
+    t.mock.timers.setTime(now);
     const { items } = await round();
     assert.deepEqual(items.map(({ word }) => word.id), [word.id]);
     if (index > 0) assert.equal(items[0].historyGroup, "mistake");
@@ -537,17 +540,19 @@ test("整题必须对多于错才从历史复习退出，错两次后两对仍�
   const atTie = getState(learningDb, catalogDb).wordStats[word.id];
   assert.equal(atTie.attempts - atTie.mistakes, 2);
   assert.equal(atTie.mistakes, 2);
+  assert.equal(atTie.streak, 2);
 
   const pendingStats = {
     historyTotal: remaining.length + 1, historyReviewed: remaining.length,
     historyUnreviewed: 0, pendingMistakes: 1, waitingReview: 1,
   };
-  t.mock.timers.setTime(firstReviewTime + 4 * fiveDays - 1);
+  // streak=2 冷却 10 天
+  t.mock.timers.setTime(now + 10 * dayMs - 1);
   const waiting = await round();
   assert.deepEqual(waiting.items, []);
   assert.deepEqual(waiting.stats, pendingStats);
 
-  t.mock.timers.setTime(firstReviewTime + 4 * fiveDays);
+  t.mock.timers.setTime(now + 10 * dayMs);
   const due = await round();
   assert.deepEqual(due.items.map(({ word, historyGroup }) => [word.id, historyGroup]), [[word.id, "mistake"]]);
   assert.deepEqual(due.stats, { ...pendingStats, waitingReview: 0 });

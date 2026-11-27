@@ -2,11 +2,15 @@ import type { CharacterStat, QuestionCarryover, ReviewLog, WordStat } from "../t
 
 const dayMs = 24 * 60 * 60 * 1000;
 export const masteryNetCorrect = 1;
-export const historyMistakeCooldownDays = 5;
+export const historyMistakeCooldownSteps = [2, 5, 10] as const;
+export const historyMistakeCooldownDays = historyMistakeCooldownSteps[0];
 export const historyMistakeWordLimit = 5;
 export const historyBasicWordLimit = 5;
 export const historyRoundWordLimit = 20;
 export const reviewCorrectionWindowMs = 3 * dayMs;
+
+export const mistakeReviewCooldownDays = (stat?: Pick<WordStat, "streak">) =>
+  historyMistakeCooldownSteps[Math.min(historyMistakeCooldownSteps.length - 1, Math.max(0, stat?.streak ?? 0))];
 
 export const isWithinReviewCorrectionWindow = (date: string, now = Date.now()) => {
   const elapsed = now - Date.parse(date);
@@ -46,14 +50,15 @@ const reviewTime = (value?: string | null) => {
 };
 
 const nextMistakeReviewTime = (stat?: WordStat) =>
-  Math.max(reviewTime(stat?.lastReviewedAt), reviewTime(stat?.lastMistakeAt)) + historyMistakeCooldownDays * dayMs;
+  Math.max(reviewTime(stat?.lastReviewedAt), reviewTime(stat?.lastMistakeAt)) + mistakeReviewCooldownDays(stat) * dayMs;
 
 export const isHistoryCharCoolingDown = (stat?: CharacterStat) =>
   isPendingScreeningMistakeChar(stat) && nextMistakeReviewTime(stat) > Date.now();
 
 export const hasQuestionAttempt = (stat?: WordStat) => Boolean(stat && (stat.attempts > 0 || stat.lastReviewedAt));
 
-export const isMasteredQuestion = (stat?: WordStat) => netCorrectCount(stat) >= masteryNetCorrect;
+export const isMasteredQuestion = (stat?: WordStat) =>
+  Boolean(stat && netCorrectCount(stat) >= masteryNetCorrect && (stat.mistakes === 0 || stat.streak > 0));
 
 export const isPendingQuestionMistake = (stat?: WordStat) => Boolean(stat && stat.mistakes > 0 && !isMasteredQuestion(stat));
 

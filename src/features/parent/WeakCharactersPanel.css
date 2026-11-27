@@ -1,0 +1,93 @@
+.weak-chars-panel {
+  margin-bottom: 18px;
+}
+
+.weak-chars-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.weak-char-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid #eadfd8;
+  border-radius: 16px;
+  background: #fffdfa;
+}
+
+.weak-char-card.is-pending {
+  border-color: #f0cfc9;
+  background: #fffaf8;
+}
+
+.weak-char-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.weak-char-glyph {
+  font-family: "STKaiti", "KaiTi", serif;
+  font-size: 32px;
+  line-height: 1.1;
+  color: var(--ink);
+}
+
+.weak-char-card.is-pending .weak-char-glyph {
+  color: #ac3540;
+}
+
+.weak-char-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.weak-char-badge.is-pending {
+  color: #9d492d;
+  background: #fdebe5;
+}
+
+.weak-char-badge.is-mastered {
+  color: #2f715e;
+  background: #e8f6f0;
+}
+
+.weak-char-stats {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.weak-char-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.weak-char-words span {
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: #f3f1eb;
+  color: #555c6b;
+  font-size: 12px;
+}
+
+.weak-char-words span.is-missed {
+  background: #fdeceb;
+  color: #ac3540;
+  font-weight: 600;
+}
+
+@media print {
+  .weak-chars-panel {
+    display: none;
+  }
+}

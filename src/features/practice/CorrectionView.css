@@ -25,6 +25,79 @@
   color: var(--muted);
 }
 
+.correction-heading-actions {
+  margin-top: 14px;
+}
+
+.correction-mask-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 5px 11px;
+  border: 1px solid #dfd3c8;
+  border-radius: 999px;
+  color: var(--purple-dark);
+  background: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.correction-mask-toggle[aria-pressed="true"] {
+  border-color: var(--purple);
+  color: #fff;
+  background: var(--purple);
+}
+
+.correction-recall-box {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 16px 10px 6px;
+}
+
+.correction-recall-cells {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.correction-recall-cells span {
+  width: 56px;
+  height: 56px;
+  border: 2px dashed #c8b8d6;
+  border-radius: 14px;
+  background: #faf7ff;
+}
+
+.correction-recall-lines {
+  display: grid;
+  width: 100%;
+  max-width: 440px;
+  gap: 14px;
+}
+
+.correction-recall-lines i {
+  display: block;
+  height: 2px;
+  border-bottom: 2px dashed #c8b8d6;
+}
+
+.correction-recall-box small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.correction-writing-count i.recall-pass {
+  border-style: solid;
+  border-color: var(--purple);
+  color: var(--purple-dark);
+  background: #f2ecff;
+}
+
 .correction-total {
   display: grid;
   min-width: 105px;

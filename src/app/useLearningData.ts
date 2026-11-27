@@ -234,10 +234,25 @@ export function useLearningData({ viewMode, practiceMode, roundId, onSaveError }
     const activity = new Map(reviewActivity.map((item) => [item.id, item]));
     for (const log of state.logs) activity.set(log.id, { id: log.id, date: log.date, count: log.wordIds.length });
     let todayCount = 0;
+    const activeDates = new Set<string>();
     for (const item of activity.values()) {
-      if (localDateKey(new Date(item.date)) === todayKey) todayCount += item.count;
+      const dateKey = localDateKey(new Date(item.date));
+      activeDates.add(dateKey);
+      if (dateKey === todayKey) todayCount += item.count;
     }
-    return { ...(practiceData?.stats ?? { historyTotal: 0, historyReviewed: 0, historyUnreviewed: 0, pendingMistakes: 0, waitingReview: 0 }), todayCount };
+    let streakDays = 0;
+    const [year, month, day] = todayKey.split("-").map(Number);
+    const cursor = new Date(year, month - 1, day);
+    if (!activeDates.has(todayKey)) cursor.setDate(cursor.getDate() - 1);
+    while (activeDates.has(localDateKey(cursor))) {
+      streakDays += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+    return {
+      ...(practiceData?.stats ?? { historyTotal: 0, historyReviewed: 0, historyUnreviewed: 0, pendingMistakes: 0, waitingReview: 0 }),
+      todayCount,
+      streakDays,
+    };
   }, [practiceData, reviewActivity, state.logs, todayKey]);
 
   const retryLoad = useCallback(() => {

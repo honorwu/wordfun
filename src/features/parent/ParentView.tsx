@@ -11,6 +11,7 @@ import { MistakeNotebook } from "./MistakeNotebook";
 import { PracticeRecords } from "./PracticeRecords";
 import { QuestionMasteryPanel } from "./QuestionMasteryPanel";
 import { ReviewCorrectionPage } from "./ReviewCorrectionPage";
+import { WeakCharactersPanel } from "./WeakCharactersPanel";
 
 const sections = [
   { id: "progress", label: "学习进度", icon: ChartNoAxesCombined },
@@ -154,12 +155,21 @@ export function ParentView({
           </div>
         )}
         {section === "mistakes" && (
-          <MistakeNotebook
-            carriedQuestions={carriedQuestions}
-            scoredQuestions={scoredQuestions}
-            selectedLesson={selectedLesson}
-            wrongCharsById={wrongCharsById}
-          />
+          <>
+            <WeakCharactersPanel
+              charStats={state.charStats}
+              lessons={lessons}
+              questions={questions}
+              selectedLesson={selectedLesson}
+              wrongCharsById={wrongCharsById}
+            />
+            <MistakeNotebook
+              carriedQuestions={carriedQuestions}
+              scoredQuestions={scoredQuestions}
+              selectedLesson={selectedLesson}
+              wrongCharsById={wrongCharsById}
+            />
+          </>
         )}
         {section === "records" && (
           <PracticeRecords

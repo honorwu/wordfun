@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { DictationWord, LessonSummary, WordIssueKind } from "../../shared/types.ts";
 import type { MissedWrongCharCorrection } from "../../shared/domain/reviews.ts";
 import { charReviewKey, fullDictationCharsForWord } from "../../shared/domain/characters.ts";
-import { canSupplementReview } from "../../shared/domain/reviewPolicy.ts";
+import { canSupplementReview, isMasteredQuestion, isPendingQuestionMistake } from "../../shared/domain/reviewPolicy.ts";
 import type { CorrectionItem, PracticeMode, PracticePhase } from "../features/practice/types";
 import type { StudentViewProps } from "../features/practice/StudentView";
 import type { ParentViewProps } from "../features/parent/ParentView";
@@ -19,7 +19,7 @@ export function useAppController() {
   const [pinyinShownWordIds, setPinyinShownWordIds] = useState<Set<string>>(() => new Set());
   const [correctionItems, setCorrectionItems] = useState<CorrectionItem[]>([]);
   const [savedMessage, setSavedMessage] = useState("");
-  const [lastResult, setLastResult] = useState({ total: 0, wrongQuestions: 0, wrongChars: 0 });
+  const [lastResult, setLastResult] = useState({ total: 0, wrongQuestions: 0, wrongChars: 0, conqueredMistakes: 0 });
 
   const {
     state, updateProgress, submitReview, saveCorrection, toggleIssue: toggleRemoteIssue, resolveIssue,
@@ -45,7 +45,7 @@ export function useAppController() {
     setWrongCharKeys(new Set());
     setPinyinShownWordIds(new Set());
     setCorrectionItems([]);
-    setLastResult({ total: 0, wrongQuestions: 0, wrongChars: 0 });
+    setLastResult({ total: 0, wrongQuestions: 0, wrongChars: 0, conqueredMistakes: 0 });
   };
 
   const setProgress = (lesson: LessonSummary) => {
@@ -100,10 +100,20 @@ export function useAppController() {
         .filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)))
         .map((char) => ({ wordId: word.id, char })),
     );
+    let conqueredMistakes = 0;
     const nextCorrectionItems = practiceItems.flatMap(({ word, mistakeReview }) => {
       const itemWrongChars = fullDictationCharsForWord(word).filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)));
-      if (itemWrongChars.length === 0) return [];
-      const previousMistakes = state.wordStats[word.id]?.mistakes ?? 0;
+      const previous = state.wordStats[word.id];
+      if (itemWrongChars.length === 0) {
+        const wasPending = Boolean(mistakeReview) || isPendingQuestionMistake(previous);
+        const nextStat = {
+          attempts: (previous?.attempts ?? 0) + 1,
+          mistakes: previous?.mistakes ?? 0,
+          streak: (previous?.streak ?? 0) + 1,
+        };
+        if (wasPending && isMasteredQuestion(nextStat)) conqueredMistakes += 1;
+        return [];
+      }
       return [{
         wordId: word.id,
         text: word.text,
@@ -111,7 +121,7 @@ export function useAppController() {
         textbookHint: word.textbookHint,
         mistakeReview,
         wrongChars: itemWrongChars,
-        mistakeCount: previousMistakes + 1,
+        mistakeCount: (previous?.mistakes ?? 0) + 1,
       }];
     });
     submitReview({
@@ -125,6 +135,7 @@ export function useAppController() {
       total: practiceItems.length,
       wrongQuestions: nextCorrectionItems.length,
       wrongChars: new Set(nextCorrectionItems.flatMap((item) => item.wrongChars)).size,
+      conqueredMistakes,
     });
     setWrongCharKeys(new Set());
     setPinyinShownWordIds(new Set());

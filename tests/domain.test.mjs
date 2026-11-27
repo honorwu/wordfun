@@ -130,7 +130,7 @@ test("补记窗口包含完成后的第 72 小时，之后保持原记录", () =
   assert.equal(addMissedWrongChars(state, log.id, corrections, words, deadline + 1), state);
 });
 
-test("补记按更正后的累计对错判定掌握，补记最近一场后仍可掌握", (t) => {
+test("补记按更正后的累计对错与最近作答判定掌握，补记最近一场需再巩固", (t) => {
   const firstTime = Date.UTC(2026, 10, 10, 12);
   t.mock.timers.enable({ apis: ["Date"], now: firstTime });
   const question = items[0];
@@ -144,10 +144,17 @@ test("补记按更正后的累计对错判定掌握，补记最近一场后仍�
   const corrections = [{ wordId: question.word.id, char: "山" }];
   const words = new Map([[question.word.id, question.word]]);
 
+  const earliestCorrected = addMissedWrongChars(state, earliest.id, corrections, words);
+  assert.equal(earliestCorrected.wordStats.mountains.attempts, 4);
+  assert.equal(earliestCorrected.wordStats.mountains.mistakes, 1);
+  assert.equal(earliestCorrected.wordStats.mountains.streak, 3);
+  assert.equal(isMasteredQuestion(earliestCorrected.wordStats.mountains), true);
+
   const latestCorrected = addMissedWrongChars(state, latest.id, corrections, words);
   assert.equal(latestCorrected.wordStats.mountains.attempts, 4);
   assert.equal(latestCorrected.wordStats.mountains.mistakes, 1);
-  assert.equal(isMasteredQuestion(latestCorrected.wordStats.mountains), true);
+  assert.equal(latestCorrected.wordStats.mountains.streak, 0);
+  assert.equal(isMasteredQuestion(latestCorrected.wordStats.mountains), false);
 
   const bothCorrected = addMissedWrongChars(latestCorrected, earliest.id, corrections, words);
   assert.equal(bothCorrected.wordStats.mountains.attempts, 4);
@@ -157,8 +164,8 @@ test("补记按更正后的累计对错判定掌握，补记最近一场后仍�
   assert.equal(bothCorrected.logs.length, 4);
 });
 
-test("历史错题每次复测间隔五天，错两次后累计对三次才掌握", (t) => {
-  const fiveDays = 5 * 24 * 60 * 60 * 1000;
+test("历史错题按 2/5/10 天阶梯复测，错两次后连对三次掌握，旧题刚错必复练", (t) => {
+  const dayMs = 24 * 60 * 60 * 1000;
   const lastMistake = Date.UTC(2026, 10, 10, 15);
   t.mock.timers.enable({ apis: ["Date"], now: lastMistake });
   const lessons = withStoredQuestions([
@@ -168,11 +175,13 @@ test("历史错题每次复测间隔五天，错两次后累计对三次才掌�
   let state = createDefaultState(progress);
   state.wordStats.mountains = { attempts: 2, mistakes: 2, streak: 0, lastMistakeAt: new Date(lastMistake).toISOString() };
   const historyContext = { ...context, practiceMode: "history" };
-  for (const correctCount of [1, 2, 3]) {
-    const dueAt = lastMistake + correctCount * fiveDays;
-    t.mock.timers.setTime(dueAt - 1);
+  let cursor = lastMistake;
+  for (const [index, waitDays] of [2, 5, 10].entries()) {
+    const correctCount = index + 1;
+    cursor += waitDays * dayMs;
+    t.mock.timers.setTime(cursor - 1);
     assert.deepEqual(generateScreeningPractice(lessons, state), []);
-    t.mock.timers.setTime(dueAt);
+    t.mock.timers.setTime(cursor);
     const restudy = generateScreeningPractice(lessons, state);
     assert.deepEqual(restudy.map(({ word, historyGroup }) => [word.id, historyGroup]), [["mountains", "mistake"]]);
     state = applyReviewResult(state, restudy, new Set(), historyContext);
@@ -181,7 +190,7 @@ test("历史错题每次复测间隔五天，错两次后累计对三次才掌�
     assert.equal(isMasteredQuestion(state.wordStats.mountains), correctCount === 3);
   }
 
-  const againAt = lastMistake + 4 * fiveDays;
+  const againAt = cursor + 10 * dayMs;
   t.mock.timers.setTime(againAt);
   assert.deepEqual(generateScreeningPractice(lessons, state), []);
 
@@ -192,17 +201,24 @@ test("历史错题每次复测间隔五天，错两次后累计对三次才掌�
   assert.equal(tied.wordStats.mountains.mistakes, 3);
   assert.equal(isMasteredQuestion(tied.wordStats.mountains), false);
 
+  // 即使历史正确次数仍多于错误次数，刚写错的旧题也必须进入待巩固，2 天后写对 1 次即可重新掌握。
   const extraCorrect = applyReviewResult(state, lessonItems, new Set(), context);
-  const stillMastered = applyReviewResult(extraCorrect, lessonItems, wrong, context);
-  assert.equal(stillMastered.wordStats.mountains.attempts, 7);
-  assert.equal(stillMastered.wordStats.mountains.mistakes, 3);
-  assert.equal(isMasteredQuestion(stillMastered.wordStats.mountains), true);
+  const slipped = applyReviewResult(extraCorrect, lessonItems, wrong, context);
+  assert.equal(slipped.wordStats.mountains.attempts, 7);
+  assert.equal(slipped.wordStats.mountains.mistakes, 3);
+  assert.equal(slipped.wordStats.mountains.streak, 0);
+  assert.equal(isMasteredQuestion(slipped.wordStats.mountains), false);
 
-  t.mock.timers.setTime(againAt + fiveDays - 1);
+  t.mock.timers.setTime(againAt + 2 * dayMs - 1);
   assert.deepEqual(generateScreeningPractice(lessons, tied), []);
-  t.mock.timers.setTime(againAt + fiveDays);
+  assert.deepEqual(generateScreeningPractice(lessons, slipped), []);
+  t.mock.timers.setTime(againAt + 2 * dayMs);
   assert.deepEqual(generateScreeningPractice(lessons, tied).map(({ word, historyGroup }) => [word.id, historyGroup]), [["mountains", "mistake"]]);
-  assert.deepEqual(generateScreeningPractice(lessons, stillMastered), []);
+  const slipRestudy = generateScreeningPractice(lessons, slipped);
+  assert.deepEqual(slipRestudy.map(({ word, historyGroup }) => [word.id, historyGroup]), [["mountains", "mistake"]]);
+  const recovered = applyReviewResult(slipped, slipRestudy, new Set(), historyContext);
+  assert.equal(isMasteredQuestion(recovered.wordStats.mountains), true);
+  assert.deepEqual(generateScreeningPractice(lessons, recovered), []);
 });
 
 test("旧错字按新题到期复练，承接和题级错题共用配额", (t) => {
@@ -377,12 +393,14 @@ test("历史复习先练到期错题，等待期间继续练新题，再复测�
   practice("新", true);
   practice("青");
   assert.deepEqual(nextItems(), []);
-  t.mock.timers.setTime(new Date(2026, 10, 8, 12).getTime());
-  practice("山");
+  t.mock.timers.setTime(new Date(2026, 10, 5, 12).getTime());
   practice("新");
   assert.equal(isMasteredQuestion(state.wordStats.new), false);
   assert.deepEqual(nextItems(), []);
-  t.mock.timers.setTime(new Date(2026, 10, 13, 12).getTime());
+  t.mock.timers.setTime(new Date(2026, 10, 8, 12).getTime());
+  practice("山");
+  assert.deepEqual(nextItems(), []);
+  t.mock.timers.setTime(new Date(2026, 10, 10, 12).getTime());
   practice("新");
   assert.ok(Object.values(state.wordStats).every(isMasteredQuestion));
   assert.deepEqual(nextItems(), []);
@@ -507,9 +525,9 @@ test("到期错题先按到期时间，再按教材课次和题序选入五个�
     undated: wrong,
     "near-tie": { ...wrong, lastMistakeAt: date(-8) },
     "earliest-due": { ...wrong, lastReviewedAt: date(-13) },
-    cooling: { ...wrong, lastReviewedAt: date(-4) },
+    cooling: { ...wrong, lastReviewedAt: date(-1) },
   };
-  const carryover = { "a-second-in-lesson": { baselineAttempts: 0, availableAt: date(-3) } };
+  const carryover = { "a-second-in-lesson": { baselineAttempts: 0, availableAt: date(-6) } };
   const expected = ["undated", "earliest-due", "z-first-in-lesson", "a-second-in-lesson", "near-tie"];
   assert.deepEqual(generateScreeningPractice(lessons, state, 20, { now, carryover }).map(({ word, historyGroup }) => [word.id, historyGroup]),
     expected.map((id) => [id, "mistake"]));

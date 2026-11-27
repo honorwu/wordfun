@@ -1205,6 +1205,36 @@ select:focus-visible {
   color: var(--purple-dark);
 }
 
+.result-highlights {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 0 0 26px;
+  padding: 0;
+  list-style: none;
+}
+
+.result-highlights li {
+  padding: 7px 14px;
+  border: 1px solid #e6dfd5;
+  border-radius: 999px;
+  background: #fffdfa;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.result-highlights li.is-highlight {
+  border-color: #cde7dd;
+  background: #effaf5;
+  color: #246854;
+}
+
+.result-highlights li.is-highlight strong {
+  color: #1c5846;
+}
+
 .parent-title {
   display: flex;
   align-items: center;
