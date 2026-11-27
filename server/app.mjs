@@ -1,12 +1,18 @@
 import { createServer } from "node:http";
-import { defaultStudentId } from "./config.mjs";
+import { defaultAccessToken, defaultStudentId } from "./config.mjs";
 import { openLearningDatabase, requireCatalogDatabase } from "./db/connection.mjs";
+import { requireAccessToken } from "./http/auth.mjs";
 import { sendJson } from "./http/json.mjs";
 import { serveStatic } from "./http/static.mjs";
 import { createApiHandler } from "./routes/api.mjs";
 import { createLearningService } from "./services/learning.mjs";
 
-export const createAppServer = ({ catalogDb = requireCatalogDatabase(), learningDb = openLearningDatabase(), studentId = defaultStudentId } = {}) => {
+export const createAppServer = ({
+  catalogDb = requireCatalogDatabase(),
+  learningDb = openLearningDatabase(),
+  studentId = defaultStudentId,
+  accessToken = defaultAccessToken,
+} = {}) => {
   const handleApi = createApiHandler(createLearningService({ catalogDb, learningDb, studentId }));
   const server = createServer(async (request, response) => {
     try {
@@ -15,6 +21,9 @@ export const createAppServer = ({ catalogDb = requireCatalogDatabase(), learning
         url = new URL(request.url || "/", "http://localhost");
       } catch {
         await sendJson(response, 400, { error: "Invalid request URL" }, request);
+        return;
+      }
+      if (url.pathname !== "/api/health" && !(await requireAccessToken(request, response, accessToken))) {
         return;
       }
       if (url.pathname.startsWith("/api")) {

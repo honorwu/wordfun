@@ -14,10 +14,12 @@ export const createCatalogService = (db) => {
     const nextVersion = db.prepare("PRAGMA data_version").get().data_version;
     if (!snapshot || version !== nextVersion) {
       const lessons = getLessons(db);
+      const questions = lessons.flatMap((lesson) => lesson.dictationWords);
       snapshot = {
         lessons,
         summaries: lessons.map(summarizeLesson),
-        questions: lessons.flatMap((lesson) => lesson.dictationWords),
+        questions,
+        questionMap: new Map(questions.map((question) => [question.id, question])),
         historyQuestions: new Map(),
       };
       version = nextVersion;
@@ -27,6 +29,7 @@ export const createCatalogService = (db) => {
   return {
     summaries: () => catalog().summaries,
     questions: () => catalog().questions,
+    questionMap: () => catalog().questionMap,
     practice: (progress, wordStats = {}, mode = "lesson", carryover = {}) => {
       const { lessons, historyQuestions } = catalog();
       const lesson = lessons.find((item) => item.id === progress?.lessonId);

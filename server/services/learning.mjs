@@ -1,4 +1,7 @@
-import { getAppDataSnapshot, getPracticeSnapshot, getReviewCarryover, getReviewLogs, saveState } from "../db/learning.mjs";
+import {
+  getAppDataSnapshot, getPracticeSnapshot, getReviewCarryover, getReviewLogs,
+  recordReview, resolveSavedWordIssue, saveProgress, saveState, supplementReview, toggleSavedWordIssue,
+} from "../db/learning.mjs";
 import { createCatalogService } from "./catalog.mjs";
 
 // 组合词库和学习记录；HTTP 层只负责请求解析与响应。
@@ -28,6 +31,26 @@ export const createLearningService = ({ catalogDb, learningDb, studentId }) => {
         questions: catalog.questions(),
         reviewCarryover: readCarryover(),
       };
+    },
+    /** @param {import("../../shared/contracts.ts").UpdateProgressRequest} body */
+    updateProgress(body) {
+      return saveProgress(learningDb, catalogDb, body?.progress, studentId);
+    },
+    /** @param {import("../../shared/contracts.ts").SubmitReviewRequest} body */
+    submitReview(body) {
+      return recordReview(learningDb, body, catalog.questionMap(), studentId);
+    },
+    /** @param {string} logId @param {import("../../shared/contracts.ts").SupplementReviewRequest} body */
+    supplementReview(logId, body) {
+      return supplementReview(learningDb, catalogDb, logId, body, catalog.questionMap(), studentId);
+    },
+    /** @param {import("../../shared/contracts.ts").ToggleWordIssueRequest} body */
+    toggleWordIssue(body) {
+      return toggleSavedWordIssue(learningDb, body, studentId);
+    },
+    /** @param {string} issueId @param {import("../../shared/contracts.ts").ResolveWordIssueRequest} body */
+    resolveWordIssue(issueId, body) {
+      return resolveSavedWordIssue(learningDb, issueId, body?.resolved, studentId);
     },
     /** @param {import("../../shared/contracts.ts").SaveStateRequest} body */
     save(body) {

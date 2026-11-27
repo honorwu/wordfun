@@ -7,8 +7,8 @@ export const applyReviewResult = (
   items: PracticeItem[],
   wrongCharKeys: Set<string>,
   context?: { practiceMode: "lesson" | "history"; lessons: Array<{ id: string; title: string }> },
+  now = new Date().toISOString(),
 ): AppState => {
-  const now = new Date().toISOString();
   const words = new Map(items.map(({ word }) => [word.id, word]));
   const reviewedItems = [...words.values()].map((word) => {
     const reviewedChars = fullDictationCharsForWord(word);

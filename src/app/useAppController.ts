@@ -1,10 +1,8 @@
 import { useState } from "react";
 import type { DictationWord, LessonSummary, WordIssueKind } from "../../shared/types.ts";
-import { addMissedWrongChars, applyReviewResult } from "../../shared/domain/reviews.ts";
 import type { MissedWrongCharCorrection } from "../../shared/domain/reviews.ts";
 import { charReviewKey, fullDictationCharsForWord } from "../../shared/domain/characters.ts";
 import { canSupplementReview } from "../../shared/domain/reviewPolicy.ts";
-import { toggleWordIssue } from "../../shared/domain/wordIssues.ts";
 import type { CorrectionItem, PracticeMode, PracticePhase } from "../features/practice/types";
 import type { StudentViewProps } from "../features/practice/StudentView";
 import type { ParentViewProps } from "../features/parent/ParentView";
@@ -24,8 +22,9 @@ export function useAppController() {
   const [lastResult, setLastResult] = useState({ total: 0, wrongQuestions: 0, wrongChars: 0 });
 
   const {
-    state, setState, saveImmediately, allLessons, selectedLesson, practiceItems, practiceLoading, practiceError, practiceWaitingForSave,
-    allKnownWords, parentState, questions, reviewCarryover, stats, parentReady, parentError, isReady, loadError, correctionSaving, saveCorrection,
+    state, updateProgress, submitReview, saveCorrection, toggleIssue: toggleRemoteIssue, resolveIssue,
+    allLessons, selectedLesson, practiceItems, practiceLoading, practiceError, practiceWaitingForSave,
+    allKnownWords, parentState, questions, reviewCarryover, stats, parentReady, parentError, isReady, loadError, correctionSaving,
     invalidateParentData, retryLoad,
   } = useLearningData({ viewMode, practiceMode, roundId, onSaveError: setSavedMessage });
 
@@ -52,7 +51,7 @@ export function useAppController() {
   const setProgress = (lesson: LessonSummary) => {
     if (lesson.id === state.progress.lessonId) return;
     if (!confirmLeaveActivePhase()) return;
-    setState((current) => ({ ...current, progress: { grade: lesson.grade, lessonId: lesson.id } }));
+    updateProgress({ grade: lesson.grade, lessonId: lesson.id });
     invalidateParentData();
     resetPractice();
   };
@@ -69,17 +68,15 @@ export function useAppController() {
 
   const toggleIssue = (word: DictationWord, kind: WordIssueKind) => {
     const sourceLesson = allLessons.find((lesson) => lesson.id === word.lessonId);
-    setState((current) => ({
-      ...current,
-      wordIssues: toggleWordIssue(current.wordIssues, word, sourceLesson ? lessonLabel(sourceLesson) : word.lessonTitle, kind),
-    }));
+    toggleRemoteIssue({
+      word,
+      lessonLabel: sourceLesson ? lessonLabel(sourceLesson) : word.lessonTitle,
+      kind,
+    });
   };
 
   const setIssueResolved = (id: string, resolved: boolean) => {
-    setState((current) => ({
-      ...current,
-      wordIssues: current.wordIssues.map((issue) => issue.id === id ? { ...issue, resolvedAt: resolved ? new Date().toISOString() : undefined } : issue),
-    }));
+    resolveIssue(id, resolved);
   };
 
   const finishDictation = () => {
@@ -98,26 +95,31 @@ export function useAppController() {
             }),
           ).values(),
         );
-    const nextState = applyReviewResult(state, practiceItems, wrongCharKeys, {
-      practiceMode,
-      lessons: reviewedLessons,
-    });
+    const wrongChars = practiceItems.flatMap(({ word }) =>
+      fullDictationCharsForWord(word)
+        .filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)))
+        .map((char) => ({ wordId: word.id, char })),
+    );
     const nextCorrectionItems = practiceItems.flatMap(({ word, mistakeReview }) => {
-      const wrongChars = fullDictationCharsForWord(word).filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)));
-      if (wrongChars.length === 0) return [];
+      const itemWrongChars = fullDictationCharsForWord(word).filter((char) => wrongCharKeys.has(charReviewKey(word.id, char)));
+      if (itemWrongChars.length === 0) return [];
+      const previousMistakes = state.wordStats[word.id]?.mistakes ?? 0;
       return [{
         wordId: word.id,
         text: word.text,
         pinyin: word.pinyin,
         textbookHint: word.textbookHint,
         mistakeReview,
-        wrongChars,
-        mistakeCount: nextState.wordStats[word.id].mistakes,
+        wrongChars: itemWrongChars,
+        mistakeCount: previousMistakes + 1,
       }];
     });
-    setState(nextState);
-    saveImmediately(nextState);
-    invalidateParentData();
+    submitReview({
+      practiceMode,
+      lessons: reviewedLessons,
+      wordIds: practiceItems.map(({ word }) => word.id),
+      wrongChars,
+    });
     setCorrectionItems(nextCorrectionItems);
     setLastResult({
       total: practiceItems.length,
@@ -137,29 +139,18 @@ export function useAppController() {
     if (!previousLog || !canSupplementReview(previousLog)) {
       throw new Error("只能补记完成后 3 天内的默写记录");
     }
-    const nextState = addMissedWrongChars(parentState, logId, corrections, allKnownWords);
-    const nextLog = nextState.logs.find((log) => log.id === logId);
-    const previousKeys = new Set((previousLog?.wrongChars ?? []).map((item) => charReviewKey(item.wordId, item.char)));
     const requestedKeys = new Set(corrections.map((item) => charReviewKey(item.wordId, item.char)));
-    const appliedKeys = new Set(
-      (nextLog?.wrongChars ?? [])
-        .map((item) => charReviewKey(item.wordId, item.char))
-        .filter((key) => requestedKeys.has(key) && !previousKeys.has(key)),
-    );
-    if (!nextLog || appliedKeys.size === 0) {
+    const appliedCount = await saveCorrection(logId, corrections);
+    if (appliedCount === 0) {
       setSavedMessage("没有可写入的更正，请重新打开记录核对");
       window.setTimeout(() => setSavedMessage(""), 2200);
       return 0;
     }
-    await saveCorrection({
-      ...nextState,
-      logs: [nextLog, ...state.logs.filter((log) => log.id !== logId)],
-    });
-    setSavedMessage(appliedKeys.size === requestedKeys.size
-      ? `已在原默写记录中补记 ${appliedKeys.size} 处错字`
-      : `已补记 ${appliedKeys.size} 处，另有 ${requestedKeys.size - appliedKeys.size} 处未写入，请刷新核对`);
+    setSavedMessage(appliedCount === requestedKeys.size
+      ? `已在原默写记录中补记 ${appliedCount} 处错字`
+      : `已补记 ${appliedCount} 处，另有 ${requestedKeys.size - appliedCount} 处未写入，请刷新核对`);
     window.setTimeout(() => setSavedMessage(""), 2200);
-    return appliedKeys.size;
+    return appliedCount;
   };
 
   return {

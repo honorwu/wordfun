@@ -596,3 +596,96 @@ test("健康检查不泄露本机路径，静态文件服务安全处理目录�
   const postStatic = await fetch(`${baseUrl}/`, { method: "POST" });
   assert.equal(postStatic.status, 405);
 });
+
+test("增量意图接口按服务端时钟原子写入，互不覆盖并发变更，支持可选访问口令", async (t) => {
+  const startTime = Date.UTC(2026, 4, 1, 10, 0, 0);
+  const dayMs = 24 * 60 * 60 * 1000;
+  t.mock.timers.enable({ apis: ["Date"], now: startTime });
+
+  const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
+  const learningDb = openLearningDatabase(":memory:");
+  const server = createAppServer({ catalogDb, learningDb, accessToken: "secret-pin" });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(async () => {
+    server.closeAllConnections();
+    server.close();
+    await once(server, "close");
+    learningDb.close();
+    catalogDb.close();
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const authHeader = `Basic ${Buffer.from("family:secret-pin").toString("base64")}`;
+  const api = async (url, method = "GET", body, expectedStatus = 200) => {
+    const response = await fetch(`${baseUrl}${url}`, {
+      method,
+      headers: { authorization: authHeader, ...(body !== undefined ? { "content-type": "application/json" } : {}) },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+    assert.equal(response.status, expectedStatus);
+    return response.json();
+  };
+
+  // 健康检查免口令，业务接口无口令拒绝
+  assert.deepEqual(await (await fetch(`${baseUrl}/api/health`)).json(), { ok: true });
+  assert.equal((await fetch(`${baseUrl}/api/app-data`)).status, 401);
+
+  const startup = await api("/api/app-data");
+  const lessons = startup.lessons;
+  const secondLesson = lessons[1];
+
+  // 1. 切课仅更新 progress，不破坏已有统计
+  const updatedProgress = await api("/api/progress", "PUT", { progress: { grade: 1, lessonId: secondLesson.id } });
+  assert.deepEqual(updatedProgress.progress, { grade: secondLesson.grade, lessonId: secondLesson.id });
+  await api("/api/progress", "PUT", { progress: { grade: 3, lessonId: "non-existent" } }, 404);
+
+  // 2. 提交批改由服务端生成权威时间并增量更新 word_stats / char_stats / review_logs
+  const practice = await api("/api/practice", "POST", { progress: updatedProgress.progress, mode: "lesson" });
+  const [firstItem, secondItem] = practice.items;
+  const firstChar = firstItem.word.chars[0];
+  const reviewRes = await api("/api/reviews", "POST", {
+    practiceMode: "lesson",
+    lessons: [{ id: secondLesson.id, title: secondLesson.title }],
+    wordIds: [firstItem.word.id, secondItem.word.id],
+    wrongChars: [{ wordId: firstItem.word.id, char: firstChar }],
+  });
+  assert.equal(reviewRes.log.date, new Date(startTime).toISOString());
+  assert.equal(reviewRes.wordStats[firstItem.word.id].mistakes, 1);
+  assert.equal(reviewRes.wordStats[secondItem.word.id].mistakes, 0);
+  assert.equal(reviewRes.charStats[firstChar].mistakes, 1);
+
+  // 3. 另一端并发标记词库问题，不影响刚保存的 word_stats 与 review_logs
+  const toggled = await api("/api/word-issues/toggle", "POST", {
+    word: firstItem.word,
+    lessonLabel: secondLesson.title,
+    kind: "pronunciation",
+  });
+  assert.equal(toggled.wordIssues.length, 1);
+  const resolved = await api(`/api/word-issues/${encodeURIComponent(toggled.wordIssues[0].id)}`, "PATCH", { resolved: true });
+  assert.ok(resolved.wordIssues[0].resolvedAt);
+
+  // 4. 在 72h 内补记漏标错字，仅增量更新受影响的题与字
+  t.mock.timers.setTime(startTime + 2 * dayMs);
+  const missedChar = secondItem.word.chars[0];
+  const supplemented = await api(`/api/reviews/${encodeURIComponent(reviewRes.log.id)}/corrections`, "POST", {
+    corrections: [{ wordId: secondItem.word.id, char: missedChar }],
+  });
+  assert.equal(supplemented.appliedCount, 1);
+  assert.equal(supplemented.wordStats[secondItem.word.id].mistakes, 1);
+  assert.equal(supplemented.wordStats[secondItem.word.id].attempts, 1);
+
+  // 5. 超过 72h 后拒绝补记
+  t.mock.timers.setTime(startTime + 3 * dayMs + 1);
+  await api(`/api/reviews/${encodeURIComponent(reviewRes.log.id)}/corrections`, "POST", {
+    corrections: [{ wordId: secondItem.word.id, char: secondItem.word.chars.at(-1) }],
+  }, 409);
+
+  // 验证最终数据库完整且无相互覆盖
+  const finalState = getState(learningDb, catalogDb);
+  assert.equal(finalState.progress.lessonId, secondLesson.id);
+  assert.equal(finalState.logs.length, 1);
+  assert.equal(finalState.wordStats[firstItem.word.id].mistakes, 1);
+  assert.equal(finalState.wordStats[secondItem.word.id].mistakes, 1);
+  assert.equal(finalState.wordIssues.length, 1);
+  assert.ok(finalState.wordIssues[0].resolvedAt);
+});

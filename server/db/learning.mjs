@@ -1,4 +1,7 @@
-import { isWithinReviewCorrectionWindow } from "../../shared/domain/reviewPolicy.ts";
+import { charReviewKey, fullDictationCharsForWord } from "../../shared/domain/characters.ts";
+import { canSupplementReview, isWithinReviewCorrectionWindow } from "../../shared/domain/reviewPolicy.ts";
+import { addMissedWrongChars, applyReviewResult } from "../../shared/domain/reviews.ts";
+import { normalizeWordIssues, toggleWordIssue } from "../../shared/domain/wordIssues.ts";
 import { defaultStudentId } from "../config.mjs";
 import { allRows, oneRow, runReadTransaction, runTransaction } from "./query.mjs";
 
@@ -270,7 +273,320 @@ const appendReviewLogs = (learningDb, studentId, logs) => {
   }
 };
 
+const getWordIssues = (learningDb, studentId) =>
+  allRows(learningDb, "SELECT * FROM word_issues WHERE student_id = ? ORDER BY created_at DESC, id", studentId).map((row) => ({
+    id: row.id,
+    word: JSON.parse(row.word_snapshot),
+    lessonLabel: row.lesson_label,
+    kinds: [row.wording_issue ? "wording" : null, row.pronunciation_issue ? "pronunciation" : null].filter(Boolean),
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at || undefined,
+  }));
+
+const upsertWordStats = (learningDb, studentId, wordStats) => {
+  const statement = learningDb.prepare(
+    `INSERT INTO word_stats (student_id, word_id, attempts, mistakes, streak, last_reviewed_at, last_mistake_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(student_id, word_id) DO UPDATE SET
+       attempts = excluded.attempts,
+       mistakes = excluded.mistakes,
+       streak = excluded.streak,
+       last_reviewed_at = excluded.last_reviewed_at,
+       last_mistake_at = excluded.last_mistake_at`,
+  );
+  for (const [wordId, stat] of Object.entries(wordStats)) {
+    statement.run(studentId, wordId, stat.attempts || 0, stat.mistakes || 0, stat.streak || 0, stat.lastReviewedAt || null, stat.lastMistakeAt || null);
+  }
+};
+
+const upsertCharStats = (learningDb, studentId, charStats) => {
+  const upsertChar = learningDb.prepare(
+    `INSERT INTO char_stats (student_id, char, attempts, mistakes, streak, last_reviewed_at, last_mistake_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(student_id, char) DO UPDATE SET
+       attempts = excluded.attempts,
+       mistakes = excluded.mistakes,
+       streak = excluded.streak,
+       last_reviewed_at = excluded.last_reviewed_at,
+       last_mistake_at = excluded.last_mistake_at`,
+  );
+  const upsertEvidence = learningDb.prepare(
+    `INSERT INTO char_word_evidence (student_id, char, word_text, correct_count, mistake_count, last_reviewed_at, last_mistake_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(student_id, char, word_text) DO UPDATE SET
+       correct_count = MAX(char_word_evidence.correct_count, excluded.correct_count),
+       mistake_count = MAX(char_word_evidence.mistake_count, excluded.mistake_count),
+       last_reviewed_at = excluded.last_reviewed_at,
+       last_mistake_at = COALESCE(excluded.last_mistake_at, char_word_evidence.last_mistake_at)`,
+  );
+  for (const [char, stat] of Object.entries(charStats)) {
+    upsertChar.run(studentId, char, stat.attempts || 0, stat.mistakes || 0, stat.streak || 0, stat.lastReviewedAt || null, stat.lastMistakeAt || null);
+    const correctWordTexts = new Set((stat.correctWordTexts || []).filter(Boolean));
+    const wrongWordTexts = new Set((stat.wrongWordTexts || []).filter(Boolean));
+    for (const wordText of new Set([...correctWordTexts, ...wrongWordTexts])) {
+      upsertEvidence.run(
+        studentId,
+        char,
+        wordText,
+        correctWordTexts.has(wordText) ? 1 : 0,
+        wrongWordTexts.has(wordText) ? 1 : 0,
+        stat.lastReviewedAt || null,
+        wrongWordTexts.has(wordText) ? stat.lastMistakeAt || null : null,
+      );
+    }
+  }
+};
+
+export const saveProgress = (learningDb, catalogDb, progress, studentId = defaultStudentId) => {
+  if (!progress || typeof progress !== "object" || typeof progress.lessonId !== "string" || !progress.lessonId) {
+    throw Object.assign(new Error("课次信息不正确"), { statusCode: 400 });
+  }
+  const lesson = oneRow(catalogDb, "SELECT id, grade FROM lessons WHERE id = ?", progress.lessonId);
+  if (!lesson) {
+    throw Object.assign(new Error("所选课次不存在，请刷新后重新选择"), { statusCode: 404 });
+  }
+  const nextProgress = { grade: lesson.grade, lessonId: lesson.id };
+  runTransaction(learningDb, () => {
+    ensureStudent(learningDb, studentId);
+    learningDb
+      .prepare(
+        `INSERT INTO progress (student_id, grade, lesson_id)
+         VALUES (?, ?, ?)
+         ON CONFLICT(student_id) DO UPDATE SET grade = excluded.grade, lesson_id = excluded.lesson_id`,
+      )
+      .run(studentId, nextProgress.grade, nextProgress.lessonId);
+  });
+  return { progress: nextProgress };
+};
+
+export const recordReview = (learningDb, payload, questionMap, studentId = defaultStudentId) => {
+  const { practiceMode, lessons, wordIds, wrongChars } = payload ?? {};
+  if (practiceMode !== "lesson" && practiceMode !== "history") {
+    throw Object.assign(new Error("复习方式不正确"), { statusCode: 400 });
+  }
+  if (!Array.isArray(wordIds) || wordIds.length === 0) {
+    throw Object.assign(new Error("默写题目不能为空"), { statusCode: 400 });
+  }
+  const items = [];
+  const seenWordIds = new Set();
+  for (const wordId of wordIds) {
+    if (typeof wordId !== "string" || seenWordIds.has(wordId)) continue;
+    const word = questionMap.get(wordId);
+    if (!word) {
+      throw Object.assign(new Error("包含词库中不存在的题目，请刷新页面后重试"), { statusCode: 400 });
+    }
+    seenWordIds.add(wordId);
+    items.push({ word, score: 0, reasons: [] });
+  }
+  if (items.length === 0) {
+    throw Object.assign(new Error("默写题目不能为空"), { statusCode: 400 });
+  }
+  const normalizedLessons = Array.isArray(lessons)
+    ? lessons.filter((item) => item && typeof item.id === "string" && item.id).map((item) => ({
+        id: item.id,
+        title: typeof item.title === "string" ? item.title : "",
+      }))
+    : [];
+  const wrongCharKeys = new Set(
+    Array.isArray(wrongChars)
+      ? wrongChars
+          .filter((item) => item && typeof item.wordId === "string" && typeof item.char === "string")
+          .map((item) => charReviewKey(item.wordId, item.char))
+      : [],
+  );
+
+  return runTransaction(learningDb, () => {
+    ensureStudent(learningDb, studentId);
+    const affectedChars = new Set(items.flatMap(({ word }) => fullDictationCharsForWord(word)));
+    const existingWordStats = {};
+    const readWord = learningDb.prepare(
+      "SELECT word_id, attempts, mistakes, streak, last_reviewed_at, last_mistake_at FROM word_stats WHERE student_id = ? AND word_id = ?",
+    );
+    for (const { word } of items) {
+      const row = readWord.get(studentId, word.id);
+      if (row) {
+        existingWordStats[word.id] = {
+          attempts: row.attempts,
+          mistakes: row.mistakes,
+          streak: row.streak,
+          lastReviewedAt: row.last_reviewed_at || undefined,
+          lastMistakeAt: row.last_mistake_at || undefined,
+        };
+      }
+    }
+    const existingCharStats = {};
+    const readChar = learningDb.prepare(
+      "SELECT char, attempts, mistakes, streak, last_reviewed_at, last_mistake_at FROM char_stats WHERE student_id = ? AND char = ?",
+    );
+    const readEvidence = learningDb.prepare(
+      "SELECT word_text, correct_count, mistake_count FROM char_word_evidence WHERE student_id = ? AND char = ?",
+    );
+    for (const char of affectedChars) {
+      const row = readChar.get(studentId, char);
+      if (!row) continue;
+      const correctWordTexts = [];
+      const wrongWordTexts = [];
+      for (const evidence of readEvidence.all(studentId, char)) {
+        if (evidence.correct_count > 0) correctWordTexts.push(evidence.word_text);
+        if (evidence.mistake_count > 0) wrongWordTexts.push(evidence.word_text);
+      }
+      existingCharStats[char] = {
+        attempts: row.attempts,
+        mistakes: row.mistakes,
+        streak: row.streak,
+        correctWordTexts,
+        wrongWordTexts,
+        lastReviewedAt: row.last_reviewed_at || undefined,
+        lastMistakeAt: row.last_mistake_at || undefined,
+      };
+    }
+
+    const baseState = {
+      progress: { grade: 3, lessonId: "" },
+      wordStats: existingWordStats,
+      charStats: existingCharStats,
+      logs: [],
+      wordIssues: [],
+    };
+    const nextState = applyReviewResult(
+      baseState,
+      items,
+      wrongCharKeys,
+      { practiceMode, lessons: normalizedLessons },
+      new Date().toISOString(),
+    );
+    const [newLog] = nextState.logs;
+    upsertWordStats(learningDb, studentId, nextState.wordStats);
+    upsertCharStats(learningDb, studentId, nextState.charStats);
+    appendReviewLogs(learningDb, studentId, [newLog]);
+    return {
+      log: newLog,
+      wordStats: nextState.wordStats,
+      charStats: nextState.charStats,
+    };
+  });
+};
+
+export const supplementReview = (learningDb, catalogDb, logId, payload, questionMap, studentId = defaultStudentId) => {
+  if (typeof logId !== "string" || !logId) {
+    throw Object.assign(new Error("默写记录 ID 不正确"), { statusCode: 400 });
+  }
+  const requested = payload?.corrections;
+  if (!Array.isArray(requested)) {
+    throw Object.assign(new Error("补记内容格式不正确"), { statusCode: 400 });
+  }
+  const corrections = requested
+    .filter((item) => item && typeof item.wordId === "string" && typeof item.char === "string")
+    .map(({ wordId, char }) => ({ wordId, char }));
+
+  return runTransaction(learningDb, () => {
+    const state = getState(learningDb, catalogDb, studentId, { includeLogs: true, ensureStudentExists: false });
+    const targetLog = state.logs.find((log) => log.id === logId);
+    if (!targetLog) {
+      throw Object.assign(new Error("未找到对应的默写记录"), { statusCode: 404 });
+    }
+    const now = Date.now();
+    if (!canSupplementReview(targetLog, now)) {
+      throw Object.assign(new Error("这条默写记录不在 3 天补记期限内"), { statusCode: 409 });
+    }
+    const nextState = addMissedWrongChars(state, logId, corrections, questionMap, now);
+    const updatedLog = nextState.logs.find((log) => log.id === logId);
+    const previousKeys = new Set((targetLog.wrongChars ?? []).map((item) => charReviewKey(item.wordId, item.char)));
+    const addedItems = (updatedLog?.wrongChars ?? []).filter((item) => !previousKeys.has(charReviewKey(item.wordId, item.char)));
+    if (addedItems.length === 0 || !updatedLog) {
+      return { log: targetLog, appliedCount: 0, wordStats: {}, charStats: {} };
+    }
+
+    const updatedWordStats = {};
+    for (const wordId of new Set(addedItems.map((item) => item.wordId))) {
+      if (nextState.wordStats[wordId]) updatedWordStats[wordId] = nextState.wordStats[wordId];
+    }
+    const updatedCharStats = {};
+    for (const char of new Set(addedItems.map((item) => item.char))) {
+      if (nextState.charStats[char]) updatedCharStats[char] = nextState.charStats[char];
+    }
+    upsertWordStats(learningDb, studentId, updatedWordStats);
+    upsertCharStats(learningDb, studentId, updatedCharStats);
+    appendReviewLogs(learningDb, studentId, [updatedLog]);
+    return {
+      log: updatedLog,
+      appliedCount: addedItems.length,
+      wordStats: updatedWordStats,
+      charStats: updatedCharStats,
+    };
+  });
+};
+
+export const toggleSavedWordIssue = (learningDb, payload, studentId = defaultStudentId) => {
+  const { word, lessonLabel, kind } = payload ?? {};
+  if (kind !== "wording" && kind !== "pronunciation") {
+    throw Object.assign(new Error("问题类型不正确"), { statusCode: 400 });
+  }
+  const normalized = normalizeWordIssues([{
+    id: "validate",
+    word,
+    lessonLabel: typeof lessonLabel === "string" ? lessonLabel : word?.lessonTitle ?? "",
+    kinds: [kind],
+    createdAt: new Date().toISOString(),
+  }]);
+  if (normalized.length === 0) {
+    throw Object.assign(new Error("题目信息不完整"), { statusCode: 400 });
+  }
+  const safeWord = normalized[0].word;
+  const safeLabel = normalized[0].lessonLabel;
+
+  return runTransaction(learningDb, () => {
+    ensureStudent(learningDb, studentId);
+    const existing = getWordIssues(learningDb, studentId);
+    const next = toggleWordIssue(existing, safeWord, safeLabel, kind);
+    const nextById = new Map(next.map((issue) => [issue.id, issue]));
+    const deleteIssue = learningDb.prepare("DELETE FROM word_issues WHERE student_id = ? AND id = ?");
+    for (const issue of existing) {
+      if (!nextById.has(issue.id)) deleteIssue.run(studentId, issue.id);
+    }
+    const upsertIssue = learningDb.prepare(
+      `INSERT INTO word_issues (student_id, id, word_snapshot, lesson_label, wording_issue, pronunciation_issue, created_at, resolved_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(student_id, id) DO UPDATE SET
+         word_snapshot = excluded.word_snapshot,
+         lesson_label = excluded.lesson_label,
+         wording_issue = excluded.wording_issue,
+         pronunciation_issue = excluded.pronunciation_issue,
+         created_at = excluded.created_at,
+         resolved_at = excluded.resolved_at`,
+    );
+    for (const issue of next) {
+      const kinds = new Set(issue.kinds);
+      upsertIssue.run(
+        studentId, issue.id, JSON.stringify(issue.word), issue.lessonLabel || "",
+        kinds.has("wording") ? 1 : 0, kinds.has("pronunciation") ? 1 : 0,
+        issue.createdAt, issue.resolvedAt || null,
+      );
+    }
+    return { wordIssues: getWordIssues(learningDb, studentId) };
+  });
+};
+
+export const resolveSavedWordIssue = (learningDb, issueId, resolved, studentId = defaultStudentId) => {
+  if (typeof issueId !== "string" || !issueId || typeof resolved !== "boolean") {
+    throw Object.assign(new Error("参数格式不正确"), { statusCode: 400 });
+  }
+  return runTransaction(learningDb, () => {
+    const resolvedAt = resolved ? new Date().toISOString() : null;
+    const result = learningDb
+      .prepare("UPDATE word_issues SET resolved_at = ? WHERE student_id = ? AND id = ?")
+      .run(resolvedAt, studentId, issueId);
+    if (!result.changes) {
+      throw Object.assign(new Error("未找到对应的词库问题记录"), { statusCode: 404 });
+    }
+    return { wordIssues: getWordIssues(learningDb, studentId) };
+  });
+};
+
 export const saveState = (learningDb, state, studentId = defaultStudentId) => {
+  if (!state || typeof state !== "object" || !state.progress || typeof state.progress.lessonId !== "string" || !Number.isInteger(state.progress.grade)) {
+    throw Object.assign(new Error("保存内容格式不正确"), { statusCode: 400 });
+  }
   runTransaction(learningDb, () => {
     ensureStudent(learningDb, studentId);
     learningDb

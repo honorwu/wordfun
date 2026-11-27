@@ -1,4 +1,9 @@
-import type { AppDataResponse, ParentDataResponse, PracticeRequest, PracticeResponse, SaveStateRequest, SaveStateResponse } from "../../shared/contracts.ts";
+import type {
+  AppDataResponse, ParentDataResponse, PracticeRequest, PracticeResponse,
+  ResolveWordIssueRequest, SaveStateRequest, SaveStateResponse,
+  SubmitReviewRequest, SubmitReviewResponse, SupplementReviewRequest, SupplementReviewResponse,
+  ToggleWordIssueRequest, UpdateProgressRequest, UpdateProgressResponse, WordIssuesResponse,
+} from "../../shared/contracts.ts";
 import type { AppState, LessonSummary, PracticeMode, Progress } from "../../shared/types.ts";
 import { normalizeState } from "../../shared/domain/state.ts";
 
@@ -46,6 +51,36 @@ export const fetchPractice = (progress: Progress, mode: PracticeMode, signal: Ab
 
 export const fetchParentData = (signal: AbortSignal) =>
   requestJson<ParentDataResponse>("/api/parent-data", { method: "POST", signal });
+
+export const updateRemoteProgress = (progress: Progress) =>
+  requestJson<UpdateProgressResponse>("/api/progress", {
+    method: "PUT",
+    body: JSON.stringify({ progress } satisfies UpdateProgressRequest),
+  });
+
+export const submitRemoteReview = (payload: SubmitReviewRequest) =>
+  requestJson<SubmitReviewResponse>("/api/reviews", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const supplementRemoteReview = (logId: string, corrections: SupplementReviewRequest["corrections"]) =>
+  requestJson<SupplementReviewResponse>(`/api/reviews/${encodeURIComponent(logId)}/corrections`, {
+    method: "POST",
+    body: JSON.stringify({ corrections } satisfies SupplementReviewRequest),
+  });
+
+export const toggleRemoteWordIssue = (payload: ToggleWordIssueRequest) =>
+  requestJson<WordIssuesResponse>("/api/word-issues/toggle", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const resolveRemoteWordIssue = (issueId: string, resolved: boolean) =>
+  requestJson<WordIssuesResponse>(`/api/word-issues/${encodeURIComponent(issueId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ resolved } satisfies ResolveWordIssueRequest),
+  });
 
 export const saveRemoteState = async (state: SaveStateRequest) => {
   await requestJson<SaveStateResponse>("/api/state", {
