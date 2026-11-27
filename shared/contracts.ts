@@ -17,7 +17,7 @@ export type PracticeResponse = PracticeData;
 
 export interface ParentDataResponse {
   logs: ReviewLog[];
-  questions: DictationWord[];
+  questions?: DictationWord[];
   reviewCarryover: Record<string, QuestionCarryover>;
 }
 

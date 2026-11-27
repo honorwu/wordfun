@@ -3,6 +3,7 @@ import {
   generateCurrentLessonPractice, generatePoetryPractice, generateScreeningPractice, getScreeningQuestions,
 } from "../../shared/domain/practice.ts";
 import { historyQuestionStatus, historyRoundWordLimit } from "../../shared/domain/reviewPolicy.ts";
+import { buildPracticeMasks } from "./hintMask.mjs";
 
 const summarizeLesson = ({ words, textbookWords, dictationWords, classicalTexts, ...summary }) => summary;
 
@@ -42,11 +43,14 @@ export const createCatalogService = (db) => {
         const stat = wordStats[word.id];
         return historyQuestionStatus(stat, carryover[word.id], now);
       });
+      const items = mode === "history" ? generateScreeningPractice(lessons, state, historyRoundWordLimit, { carryover, now })
+        : lesson.lessonKind === "classical_poetry" ? generatePoetryPractice(lesson) : generateCurrentLessonPractice(lessons, state);
+      const termLessons = catalog().summaries.filter((entry) => entry.grade === lesson.grade && entry.unit === lesson.unit);
       return {
         lesson: { ...summarizeLesson(lesson), ...(mode === "lesson" && lesson.classicalTexts?.length ? { classicalTexts: lesson.classicalTexts } : {}) },
         mode,
-        items: mode === "history" ? generateScreeningPractice(lessons, state, historyRoundWordLimit, { carryover, now })
-          : lesson.lessonKind === "classical_poetry" ? generatePoetryPractice(lesson) : generateCurrentLessonPractice(lessons, state),
+        items,
+        masks: buildPracticeMasks(items, termLessons),
         stats: {
           historyTotal: previousStatuses.length,
           historyReviewed: previousStatuses.filter((status) => status === "mastered").length,

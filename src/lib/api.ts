@@ -49,8 +49,8 @@ export const fetchAppData = (): Promise<AppData> => {
 export const fetchPractice = (progress: Progress, mode: PracticeMode, signal: AbortSignal) =>
   requestJson<PracticeResponse>("/api/practice", { method: "POST", body: JSON.stringify({ progress, mode } satisfies PracticeRequest), signal });
 
-export const fetchParentData = (signal: AbortSignal) =>
-  requestJson<ParentDataResponse>("/api/parent-data", { method: "POST", signal });
+export const fetchParentData = (signal: AbortSignal, { includeQuestions = true } = {}) =>
+  requestJson<ParentDataResponse>(includeQuestions ? "/api/parent-data" : "/api/parent-data?includeQuestions=0", { method: "GET", signal });
 
 export const updateRemoteProgress = (progress: Progress) =>
   requestJson<UpdateProgressResponse>("/api/progress", {

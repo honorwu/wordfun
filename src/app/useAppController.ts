@@ -23,7 +23,7 @@ export function useAppController() {
 
   const {
     state, updateProgress, submitReview, saveCorrection, toggleIssue: toggleRemoteIssue, resolveIssue,
-    allLessons, selectedLesson, practiceItems, practiceLoading, practiceError, practiceWaitingForSave,
+    allLessons, selectedLesson, practiceItems, practiceMasks, practiceLoading, practiceError, practiceWaitingForSave,
     allKnownWords, parentState, questions, reviewCarryover, stats, parentReady, parentError, isReady, loadError, correctionSaving,
     invalidateParentData, retryLoad,
   } = useLearningData({ viewMode, practiceMode, roundId, onSaveError: setSavedMessage });
@@ -157,6 +157,7 @@ export function useAppController() {
     viewMode, setViewMode, correctionSaving, savedMessage, loadError, isReady, selectedLesson, parentReady, parentError, retryLoad,
     studentProps: {
       items: practiceLoading || practiceError ? [] : practiceItems,
+      masks: practiceLoading || practiceError ? undefined : practiceMasks,
       loading: practiceLoading && !practiceError,
       loadError: practiceError,
       waitingForSave: practiceWaitingForSave,

@@ -176,10 +176,11 @@ export function useLearningData({ viewMode, practiceMode, roundId, onSaveError }
     if (!isReady || viewMode !== "parent" || parentReady) return;
     const controller = new AbortController();
     setParentError("");
-    fetchParentData(controller.signal)
+    const includeQuestions = questions.length === 0;
+    fetchParentData(controller.signal, { includeQuestions })
       .then((data) => {
         if (controller.signal.aborted) return;
-        setQuestions(data.questions);
+        if (data.questions) setQuestions(data.questions);
         setHistoricalLogs(data.logs);
         setReviewCarryover(data.reviewCarryover ?? {});
         setParentReady(true);
@@ -188,7 +189,7 @@ export function useLearningData({ viewMode, practiceMode, roundId, onSaveError }
         if (!controller.signal.aborted) setParentError(error instanceof Error ? error.message : "学习记录加载失败");
       });
     return () => controller.abort();
-  }, [isReady, viewMode, parentReady, retryCount]);
+  }, [isReady, viewMode, parentReady, questions.length, retryCount]);
 
   useEffect(() => {
     if (!needsSave && !correctionSaving) return;
@@ -214,6 +215,7 @@ export function useLearningData({ viewMode, practiceMode, roundId, onSaveError }
   const selectedSummary = allLessons.find((lesson) => lesson.id === state.progress.lessonId) ?? allLessons[0];
   const selectedLesson = practiceData?.lesson ?? selectedSummary;
   const practiceItems = practiceData?.items ?? [];
+  const practiceMasks = practiceData?.masks;
   const saveError = saveFailure?.message ?? "";
   const fetchError = practiceFailure?.roundId === roundId && practiceFailure.retryCount === retryCount ? practiceFailure.message : "";
   const practiceError = practiceData ? "" : saveFailure ? saveError : fetchError;
@@ -248,7 +250,7 @@ export function useLearningData({ viewMode, practiceMode, roundId, onSaveError }
 
   return {
     state, updateProgress, submitReview, saveCorrection, toggleIssue, resolveIssue,
-    allLessons, selectedLesson, practiceItems, practiceLoading, practiceWaitingForSave, practiceError,
+    allLessons, selectedLesson, practiceItems, practiceMasks, practiceLoading, practiceWaitingForSave, practiceError,
     allKnownWords, parentState, questions, reviewCarryover, stats, parentReady, parentError, isReady, loadError, correctionSaving,
     invalidateParentData: () => setParentReady(false),
     retryLoad,

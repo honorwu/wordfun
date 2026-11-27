@@ -1,12 +1,10 @@
 import { pinyin } from "pinyin-pro";
-import type { DictationWord, PracticeItem } from "../../../shared/types.ts";
-import { hanChars } from "../../../shared/domain/characters.ts";
+import { hanChars } from "../../shared/domain/characters.ts";
 
-type MaskWord = Pick<DictationWord, "text" | "pinyin"> & Partial<Pick<DictationWord, "id" | "lessonId" | "poem">>;
 const blank = "〔　〕";
 const syllablePattern = /^[\p{Script=Latin}\p{Mark}]+$/u;
 
-export function createRoundTextMask(words: readonly MaskWord[]) {
+export function createRoundTextMask(words) {
   const answerChars = new Set(words.flatMap(({ text }) => hanChars(text)));
   const phrases = words.flatMap((word) => {
     const parts = word.poem
@@ -21,14 +19,14 @@ export function createRoundTextMask(words: readonly MaskWord[]) {
     });
   });
 
-  return (text: string, lessonId?: string, blankAnswer = blank): string => {
+  return (text, lessonId, blankAnswer = blank) => {
     if (!Array.from(text).some((char) => answerChars.has(char))) return text;
 
     // 完整题词沿用教材读音，重叠时先取长词，同形词优先取语境所在课。
     const matches = phrases.filter((phrase) => text.includes(phrase.text)).sort((a, b) =>
       b.sounds.length - a.sounds.length ||
       Number(b.lessonId === lessonId) - Number(a.lessonId === lessonId) || a.id.localeCompare(b.id));
-    const exactReadings = new Map<number, string>();
+    const exactReadings = new Map();
     for (const phrase of matches) {
       for (let start = text.indexOf(phrase.text); start >= 0; start = text.indexOf(phrase.text, start + 1)) {
         for (const { offset, syllable } of phrase.sounds) {
@@ -60,12 +58,31 @@ export function createRoundTextMask(words: readonly MaskWord[]) {
   };
 }
 
-export function maskedRoundHints(items: readonly PracticeItem[], mask = createRoundTextMask(items.map(({ word }) => word))) {
-  const hints = new Map<string, string>();
+export function maskedRoundHints(items, mask = createRoundTextMask(items.map(({ word }) => word))) {
+  const hints = new Map();
   for (const { word } of items) {
     if (!word.textbookHint) continue;
     const shown = mask(word.textbookHint, word.lessonId, word.text);
     if (shown !== word.textbookHint) hints.set(word.id, shown);
   }
   return hints;
+}
+
+export function buildPracticeMasks(items, termLessons) {
+  if (items.length === 0) {
+    return { hints: {}, lessonTitles: {}, itemTitles: {} };
+  }
+  const mask = createRoundTextMask(items.map(({ word }) => word));
+  const hints = Object.fromEntries(maskedRoundHints(items, mask));
+  const lessonTitles = {};
+  for (const entry of termLessons) {
+    const masked = mask(entry.title, entry.id);
+    if (masked !== entry.title) lessonTitles[entry.id] = masked;
+  }
+  const itemTitles = {};
+  for (const { word } of items) {
+    const masked = mask(word.lessonTitle, word.lessonId);
+    if (masked !== word.lessonTitle) itemTitles[word.id] = masked;
+  }
+  return { hints, lessonTitles, itemTitles };
 }

@@ -6,7 +6,7 @@ import { createCatalogService } from "../server/services/catalog.mjs";
 import { buildBookCharacterIndex, characterMastery, groupCharacterMastery, learnedTextbookChars } from "../shared/domain/characterMastery.ts";
 import { hanChars } from "../shared/domain/characters.ts";
 import { generateCurrentLessonPractice, generatePoetryPractice, getScreeningQuestions, getScreeningTargetChars } from "../shared/domain/practice.ts";
-import { createRoundTextMask, maskedRoundHints } from "../src/features/practice/hintMask.ts";
+import { createRoundTextMask, maskedRoundHints } from "../server/services/hintMask.mjs";
 
 test("新词库仅包含五册材料，课次、册末词和可用提示完整对应", () => {
   const db = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });

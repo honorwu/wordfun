@@ -17,6 +17,7 @@ ENV NODE_ENV=production \
     PORT=5174
 
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules/pinyin-pro ./node_modules/pinyin-pro
 COPY server ./server
 COPY shared ./shared
 COPY data/ziqu-catalog.sqlite ./data/ziqu-catalog.sqlite

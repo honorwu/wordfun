@@ -18,8 +18,9 @@ export const createApiHandler = (learning) => async (request, response, url) => 
   if (request.method === "POST" && url.pathname === "/api/practice") {
     return sendJson(response, 200, learning.practice(await readBody(request)), request);
   }
-  if (request.method === "POST" && url.pathname === "/api/parent-data") {
-    return sendJson(response, 200, learning.parentData(), request);
+  if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/parent-data") {
+    const includeQuestions = url.searchParams.get("includeQuestions") !== "0";
+    return sendJson(response, 200, learning.parentData({ includeQuestions }), request);
   }
   if (request.method === "PUT" && url.pathname === "/api/progress") {
     return sendJson(response, 200, learning.updateProgress(await readBody(request)), request);

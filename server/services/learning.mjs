@@ -25,10 +25,10 @@ export const createLearningService = ({ catalogDb, learningDb, studentId }) => {
       return catalog.practice(progress, wordStats, mode, carryover);
     },
     /** @returns {import("../../shared/contracts.ts").ParentDataResponse} */
-    parentData() {
+    parentData({ includeQuestions = true } = {}) {
       return {
         logs: getReviewLogs(learningDb, catalogDb, studentId),
-        questions: catalog.questions(),
+        ...(includeQuestions ? { questions: catalog.questions() } : {}),
         reviewCarryover: readCarryover(),
       };
     },

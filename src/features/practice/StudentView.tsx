@@ -1,12 +1,11 @@
 import { BookOpen, Check, ChevronRight, ClipboardCheck, History, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { DictationWord, Grade, LessonSummary, PracticeItem, PracticeLesson, PracticeStats, WordIssue, WordIssueKind } from "../../../shared/types.ts";
+import type { DictationWord, Grade, LessonSummary, PracticeItem, PracticeLesson, PracticeMasks, PracticeStats, WordIssue, WordIssueKind } from "../../../shared/types.ts";
 import type { PracticeMode, PracticePhase, CorrectionItem } from "./types";
 import { historyMistakeCooldownDays, historyRoundWordLimit } from "../../../shared/domain/index.ts";
 import { findWordIssue } from "../../../shared/domain/wordIssues.ts";
 import { gradeNames } from "../../data/metadata";
 import { termLabel, lessonNumberLabel, shortBookLabel, availableGrades } from "../../lib/lessonPresentation";
-import { createRoundTextMask, maskedRoundHints } from "./hintMask";
 import { CorrectionView } from "./CorrectionView";
 import { PoetryCard } from "./PoetryCard";
 import { DictationCard } from "./DictationCard";
@@ -22,6 +21,7 @@ export interface StudentViewProps {
   correctionItems: CorrectionItem[];
   pinyinShownWordIds: ReadonlySet<string>;
   items: PracticeItem[];
+  masks?: PracticeMasks;
   lastResult: { total: number; wrongQuestions: number; wrongChars: number };
   lesson: PracticeLesson;
   lessons: LessonSummary[];
@@ -49,6 +49,7 @@ export function StudentView({
   correctionItems,
   pinyinShownWordIds,
   items,
+  masks,
   lastResult,
   lesson,
   lessons,
@@ -79,22 +80,21 @@ export function StudentView({
   const grades = availableGrades(lessons);
   const terms = Array.from(new Set(lessons.filter((item) => item.grade === lesson.grade).map((item) => item.unit))).sort();
   const bookLabelsByLesson = useMemo(() => new Map(lessons.map((item) => [item.id, shortBookLabel(item)])), [lessons]);
-  const mask = useMemo(() => phase === "dictating" && items.length
-    ? createRoundTextMask(items.map(({ word }) => word))
-    : undefined, [items, phase]);
-  const maskedHints = useMemo(() => mask ? maskedRoundHints(items, mask) : new Map<string, string>(), [items, mask]);
+  const activeMasks = phase === "dictating" && items.length ? masks : undefined;
+  const maskedHints = useMemo(() => new Map(Object.entries(activeMasks?.hints ?? {})), [activeMasks]);
   const awaitingRound = loading || Boolean(loadError);
   const lessonChoices = useMemo(() => lessons
     .filter((entry) => entry.grade === lesson.grade && entry.unit === lesson.unit)
     .map((entry) => {
       const pendingLabel = entry.lessonKind === "classical_poetry" ? "古诗默写" : `第${entry.number}课`;
-      const label = awaitingRound ? pendingLabel : lessonNumberLabel(entry, mask ? mask(entry.title, entry.id) : entry.title);
+      const maskedTitle = activeMasks?.lessonTitles[entry.id] ?? entry.title;
+      const label = awaitingRound ? pendingLabel : lessonNumberLabel(entry, maskedTitle);
       return { id: entry.id, label };
-    }), [lessons, lesson.grade, lesson.unit, awaitingRound, mask]);
+    }), [lessons, lesson.grade, lesson.unit, awaitingRound, activeMasks]);
   const displayedLessonLabel = lessonChoices.find((entry) => entry.id === lesson.id)?.label ?? "当前课次";
   const questions = useMemo(() => items.map(({ word, reasons, mistakeReview }, index) => {
     const bookLabel = bookLabelsByLesson.get(word.lessonId);
-    const title = mask ? mask(word.lessonTitle, word.lessonId) : word.lessonTitle;
+    const title = activeMasks?.itemTitles[word.id] ?? word.lessonTitle;
     return {
       word,
       lessonSource: bookLabel ? `${bookLabel} · ${title}` : title,
@@ -102,7 +102,7 @@ export function StudentView({
       mistakeReview,
       poem: isPoetryMode ? word.poem ?? lesson.classicalTexts?.[index] : undefined,
     };
-  }), [items, bookLabelsByLesson, mask, isPoetryMode, lesson.classicalTexts]);
+  }), [items, bookLabelsByLesson, activeMasks, isPoetryMode, lesson.classicalTexts]);
 
   const pickFirstLesson = (grade: Grade, term?: number) => {
     const first = lessons.find((item) => item.grade === grade && (term ? item.unit === term : true));

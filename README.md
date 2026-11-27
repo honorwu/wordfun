@@ -41,10 +41,11 @@ npm run rebuild:catalog
 
 逐字成绩用于学习统计。每个字仍按写对次数减去写错次数计算净正确次数，达到 1 计为掌握。日常排题、订正和复练以固定题目为单位。此前由历史错字承接到的固定题在家长页计为「已练待巩固」，整题作答次数仍由实际批改产生。这些题遵守原来的五天间隔，完成整题判定后按本题成绩继续安排。
 
-可用以下命令查看学习库中按教材归类的逐字成绩。学习库和导出的报告含个人学习数据，请勿提交到仓库。
+可用以下命令查看学习库中按教材归类的逐字成绩，或在不中断服务的情况下在线热备份学习库。学习库和导出的报告含个人学习数据，请勿提交到仓库。
 
 ```bash
 npm run --silent mastery:report -- data/ziqu-learning-inherited-mastery.sqlite
+npm run backup:learning -- data/ziqu-learning-inherited-mastery.sqlite
 ```
 
 ## 运行
@@ -101,7 +102,7 @@ server/
 
 依赖方向：`src → shared`，`server → shared`；`shared` 不依赖 React、HTTP、SQLite 或前后端目录。后端路由调用服务，服务调用数据库模块；界面组件通过回调触发操作，不直接请求接口。`src/lib/api.ts` 按 `shared/contracts.ts` 构造请求、读取响应；这些类型描述现有协议，运行时校验规则沿用原实现。
 
-当课复习、历史复习和古诗默写的题目由后端生成，完整词库也在后端缓存。语音播放、提示、逐字选择和练习阶段由浏览器负责。批改与补记在浏览器调用共享规则后保存状态。
+当课复习、历史复习、古诗默写及本轮遮字由后端统一生成，完整词库也在后端缓存。语音播放、逐字选择和练习阶段由浏览器负责。批改、补记、进度切换和词库问题均通过服务端增量意图接口按服务端时钟原子写入，避免多端并发覆盖。
 
 `Lesson.unit` 对应 SQLite 的 `lessons.term`，其中 1 为上册，2 为下册。教材单元另存在 `lessons.unit_index` 和 `lessons.unit_name`。新增按单元复习时，按年级、册别和单元编号确定范围。
 
@@ -124,4 +125,4 @@ npm run build           # 严格类型检查、未使用代码检查、生产构
 docker compose up -d --build
 ```
 
-默认访问端口是 `5174`。Compose 将 `ziqu-data` 数据卷挂到 `/var/lib/ziqu`，服务使用其中的 `ziqu-learning-inherited-mastery.sqlite` 保存学习记录。更新容器时继续挂载同一个数据卷。全新安装会自动初始化学习库。课本词库随镜像更新，播音由浏览器提供。
+默认访问端口是 `5174`。Compose 将 `ziqu-data` 数据卷挂到 `/var/lib/ziqu`，服务使用其中的 `ziqu-learning-inherited-mastery.sqlite` 保存学习记录。更新容器时继续挂载同一个数据卷。全新安装会自动初始化学习库。课本词库随镜像更新，播音由浏览器提供。如部署在局域网或公网，可设置环境变量 `ZIQU_ACCESS_TOKEN` 启用 HTTP Basic 访问口令保护（`/api/health` 保持匿名供容器健康检查）。

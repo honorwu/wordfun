@@ -66,10 +66,17 @@ export interface PracticeStats {
 
 export type PracticeMode = "lesson" | "history";
 
+export interface PracticeMasks {
+  hints: Record<string, string>;
+  lessonTitles: Record<string, string>;
+  itemTitles: Record<string, string>;
+}
+
 export interface PracticeData {
   lesson: PracticeLesson;
   mode: PracticeMode;
   items: PracticeItem[];
+  masks?: PracticeMasks;
   stats: PracticeStats;
 }
 

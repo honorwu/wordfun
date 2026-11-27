@@ -12,6 +12,7 @@
     "rebuild:catalog": "node scripts/rebuild-catalog-from-materials.mjs",
     "rebuild:data": "node scripts/rebuild-catalog-from-materials.mjs",
     "mastery:report": "node scripts/report-character-mastery.mjs",
+    "backup:learning": "node scripts/backup-learning-db.mjs",
     "prompts:audit": "node scripts/audit-dictation-prompts.mjs",
     "prompts:coverage": "node scripts/audit-practice-coverage.mjs",
     "test": "node --test tests/*.test.mjs",

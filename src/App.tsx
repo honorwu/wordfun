@@ -4,9 +4,6 @@ import { StatusScreen } from "./components/StatusScreen";
 import { ParentView } from "./features/parent/ParentView";
 import { StudentView } from "./features/practice/StudentView";
 
-// 保留旧测试与脚本使用的导出。
-export { maskLessonTitle } from "./features/practice/titleMask";
-
 export default function App() {
   const app = useAppController();
   if (app.loadError) return <StatusScreen title="词库加载失败" detail={app.loadError} />;

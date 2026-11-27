@@ -2,7 +2,7 @@ import { Check } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { CorrectionItem } from "./types";
 import { mistakeReviewLabels } from "./types";
-import { hanCharacterCount } from "./titleMask";
+import { hanLength } from "../../../shared/domain/characters.ts";
 import { TextbookHint } from "./TextbookHint";
 import "./CorrectionView.css";
 
@@ -39,7 +39,7 @@ export function CorrectionView({ items, onFinish }: { items: CorrectionItem[]; o
       <div className={`correction-grid ${items.length === 1 ? "single" : ""}`}>
         {items.map((item, index) => {
           const mistakeOrder = new Map(item.wrongChars.map((char, mistakeIndex) => [char, mistakeIndex + 1]));
-          const isLongText = item.text.includes("\n") || hanCharacterCount(item.text) > 10;
+          const isLongText = item.text.includes("\n") || hanLength(item.text) > 10;
           const isPoetry = item.wordId.startsWith("poem-");
           const label = isPoetry ? "整首" : "整词";
           const repetitions = Math.max(2, item.mistakeCount + 1);

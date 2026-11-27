@@ -1,5 +1,5 @@
 import { BookOpenCheck } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { AppState, DictationWord, LessonSummary, QuestionCarryover } from "../../../shared/types.ts";
 import { lessonOrder } from "../../../shared/domain/catalog.ts";
 import { hasQuestionAttempt, isMasteredChar, isQuestionCarryoverActive, questionLearningState } from "../../../shared/domain/reviewPolicy.ts";
@@ -42,44 +42,54 @@ export function QuestionMasteryPanel({ charStats, questions, lessons, progress, 
   const [selectedBook, setSelectedBook] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState<keyof typeof labels>();
   const [visibleQuestionCount, setVisibleQuestionCount] = useState(previewSize);
-  const lessonsById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
-  const books = new Map<string, LessonSummary>();
-  const groups: Record<keyof typeof labels, Array<{ question: DictationWord; lesson: LessonSummary; carried?: boolean }>> = {
-    mastered: [], pending: [], unreviewed: [], future: [],
-  };
-  const allTargets = new Set<string>();
-  const learnedTargets = new Set<string>();
-  const attemptedTargets = new Set<string>();
-  let attemptedTotal = 0;
-  const progressOrder = lessonOrder(progress);
-  for (const question of questions) {
-    const lesson = lessonsById.get(question.lessonId);
-    if (!lesson || lesson.lessonKind === "classical_poetry") continue;
-    const book = bookKey(lesson);
-    books.set(book, lesson);
-    if (selectedBook !== "all" && selectedBook !== book) continue;
+  const { books, groups, allTargets, learnedTargets, attemptedTargets, attemptedTotal } = useMemo(() => {
+    const lessonsById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+    const bookMap = new Map<string, LessonSummary>();
+    const grouped: Record<keyof typeof labels, Array<{ question: DictationWord; lesson: LessonSummary; carried?: boolean }>> = {
+      mastered: [], pending: [], unreviewed: [], future: [],
+    };
+    const allTargetSet = new Set<string>();
+    const learnedTargetSet = new Set<string>();
+    const attemptedTargetSet = new Set<string>();
+    let attemptedCount = 0;
+    const progressOrder = lessonOrder(progress);
+    for (const question of questions) {
+      const lesson = lessonsById.get(question.lessonId);
+      if (!lesson || lesson.lessonKind === "classical_poetry") continue;
+      const book = bookKey(lesson);
+      bookMap.set(book, lesson);
+      if (selectedBook !== "all" && selectedBook !== book) continue;
 
-    for (const char of question.chars) allTargets.add(char);
-    if (lessonOrder(lesson) > progressOrder) {
-      groups.future.push({ question, lesson });
-      continue;
+      for (const char of question.chars) allTargetSet.add(char);
+      if (lessonOrder(lesson) > progressOrder) {
+        grouped.future.push({ question, lesson });
+        continue;
+      }
+
+      const stat = wordStats[question.id];
+      const carryover = reviewCarryover[question.id];
+      const carried = isQuestionCarryoverActive(stat, carryover);
+      const attempted = hasQuestionAttempt(stat) || carried;
+      if (attempted) attemptedCount++;
+      for (const char of question.chars) {
+        learnedTargetSet.add(char);
+        if (attempted) attemptedTargetSet.add(char);
+      }
+      const group = questionLearningState(stat, carryover);
+      grouped[group].push({ question, lesson, carried });
     }
+    return {
+      books: bookMap,
+      groups: grouped,
+      allTargets: allTargetSet,
+      learnedTargets: learnedTargetSet,
+      attemptedTargets: attemptedTargetSet,
+      attemptedTotal: attemptedCount,
+    };
+  }, [lessons, questions, progress, selectedBook, wordStats, reviewCarryover]);
 
-    const stat = wordStats[question.id];
-    const carryover = reviewCarryover[question.id];
-    const carried = isQuestionCarryoverActive(stat, carryover);
-    const attempted = hasQuestionAttempt(stat) || carried;
-    if (attempted) attemptedTotal++;
-    for (const char of question.chars) {
-      learnedTargets.add(char);
-      if (attempted) attemptedTargets.add(char);
-    }
-    const group = questionLearningState(stat, carryover);
-    groups[group].push({ question, lesson, carried });
-  }
-
+  const masteredCharTotal = useMemo(() => [...learnedTargets].filter((char) => isMasteredChar(charStats[char])).length, [learnedTargets, charStats]);
   if (!books.size) return null;
-  const masteredCharTotal = [...learnedTargets].filter((char) => isMasteredChar(charStats[char])).length;
   const masteredTotal = groups.mastered.length;
   const learnedTotal = masteredTotal + groups.pending.length + groups.unreviewed.length;
   const masteryPercent = masteredTotal === learnedTotal ? 100 : Math.min(99.9, Math.round(masteredTotal / learnedTotal * 1000) / 10);

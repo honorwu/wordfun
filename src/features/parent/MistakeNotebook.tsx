@@ -1,5 +1,5 @@
 import { NotebookPen, Printer } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { DictationWord, LessonSummary, WordStat } from "../../../shared/types.ts";
 import { lessonOrder } from "../../../shared/domain/catalog.ts";
 import { isMasteredQuestion } from "../../../shared/domain/reviewPolicy.ts";
@@ -20,17 +20,20 @@ export function MistakeNotebook({ carriedQuestions, scoredQuestions, selectedLes
 }) {
   const [filter, setFilter] = useState<"pending" | "history">("pending");
   const [visibleCount, setVisibleCount] = useState(pageSize);
-  const courseOrder = lessonOrder(selectedLesson);
-  const history: NotebookRow[] = scoredQuestions.filter(({ stat }) => stat.mistakes > 0)
-    .map((item) => ({ ...item, mastered: isMasteredQuestion(item.stat) }))
-    .sort((left, right) => Number(left.mastered) - Number(right.mastered)
-      || (right.stat.lastMistakeAt ?? "").localeCompare(left.stat.lastMistakeAt ?? ""));
-  const pending = new Map(history.filter(({ lesson, mastered }) => !mastered && lessonOrder(lesson) <= courseOrder)
-    .map((row) => [row.question.id, row]));
-  for (const { question, lesson } of carriedQuestions) {
-    if (lessonOrder(lesson) > courseOrder || pending.has(question.id)) continue;
-    pending.set(question.id, { question, lesson, mastered: false, carried: true });
-  }
+  const { history, pending } = useMemo(() => {
+    const courseOrder = lessonOrder(selectedLesson);
+    const historyRows: NotebookRow[] = scoredQuestions.filter(({ stat }) => stat.mistakes > 0)
+      .map((item) => ({ ...item, mastered: isMasteredQuestion(item.stat) }))
+      .sort((left, right) => Number(left.mastered) - Number(right.mastered)
+        || (right.stat.lastMistakeAt ?? "").localeCompare(left.stat.lastMistakeAt ?? ""));
+    const pendingMap = new Map(historyRows.filter(({ lesson, mastered }) => !mastered && lessonOrder(lesson) <= courseOrder)
+      .map((row) => [row.question.id, row]));
+    for (const { question, lesson } of carriedQuestions) {
+      if (lessonOrder(lesson) > courseOrder || pendingMap.has(question.id)) continue;
+      pendingMap.set(question.id, { question, lesson, mastered: false, carried: true });
+    }
+    return { history: historyRows, pending: pendingMap };
+  }, [scoredQuestions, carriedQuestions, selectedLesson]);
   const showHistory = filter === "history";
   const rows = showHistory ? history : [...pending.values()];
   const listTitle = showHistory ? "历史错题" : "待巩固题目";

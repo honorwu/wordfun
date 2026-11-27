@@ -688,4 +688,12 @@ test("增量意图接口按服务端时钟原子写入，互不覆盖并发变�
   assert.equal(finalState.wordStats[secondItem.word.id].mistakes, 1);
   assert.equal(finalState.wordIssues.length, 1);
   assert.ok(finalState.wordIssues[0].resolvedAt);
+
+  // 验证服务端直接返回遮字表且 GET /api/parent-data 支持省略全量题目
+  assert.ok(practice.masks && typeof practice.masks.hints === "object" && typeof practice.masks.lessonTitles === "object");
+  const parentLite = await api("/api/parent-data?includeQuestions=0", "GET");
+  assert.equal(parentLite.questions, undefined);
+  assert.equal(parentLite.logs.length, 1);
+  const parentFull = await api("/api/parent-data", "GET");
+  assert.ok(Array.isArray(parentFull.questions) && parentFull.questions.length > 0);
 });
