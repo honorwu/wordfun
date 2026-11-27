@@ -304,7 +304,7 @@ export function StudentView({
                 <p>{isPoetryMode ? "按题目拼音默写整篇" : mode === "history" ? (
                   <>
                     到期错题 {historyCounts.mistake} 题 · 近课未默 {historyCounts.recent} 题 · 基础题 {historyCounts.basic} 题<br />
-                    近课和基础题只选还未完整默写的题。错题复练时整题写对一次即可掌握。
+                    近课和基础题只选还未完整默写的题。错题累计写对次数多于写错次数才算掌握。
                   </>
                 ) : "听词语，写下每个字和拼音"}</p>
                 {!isPoetryMode && (

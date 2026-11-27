@@ -53,8 +53,7 @@ export const isHistoryCharCoolingDown = (stat?: CharacterStat) =>
 
 export const hasQuestionAttempt = (stat?: WordStat) => Boolean(stat && (stat.attempts > 0 || stat.lastReviewedAt));
 
-export const isMasteredQuestion = (stat?: WordStat) =>
-  Boolean(stat && stat.attempts > stat.mistakes && (stat.mistakes === 0 || stat.streak > 0));
+export const isMasteredQuestion = (stat?: WordStat) => netCorrectCount(stat) >= masteryNetCorrect;
 
 export const isPendingQuestionMistake = (stat?: WordStat) => Boolean(stat && stat.mistakes > 0 && !isMasteredQuestion(stat));
 

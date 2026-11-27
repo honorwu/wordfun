@@ -486,3 +486,77 @@ test("船身按本题的已提交成绩安排，龙船的错字只影响本题�
     learningDb.close(); catalogDb.close();
   }
 });
+
+test("整题必须对多于错才从历史复习退出，错两次后两对仍待巩固", async (t) => {
+  const firstReviewTime = Date.UTC(2025, 5, 1, 12);
+  const fiveDays = 5 * 24 * 60 * 60 * 1000;
+  t.mock.timers.enable({ apis: ["Date"], now: firstReviewTime });
+
+  const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
+  const learningDb = openLearningDatabase(":memory:");
+  const server = createAppServer({ catalogDb, learningDb });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(async () => {
+    server.closeAllConnections();
+    server.close();
+    await once(server, "close");
+    learningDb.close();
+    catalogDb.close();
+  });
+
+  const lessons = getLessons(catalogDb);
+  const [firstLesson, nextLesson] = lessons;
+  const progress = { grade: nextLesson.grade, lessonId: nextLesson.id };
+  const [word, ...remaining] = getScreeningQuestions(lessons, progress);
+  const context = { practiceMode: "history", lessons: [{ id: firstLesson.id, title: firstLesson.title }] };
+  const wordStats = Object.fromEntries(remaining.map(({ id }) => [id, { attempts: 1, mistakes: 0, streak: 1 }]));
+  saveState(learningDb, { ...getState(learningDb, catalogDb), progress, wordStats });
+
+  const request = async (url, method, body) => {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}${url}`, {
+      method, headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const round = () => request("/api/practice", "POST", { progress, mode: "history" });
+  const grade = async (items, wrong) => {
+    const keys = wrong ? new Set([charReviewKey(word.id, word.chars[0])]) : new Set();
+    const graded = applyReviewResult(getState(learningDb, catalogDb), items, keys, context);
+    assert.deepEqual(await request("/api/state", "PUT", { ...graded, logs: [graded.logs[0]] }), { ok: true });
+  };
+
+  for (const [index, wrong] of [true, true, false, false].entries()) {
+    t.mock.timers.setTime(firstReviewTime + index * fiveDays);
+    const { items } = await round();
+    assert.deepEqual(items.map(({ word }) => word.id), [word.id]);
+    if (index > 0) assert.equal(items[0].historyGroup, "mistake");
+    await grade(items, wrong);
+  }
+  const atTie = getState(learningDb, catalogDb).wordStats[word.id];
+  assert.equal(atTie.attempts - atTie.mistakes, 2);
+  assert.equal(atTie.mistakes, 2);
+
+  const pendingStats = {
+    historyTotal: remaining.length + 1, historyReviewed: remaining.length,
+    historyUnreviewed: 0, pendingMistakes: 1, waitingReview: 1,
+  };
+  t.mock.timers.setTime(firstReviewTime + 4 * fiveDays - 1);
+  const waiting = await round();
+  assert.deepEqual(waiting.items, []);
+  assert.deepEqual(waiting.stats, pendingStats);
+
+  t.mock.timers.setTime(firstReviewTime + 4 * fiveDays);
+  const due = await round();
+  assert.deepEqual(due.items.map(({ word, historyGroup }) => [word.id, historyGroup]), [[word.id, "mistake"]]);
+  assert.deepEqual(due.stats, { ...pendingStats, waitingReview: 0 });
+  await grade(due.items, false);
+
+  const mastered = getState(learningDb, catalogDb).wordStats[word.id];
+  assert.equal(mastered.attempts - mastered.mistakes, 3);
+  assert.equal(mastered.mistakes, 2);
+  const complete = await round();
+  assert.deepEqual(complete.items, []);
+  assert.deepEqual(complete.stats, { ...pendingStats, historyReviewed: remaining.length + 1, pendingMistakes: 0, waitingReview: 0 });
+});

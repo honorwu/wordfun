@@ -129,59 +129,79 @@ test("补记窗口包含完成后的第 72 小时，之后保持原记录", () =
   assert.equal(addMissedWrongChars(state, log.id, corrections, words, deadline + 1), state);
 });
 
-test("补记旧场次保留后来整题正确的掌握状态，补记最近场次则取消掌握", (t) => {
+test("补记按更正后的累计对错判定掌握，补记最近一场后仍可掌握", (t) => {
   const firstTime = Date.UTC(2026, 10, 10, 12);
   t.mock.timers.enable({ apis: ["Date"], now: firstTime });
   const question = items[0];
-  const first = applyReviewResult(createDefaultState(progress), [question], new Set(), context);
-  t.mock.timers.setTime(firstTime + 60 * 60 * 1000);
-  const second = applyReviewResult(first, [question], new Set(), context);
-  const [latest, earlier] = second.logs;
+  let state = createDefaultState(progress);
+  for (let hour = 0; hour < 4; hour++) {
+    t.mock.timers.setTime(firstTime + hour * 60 * 60 * 1000);
+    state = applyReviewResult(state, [question], new Set(), context);
+  }
+  const latest = state.logs[0];
+  const earliest = state.logs.at(-1);
   const corrections = [{ wordId: question.word.id, char: "山" }];
   const words = new Map([[question.word.id, question.word]]);
 
-  const earlierCorrected = addMissedWrongChars(second, earlier.id, corrections, words);
-  assert.equal(earlierCorrected.wordStats.mountains.mistakes, 1);
-  assert.equal(isMasteredQuestion(earlierCorrected.wordStats.mountains), true);
-
-  const latestCorrected = addMissedWrongChars(second, latest.id, corrections, words);
-  assert.equal(latestCorrected.wordStats.mountains.attempts, 2);
+  const latestCorrected = addMissedWrongChars(state, latest.id, corrections, words);
+  assert.equal(latestCorrected.wordStats.mountains.attempts, 4);
   assert.equal(latestCorrected.wordStats.mountains.mistakes, 1);
-  assert.equal(isMasteredQuestion(latestCorrected.wordStats.mountains), false);
+  assert.equal(isMasteredQuestion(latestCorrected.wordStats.mountains), true);
+
+  const bothCorrected = addMissedWrongChars(latestCorrected, earliest.id, corrections, words);
+  assert.equal(bothCorrected.wordStats.mountains.attempts, 4);
+  assert.equal(bothCorrected.wordStats.mountains.mistakes, 2);
+  assert.equal(isMasteredQuestion(bothCorrected.wordStats.mountains), false);
+  assert.equal(bothCorrected.wordStats.mountains.lastMistakeAt, latest.date);
+  assert.equal(bothCorrected.logs.length, 4);
 });
 
-test("历史错题满五天后才再练，多次写错后一次整题正确即掌握", (t) => {
+test("历史错题每次复测间隔五天，错两次后累计对三次才掌握", (t) => {
   const fiveDays = 5 * 24 * 60 * 60 * 1000;
-  const firstMistake = new Date(2026, 10, 10, 23).getTime();
-  t.mock.timers.enable({ apis: ["Date"], now: firstMistake + fiveDays - 1 });
+  const lastMistake = Date.UTC(2026, 10, 10, 15);
+  t.mock.timers.enable({ apis: ["Date"], now: lastMistake });
   const lessons = withStoredQuestions([
     { id: "previous", grade: 3, unit: 1, number: 1, title: "前课", directDictation: true, words: [word("mountains", "山河", ["山", "河"])] },
     { id: "current", grade: 3, unit: 1, number: 2, title: "本课", words: [] },
   ]);
-  const state = createDefaultState(progress);
-  state.wordStats.mountains = { attempts: 3, mistakes: 3, streak: 0, lastMistakeAt: new Date(firstMistake).toISOString() };
-  assert.deepEqual(generateScreeningPractice(lessons, state), []);
-  t.mock.timers.setTime(firstMistake + fiveDays);
-  const first = generateScreeningPractice(lessons, state);
-  assert.deepEqual(first.map(({ word, historyGroup }) => [word, historyGroup]), [[lessons[0].dictationWords[0], "mistake"]]);
-  const mastered = applyReviewResult(state, first, new Set(), { ...context, practiceMode: "history" });
-  assert.equal(mastered.wordStats.mountains.attempts, 4);
-  assert.equal(mastered.wordStats.mountains.mistakes, 3);
-  assert.equal(isMasteredQuestion(mastered.wordStats.mountains), true);
-  assert.deepEqual(generateScreeningPractice(lessons, mastered), []);
-  t.mock.timers.setTime(firstMistake + 2 * fiveDays);
-  assert.deepEqual(generateScreeningPractice(lessons, mastered), []);
+  let state = createDefaultState(progress);
+  state.wordStats.mountains = { attempts: 2, mistakes: 2, streak: 0, lastMistakeAt: new Date(lastMistake).toISOString() };
+  const historyContext = { ...context, practiceMode: "history" };
+  for (const correctCount of [1, 2, 3]) {
+    const dueAt = lastMistake + correctCount * fiveDays;
+    t.mock.timers.setTime(dueAt - 1);
+    assert.deepEqual(generateScreeningPractice(lessons, state), []);
+    t.mock.timers.setTime(dueAt);
+    const restudy = generateScreeningPractice(lessons, state);
+    assert.deepEqual(restudy.map(({ word, historyGroup }) => [word.id, historyGroup]), [["mountains", "mistake"]]);
+    state = applyReviewResult(state, restudy, new Set(), historyContext);
+    assert.equal(state.wordStats.mountains.attempts, 2 + correctCount);
+    assert.equal(state.wordStats.mountains.mistakes, 2);
+    assert.equal(isMasteredQuestion(state.wordStats.mountains), correctCount === 3);
+  }
 
-  const formerlyCorrect = { ...state, wordStats: { mountains: { attempts: 5, mistakes: 0, streak: 0 } } };
-  assert.equal(isMasteredQuestion(formerlyCorrect.wordStats.mountains), true);
-  const missedAgain = applyReviewResult(formerlyCorrect, first, new Set([charReviewKey("mountains", "山")]), context);
-  assert.equal(missedAgain.wordStats.mountains.mistakes, 1);
-  assert.equal(isMasteredQuestion(missedAgain.wordStats.mountains), false);
-  assert.deepEqual(generateScreeningPractice(lessons, missedAgain), []);
-  t.mock.timers.setTime(firstMistake + 3 * fiveDays - 1);
-  assert.deepEqual(generateScreeningPractice(lessons, missedAgain), []);
-  t.mock.timers.setTime(firstMistake + 3 * fiveDays);
-  assert.deepEqual(generateScreeningPractice(lessons, missedAgain).map(({ word, historyGroup }) => [word.id, historyGroup]), [["mountains", "mistake"]]);
+  const againAt = lastMistake + 4 * fiveDays;
+  t.mock.timers.setTime(againAt);
+  assert.deepEqual(generateScreeningPractice(lessons, state), []);
+
+  const lessonItems = [items[0]];
+  const wrong = new Set([charReviewKey("mountains", "山")]);
+  const tied = applyReviewResult(state, lessonItems, wrong, context);
+  assert.equal(tied.wordStats.mountains.attempts, 6);
+  assert.equal(tied.wordStats.mountains.mistakes, 3);
+  assert.equal(isMasteredQuestion(tied.wordStats.mountains), false);
+
+  const extraCorrect = applyReviewResult(state, lessonItems, new Set(), context);
+  const stillMastered = applyReviewResult(extraCorrect, lessonItems, wrong, context);
+  assert.equal(stillMastered.wordStats.mountains.attempts, 7);
+  assert.equal(stillMastered.wordStats.mountains.mistakes, 3);
+  assert.equal(isMasteredQuestion(stillMastered.wordStats.mountains), true);
+
+  t.mock.timers.setTime(againAt + fiveDays - 1);
+  assert.deepEqual(generateScreeningPractice(lessons, tied), []);
+  t.mock.timers.setTime(againAt + fiveDays);
+  assert.deepEqual(generateScreeningPractice(lessons, tied).map(({ word, historyGroup }) => [word.id, historyGroup]), [["mountains", "mistake"]]);
+  assert.deepEqual(generateScreeningPractice(lessons, stillMastered), []);
 });
 
 test("旧错字按新题到期复练，承接和题级错题共用配额", (t) => {
@@ -357,6 +377,11 @@ test("历史复习先练到期错题，等待期间继续练新题，再复测�
   practice("青");
   assert.deepEqual(nextItems(), []);
   t.mock.timers.setTime(new Date(2026, 10, 8, 12).getTime());
+  practice("山");
+  practice("新");
+  assert.equal(isMasteredQuestion(state.wordStats.new), false);
+  assert.deepEqual(nextItems(), []);
+  t.mock.timers.setTime(new Date(2026, 10, 13, 12).getTime());
   practice("新");
   assert.ok(Object.values(state.wordStats).every(isMasteredQuestion));
   assert.deepEqual(nextItems(), []);

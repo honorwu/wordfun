@@ -91,7 +91,7 @@ export function QuestionMasteryPanel({ charStats, questions, lessons, progress, 
       <div className="mastery-heading">
         <div>
           <div className="panel-heading"><BookOpenCheck size={20} aria-hidden="true" /><h2>字词掌握进度</h2></div>
-          <p>统计到当前课（含本课）。最近一次整题批改全对即掌握。考察字按字去重，古诗按整篇另计。</p>
+          <p>统计到当前课（含本课）。整题累计写对次数多于写错次数才算掌握，错题的两项次数持平时仍待巩固。考察字按字去重，古诗按整篇另计。</p>
         </div>
         <label>教材范围
           <select value={selectedBook} onChange={(event) => {
