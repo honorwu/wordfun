@@ -10,5 +10,8 @@ dist/
 data/ziqu-learning*.sqlite*
 data/ziqu.sqlite
 
+textbook/*.pdf
+pdf/*.pdf
+
 .DS_Store
 Thumbs.db

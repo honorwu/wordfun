@@ -75,7 +75,7 @@ export function StudentView({
   }
   const safeActiveItemIndex = Math.max(0, Math.min(activeItemIndex, Math.max(0, items.length - 1)));
   const isPoetryMode = mode === "lesson" && lesson.lessonKind === "classical_poetry";
-  const { speechPlayback, stopPlayback, startDoublePlayback } = useSpeechPlayback({ items, isPoetryMode, phase, onActivate: setActiveItemIndex });
+  const { speechPlayback, speechError, clearSpeechError, stopPlayback, startDoublePlayback } = useSpeechPlayback({ items, isPoetryMode, phase, onActivate: setActiveItemIndex });
   const grades = availableGrades(lessons);
   const terms = Array.from(new Set(lessons.filter((item) => item.grade === lesson.grade).map((item) => item.unit))).sort();
   const bookLabelsByLesson = useMemo(() => new Map(lessons.map((item) => [item.id, shortBookLabel(item)])), [lessons]);
@@ -111,9 +111,10 @@ export function StudentView({
 
   useEffect(() => {
     stopPlayback();
+    clearSpeechError();
     setActiveItemIndex(0);
     setFinishArmed(false);
-  }, [items.length, lesson.id, mode, stopPlayback]);
+  }, [items, lesson.id, mode, stopPlayback, clearSpeechError]);
 
   useEffect(() => {
     if (phase !== "dictating") {
@@ -319,6 +320,10 @@ export function StudentView({
 
           {phase === "reviewing" && !isPoetryMode ? (
             <p className="word-issue-guide">发现组词不合适或读音不准？在题卡下方标记，家长之后会统一核对。题目问题与写错的字分别标记。</p>
+          ) : null}
+
+          {phase === "dictating" && !isPoetryMode && speechError ? (
+            <p className="word-issue-guide" role="alert">{speechError}</p>
           ) : null}
 
           {phase === "dictating" && !isPoetryMode && items.some((item) => item.word.textbookHint) ? (

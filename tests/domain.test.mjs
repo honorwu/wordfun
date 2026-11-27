@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { lessonOrder, progressOrder } from "../shared/domain/catalog.ts";
 import { charReviewKey } from "../shared/domain/characters.ts";
 import { generatePoetryPractice, generateScreeningPractice, getScreeningTargetChars, summarizeCoverage } from "../shared/domain/practice.ts";
 import { hasQuestionAttempt, isMasteredChar, isMasteredQuestion } from "../shared/domain/reviewPolicy.ts";
@@ -538,4 +539,11 @@ test("未练基础题不足五道时只排剩余未练题", (t) => {
   assert.deepEqual(first.map(({ word, historyGroup }) => [word.id, historyGroup]), untouched.map(({ id }) => [id, "basic"]));
   const graded = applyReviewResult(state, first, new Set());
   assert.deepEqual(generateScreeningPractice(lessons, graded), []);
+});
+
+test("progressOrder 找不到课次时按同量级年级序兜底", () => {
+  const gradeTwoLesson = { id: "g2-1", grade: 2, unit: 1, number: 1, title: "二上第一课", words: [] };
+  const fallback = progressOrder({ grade: 3, lessonId: "missing-lesson" }, [gradeTwoLesson]);
+  assert.equal(fallback, 30000);
+  assert.ok(fallback > lessonOrder(gradeTwoLesson));
 });

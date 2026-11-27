@@ -560,3 +560,39 @@ test("整题必须对多于错才从历史复习退出，错两次后两对仍�
   assert.deepEqual(complete.items, []);
   assert.deepEqual(complete.stats, { ...pendingStats, historyReviewed: remaining.length + 1, pendingMistakes: 0, waitingReview: 0 });
 });
+
+test("健康检查不泄露本机路径，静态文件服务安全处理目录、非法路径与 HEAD 请求", async (t) => {
+  const catalogDb = new DatabaseSync(defaultCatalogDatabasePath, { readOnly: true });
+  const learningDb = openLearningDatabase(":memory:");
+  const server = createAppServer({ catalogDb, learningDb });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(async () => {
+    server.closeAllConnections();
+    server.close();
+    await once(server, "close");
+    learningDb.close();
+    catalogDb.close();
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const healthRes = await fetch(`${baseUrl}/api/health`);
+  assert.equal(healthRes.status, 200);
+  assert.deepEqual(await healthRes.json(), { ok: true });
+
+  const badEncoding = await fetch(`${baseUrl}/%E0%A4%A`);
+  assert.equal(badEncoding.status, 400);
+
+  const traversal = await fetch(`${baseUrl}/..%2fpackage.json`);
+  assert.equal(traversal.status, 403);
+
+  const dirReq = await fetch(`${baseUrl}/assets`);
+  assert.ok(dirReq.status === 200 || dirReq.status === 404);
+  await dirReq.text();
+
+  const headReq = await fetch(`${baseUrl}/`, { method: "HEAD" });
+  assert.ok(headReq.status === 200 || headReq.status === 404);
+
+  const postStatic = await fetch(`${baseUrl}/`, { method: "POST" });
+  assert.equal(postStatic.status, 405);
+});

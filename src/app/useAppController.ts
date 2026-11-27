@@ -24,10 +24,20 @@ export function useAppController() {
   const [lastResult, setLastResult] = useState({ total: 0, wrongQuestions: 0, wrongChars: 0 });
 
   const {
-    state, setState, allLessons, selectedLesson, practiceItems, practiceLoading, practiceError, practiceWaitingForSave,
+    state, setState, saveImmediately, allLessons, selectedLesson, practiceItems, practiceLoading, practiceError, practiceWaitingForSave,
     allKnownWords, parentState, questions, reviewCarryover, stats, parentReady, parentError, isReady, loadError, correctionSaving, saveCorrection,
     invalidateParentData, retryLoad,
   } = useLearningData({ viewMode, practiceMode, roundId, onSaveError: setSavedMessage });
+
+  const confirmLeaveActivePhase = () => {
+    if (phase === "reviewing") {
+      return window.confirm("当前正在批改，切换后本轮未提交的批改结果将清空，确定要切换吗？");
+    }
+    if (phase === "correcting") {
+      return window.confirm("当前还未完成订正，确定要离开本轮订正吗？");
+    }
+    return true;
+  };
 
   const resetPractice = (nextMode = practiceMode) => {
     setPracticeMode(nextMode);
@@ -41,6 +51,7 @@ export function useAppController() {
 
   const setProgress = (lesson: LessonSummary) => {
     if (lesson.id === state.progress.lessonId) return;
+    if (!confirmLeaveActivePhase()) return;
     setState((current) => ({ ...current, progress: { grade: lesson.grade, lessonId: lesson.id } }));
     invalidateParentData();
     resetPractice();
@@ -105,6 +116,7 @@ export function useAppController() {
       }];
     });
     setState(nextState);
+    saveImmediately(nextState);
     invalidateParentData();
     setCorrectionItems(nextCorrectionItems);
     setLastResult({
@@ -172,7 +184,7 @@ export function useAppController() {
       onSave: saveReview,
       onSelectLesson: setProgress,
       onSelectMode: (mode) => {
-        if (mode !== practiceMode) resetPractice(mode);
+        if (mode !== practiceMode && confirmLeaveActivePhase()) resetPractice(mode);
       },
       onToggleWrong: toggleWrongChar,
       onToggleIssue: toggleIssue,

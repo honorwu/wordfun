@@ -8,7 +8,7 @@ export const isVocabularyLesson = (lesson: Pick<Lesson, "lessonKind">) =>
 
 export const progressOrder = (progress: Progress, lessons: Lesson[]) => {
   const selected = lessons.find((lesson) => lesson.id === progress.lessonId);
-  return selected ? lessonOrder(selected) : progress.grade * 1000;
+  return selected ? lessonOrder(selected) : progress.grade * 10000;
 };
 
 export const getDictationWords = (lessons: Lesson[]) => lessons.flatMap((lesson) => lesson.dictationWords ?? []);

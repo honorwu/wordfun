@@ -1,20 +1,19 @@
-import { getPracticeSnapshot, getReviewActivity, getReviewCarryover, getReviewLogs, getState, saveState } from "../db/learning.mjs";
+import { getAppDataSnapshot, getPracticeSnapshot, getReviewCarryover, getReviewLogs, saveState } from "../db/learning.mjs";
 import { createCatalogService } from "./catalog.mjs";
 
 // 组合词库和学习记录；HTTP 层只负责请求解析与响应。
 export const createLearningService = ({ catalogDb, learningDb, studentId }) => {
   const catalog = createCatalogService(catalogDb);
-  const readState = (options) => getState(learningDb, catalogDb, studentId, options);
   const readCarryover = () => getReviewCarryover(learningDb, studentId);
   return {
     /** @returns {import("../../shared/contracts.ts").AppDataResponse} */
     appData() {
-      const state = readState({ includeLogs: false });
+      const { state, activity, carryover } = getAppDataSnapshot(learningDb, catalogDb, studentId);
       return {
         lessons: catalog.summaries(),
         state,
-        activity: getReviewActivity(learningDb, studentId),
-        practice: catalog.practice(state.progress, state.wordStats, "lesson", readCarryover()),
+        activity,
+        practice: catalog.practice(state.progress, state.wordStats, "lesson", carryover),
       };
     },
     /** @param {import("../../shared/contracts.ts").PracticeRequest} body */

@@ -1,9 +1,17 @@
 .cache
 .env
+.env.*
 .git
 .gitignore
 dist
 node_modules
 npm-debug.log
+*.tsbuildinfo
+*.md
 data/ziqu-learning*.sqlite*
 data/ziqu.sqlite*
+textbook
+pdf
+scripts
+tests
+tools

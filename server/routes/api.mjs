@@ -1,9 +1,8 @@
-import { defaultCatalogDatabasePath, defaultLearningDatabasePath } from "../config.mjs";
 import { readBody, sendJson } from "../http/json.mjs";
 
 export const createApiHandler = (learning) => async (request, response, url) => {
   if (request.method === "GET" && url.pathname === "/api/health") {
-    return sendJson(response, 200, { ok: true, catalogDb: defaultCatalogDatabasePath, learningDb: defaultLearningDatabasePath });
+    return sendJson(response, 200, { ok: true }, request);
   }
   if (request.method === "GET" && url.pathname === "/api/app-data") {
     return sendJson(response, 200, learning.appData(), request);

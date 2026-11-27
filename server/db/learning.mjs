@@ -1,6 +1,6 @@
 import { isWithinReviewCorrectionWindow } from "../../shared/domain/reviewPolicy.ts";
 import { defaultStudentId } from "../config.mjs";
-import { allRows, oneRow, runTransaction } from "./query.mjs";
+import { allRows, oneRow, runReadTransaction, runTransaction } from "./query.mjs";
 
 const defaultProgress = (catalogDb) =>
   oneRow(
@@ -66,10 +66,19 @@ export const getReviewCarryover = (learningDb, studentId = defaultStudentId) => 
   studentId,
 ).map(({ word_id, baseline_attempts, available_at }) => [word_id, { baselineAttempts: baseline_attempts, availableAt: available_at }]));
 
-export const getPracticeSnapshot = (learningDb, studentId = defaultStudentId) => runTransaction(learningDb, () => ({
+export const getPracticeSnapshot = (learningDb, studentId = defaultStudentId) => runReadTransaction(learningDb, () => ({
   wordStats: getWordStats(learningDb, studentId),
   carryover: getReviewCarryover(learningDb, studentId),
 }));
+
+export const getAppDataSnapshot = (learningDb, catalogDb, studentId = defaultStudentId) => {
+  ensureDefaultStudent(learningDb, catalogDb, studentId);
+  return runReadTransaction(learningDb, () => ({
+    state: getState(learningDb, catalogDb, studentId, { includeLogs: false, ensureStudentExists: false }),
+    activity: getReviewActivity(learningDb, studentId),
+    carryover: getReviewCarryover(learningDb, studentId),
+  }));
+};
 
 export const getReviewLogs = (learningDb, catalogDb, studentId = defaultStudentId) => {
   const logRows = allRows(learningDb, "SELECT id, date, practice_mode FROM review_logs WHERE student_id = ? ORDER BY date DESC", studentId);
@@ -133,8 +142,8 @@ export const getReviewLogs = (learningDb, catalogDb, studentId = defaultStudentI
   });
 };
 
-export const getState = (learningDb, catalogDb, studentId = defaultStudentId, { includeLogs = true } = {}) => {
-  ensureDefaultStudent(learningDb, catalogDb, studentId);
+export const getState = (learningDb, catalogDb, studentId = defaultStudentId, { includeLogs = true, ensureStudentExists = true } = {}) => {
+  if (ensureStudentExists) ensureDefaultStudent(learningDb, catalogDb, studentId);
   const progress = oneRow(learningDb, "SELECT grade, lesson_id FROM progress WHERE student_id = ?", studentId) || defaultProgress(catalogDb);
   const wordStats = getWordStats(learningDb, studentId);
   const charStats = {};

@@ -3,6 +3,7 @@ import type { AppState, DictationWord, LessonSummary, PracticeData, PracticeMode
 import { lessonOrder } from "../../shared/domain/catalog.ts";
 import { createDefaultState } from "../../shared/domain/state.ts";
 import { fetchAppData, fetchParentData, fetchPractice, saveRemoteState } from "../lib/api";
+import { localDateKey } from "../lib/dates";
 import type { ViewMode } from "./types";
 
 // 管理远程数据的生命周期；练习阶段、批改草稿等页面状态由控制器维护。
@@ -28,6 +29,7 @@ export function useLearningData({ viewMode, practiceMode, roundId, onSaveError }
   const [savedState, setSavedState] = useState<AppState | null>(null);
   const [saveFailure, setSaveFailure] = useState<{ state: AppState; retryCount: number; message: string } | null>(null);
   const [correctionSaving, setCorrectionSaving] = useState(false);
+  const [todayKey, setTodayKey] = useState(() => localDateKey(new Date()));
 
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const savedStateRef = useRef<AppState | null>(null);
@@ -49,6 +51,15 @@ export function useLearningData({ viewMode, practiceMode, roundId, onSaveError }
     saveQueueRef.current = task;
     return task;
   }, []);
+
+  const saveImmediately = useCallback((snapshot: AppState) => {
+    window.clearTimeout(saveTimerRef.current);
+    void queueSave(snapshot).catch((error: unknown) => {
+      const message = error instanceof Error ? `学习记录保存失败：${error.message}` : "学习记录保存失败";
+      setSaveFailure({ state: snapshot, retryCount, message });
+      onSaveError(message);
+    });
+  }, [queueSave, retryCount, onSaveError]);
 
   useEffect(() => {
     let active = true;
@@ -152,19 +163,38 @@ export function useLearningData({ viewMode, practiceMode, roundId, onSaveError }
     for (const log of state.logs) logs.set(log.id, log);
     return { ...state, logs: [...logs.values()].sort((a, b) => b.date.localeCompare(a.date)) };
   }, [state, historicalLogs]);
+  useEffect(() => {
+    if (!needsSave && !correctionSaving) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [needsSave, correctionSaving]);
+
+  useEffect(() => {
+    const refreshToday = () => setTodayKey(localDateKey(new Date()));
+    document.addEventListener("visibilitychange", refreshToday);
+    window.addEventListener("focus", refreshToday);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshToday);
+      window.removeEventListener("focus", refreshToday);
+    };
+  }, []);
+
   const stats = useMemo(() => {
     const activity = new Map(reviewActivity.map((item) => [item.id, item]));
     for (const log of state.logs) activity.set(log.id, { id: log.id, date: log.date, count: log.wordIds.length });
-    const today = new Date().toDateString();
     let todayCount = 0;
     for (const item of activity.values()) {
-      if (new Date(item.date).toDateString() === today) todayCount += item.count;
+      if (localDateKey(new Date(item.date)) === todayKey) todayCount += item.count;
     }
     return { ...(practiceData?.stats ?? { historyTotal: 0, historyReviewed: 0, historyUnreviewed: 0, pendingMistakes: 0, waitingReview: 0 }), todayCount };
-  }, [practiceData, reviewActivity, state.logs]);
+  }, [practiceData, reviewActivity, state.logs, todayKey]);
 
   return {
-    state, setState, allLessons, selectedLesson, practiceItems, practiceLoading, practiceWaitingForSave, practiceError,
+    state, setState, saveImmediately, allLessons, selectedLesson, practiceItems, practiceLoading, practiceWaitingForSave, practiceError,
     allKnownWords, parentState, questions, reviewCarryover, stats, parentReady, parentError, isReady, loadError, correctionSaving, saveCorrection,
     invalidateParentData: () => setParentReady(false),
     retryLoad: () => setRetryCount((count) => count + 1),

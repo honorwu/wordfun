@@ -1,26 +1,66 @@
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, statSync } from "node:fs";
 import path from "node:path";
 import { projectRoot } from "../config.mjs";
 import { sendJson } from "./json.mjs";
 
-const distDir = path.join(projectRoot, "dist");
+const distDir = path.resolve(projectRoot, "dist");
 
-export const serveStatic = async (response, pathname) => {
-  if (!existsSync(distDir)) {
-    return sendJson(response, 404, { error: "Frontend build not found. Run npm run build or use npm run dev." });
+const isFile = (targetPath) => Boolean(statSync(targetPath, { throwIfNoEntry: false })?.isFile());
+
+export const serveStatic = async (request, response, pathname) => {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return sendJson(response, 405, { error: "Method not allowed" }, request);
+  }
+  const indexPath = path.join(distDir, "index.html");
+  if (!isFile(indexPath)) {
+    return sendJson(response, 404, { error: "Frontend build not found. Run npm run build or use npm run dev." }, request);
   }
 
-  const safePath = path.normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, "");
-  let filePath = path.join(distDir, safePath === "/" ? "index.html" : safePath);
-  if (!filePath.startsWith(distDir)) {
-    return sendJson(response, 403, { error: "Forbidden" });
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(pathname);
+  } catch {
+    return sendJson(response, 400, { error: "Invalid request path" }, request);
   }
-  if (!existsSync(filePath)) {
-    filePath = path.join(distDir, "index.html");
+  if (decodedPath.includes("\0")) {
+    return sendJson(response, 400, { error: "Invalid request path" }, request);
   }
 
-  response.writeHead(200, { "content-type": mimeType(filePath) });
-  createReadStream(filePath).pipe(response);
+  const relativePath = decodedPath === "/" ? "index.html" : decodedPath.replace(/^[/\\]+/, "");
+  let filePath = path.resolve(distDir, relativePath);
+  if (filePath !== distDir && !filePath.startsWith(distDir + path.sep)) {
+    return sendJson(response, 403, { error: "Forbidden" }, request);
+  }
+  if (!isFile(filePath)) {
+    filePath = indexPath;
+  }
+
+  const fileStat = statSync(filePath);
+  const relativeServed = path.relative(distDir, filePath).split(path.sep).join("/");
+  const cacheControl = relativeServed.startsWith("assets/")
+    ? "public, max-age=31536000, immutable"
+    : "no-cache";
+  const headers = {
+    "content-type": mimeType(filePath),
+    "content-length": String(fileStat.size),
+    "cache-control": cacheControl,
+  };
+  response.writeHead(200, headers);
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
+
+  const stream = createReadStream(filePath);
+  stream.on("error", () => {
+    if (!response.headersSent) {
+      response.writeHead(500, { "content-type": "application/json;charset=utf-8" });
+      response.end(JSON.stringify({ error: "Failed to read static asset" }));
+    } else {
+      response.destroy();
+    }
+  });
+  stream.pipe(response);
 };
 
 const mimeType = (filePath) => {

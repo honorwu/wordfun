@@ -12,6 +12,7 @@ export function useSpeechPlayback({ items, isPoetryMode, phase, onActivate }: {
   onActivate: (index: number) => void;
 }) {
   const [speechPlayback, setSpeechPlayback] = useState<SpeechPlayback>(idleSpeechPlayback);
+  const [speechError, setSpeechError] = useState("");
   const speechRequestRef = useRef(0);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const repeatTimeoutRef = useRef<number | null>(null);
@@ -44,6 +45,7 @@ export function useSpeechPlayback({ items, isPoetryMode, phase, onActivate }: {
     }
 
     stopPlayback();
+    setSpeechError("");
     const requestId = speechRequestRef.current + 1;
     speechRequestRef.current = requestId;
     onActivate(itemIndex);
@@ -51,6 +53,7 @@ export function useSpeechPlayback({ items, isPoetryMode, phase, onActivate }: {
 
     if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
       setSpeechPlayback(idleSpeechPlayback);
+      setSpeechError("当前浏览器不支持语音播报，可点击“显示拼音”辅助默写。");
       return;
     }
 
@@ -115,12 +118,18 @@ export function useSpeechPlayback({ items, isPoetryMode, phase, onActivate }: {
       };
 
       utterance.onend = () => settlePass(true);
-      utterance.onerror = () => settlePass(false);
+      utterance.onerror = (event) => {
+        if (speechRequestRef.current === requestId && event.error !== "canceled" && event.error !== "interrupted") {
+          setSpeechError("语音播放失败，请检查系统声音与中文语音包，或点击“显示拼音”辅助默写。");
+        }
+        settlePass(false);
+      };
       utteranceRef.current = utterance;
       setSpeechPlayback({ index: itemIndex, stage: pass === 1 ? "first" : "second", countdown: 0 });
       try {
         window.speechSynthesis.speak(utterance);
       } catch {
+        setSpeechError("语音播放未能启动，请重试或点击“显示拼音”辅助默写。");
         settlePass(false);
         return;
       }
@@ -149,5 +158,7 @@ export function useSpeechPlayback({ items, isPoetryMode, phase, onActivate }: {
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   }, [clearSpeechTimers]);
 
-  return { speechPlayback, stopPlayback, startDoublePlayback };
+  const clearSpeechError = useCallback(() => setSpeechError(""), []);
+
+  return { speechPlayback, speechError, clearSpeechError, stopPlayback, startDoublePlayback };
 }
